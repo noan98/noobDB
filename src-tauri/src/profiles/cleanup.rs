@@ -15,6 +15,7 @@ use std::path::PathBuf;
 use std::pin::Pin;
 
 use super::store::{self, DB_VARIANT_SEP};
+use crate::commands::assertions::blocking_store;
 use crate::error::{AppError, Result};
 
 type BoxFut<'a, T> = Pin<Box<dyn Future<Output = Result<T>> + Send + 'a>>;
@@ -38,7 +39,7 @@ pub const PROFILE_SCOPED_STORES: &[ProfileScopedStore] = &[
     ProfileScopedStore {
         name: "snippets (scope)",
         source: "snippets/store.rs",
-        profile_ids: || Box::pin(async { crate::snippets::store::scoped_profile_ids() }),
+        profile_ids: || Box::pin(blocking_store(crate::snippets::store::scoped_profile_ids)),
         // 削除ではなく、専用スコープを Any へ戻す。
         delete: |id| {
             Box::pin(
@@ -55,20 +56,35 @@ pub const PROFILE_SCOPED_STORES: &[ProfileScopedStore] = &[
     ProfileScopedStore {
         name: "logical relations",
         source: "logical_relations.rs",
-        profile_ids: || Box::pin(async { crate::logical_relations::profile_ids() }),
-        delete: |id| Box::pin(async move { crate::logical_relations::delete_profile_data(id) }),
+        profile_ids: || Box::pin(blocking_store(crate::logical_relations::profile_ids)),
+        delete: |id| {
+            let id = id.to_string();
+            Box::pin(blocking_store(move || {
+                crate::logical_relations::delete_profile_data(&id)
+            }))
+        },
     },
     ProfileScopedStore {
         name: "advisor ignores",
         source: "advisor_ignore.rs",
-        profile_ids: || Box::pin(async { crate::advisor_ignore::profile_ids() }),
-        delete: |id| Box::pin(async move { crate::advisor_ignore::delete_profile_data(id) }),
+        profile_ids: || Box::pin(blocking_store(crate::advisor_ignore::profile_ids)),
+        delete: |id| {
+            let id = id.to_string();
+            Box::pin(blocking_store(move || {
+                crate::advisor_ignore::delete_profile_data(&id)
+            }))
+        },
     },
     ProfileScopedStore {
         name: "table stat snapshots",
         source: "table_stat_store.rs",
-        profile_ids: || Box::pin(async { crate::table_stat_store::profile_ids() }),
-        delete: |id| Box::pin(async move { crate::table_stat_store::delete_profile_data(id) }),
+        profile_ids: || Box::pin(blocking_store(crate::table_stat_store::profile_ids)),
+        delete: |id| {
+            let id = id.to_string();
+            Box::pin(blocking_store(move || {
+                crate::table_stat_store::delete_profile_data(&id)
+            }))
+        },
     },
     ProfileScopedStore {
         name: "schema drift generations",
@@ -85,7 +101,7 @@ pub const PROFILE_SCOPED_STORES: &[ProfileScopedStore] = &[
     ProfileScopedStore {
         name: "import templates",
         source: "import_templates/store.rs",
-        profile_ids: || Box::pin(async { crate::import_templates::store::profile_ids() }),
+        profile_ids: || Box::pin(blocking_store(crate::import_templates::store::profile_ids)),
         delete: |id| {
             Box::pin(async move { crate::import_templates::store::delete_profile_data(id) })
         },
@@ -94,7 +110,7 @@ pub const PROFILE_SCOPED_STORES: &[ProfileScopedStore] = &[
 
 /// `profile_id` を持つが、プロファイル削除では**意図的に掃除しない**ストア
 /// (`src-tauri/src` からの相対パス, 理由)。
-#[cfg_attr(not(test), allow(dead_code))] // 本体では未使用 (メタテストだけが読む許可リスト)
+#[cfg(test)] // メタテストだけが読む許可リスト
 pub const RETAINED_STORES: &[(&str, &str)] = &[
     (
         "profiles/store.rs",
@@ -144,11 +160,40 @@ fn base_id(stored: &str) -> &str {
     stored.split(DB_VARIANT_SEP).next().unwrap_or(stored)
 }
 
+/// フロントがサンドボックスを接続として扱うときの合成 ID の接頭辞 (`src/sandbox.ts`
+/// `sandboxToProfile`)。`profiles.json` には書かれないが、インポートテンプレートやプラン監視は
+/// この ID のまま保存するので、「存在しない = 孤立」と見なしてはならない。
+const SANDBOX_ID_PREFIX: &str = "sandbox:";
+
+/// 保存されている ID (`ids`) のうち、起動時の掃除で消してよい孤立 ID を選ぶ純粋ロジック。
+/// 次のものは**残す**: 既知のプロファイル、既知プロファイルの派生接続 (`::db::`)、サンドボックスの
+/// 合成 ID (`sandbox:`)、既知 ID の接頭辞になっているだけの候補 (`|` を含む ID を最初の `|` で
+/// 切るストアのキー形式のため。誤削除より取り残しを選ぶ)。
+fn select_orphans(ids: Vec<String>, known: &HashSet<String>) -> Vec<String> {
+    ids.into_iter()
+        .filter(|p| {
+            !p.starts_with(SANDBOX_ID_PREFIX)
+                && !known.contains(base_id(p))
+                && !known.iter().any(|k| {
+                    k.strip_prefix(p.as_str())
+                        .is_some_and(|r| r.starts_with('|'))
+                })
+        })
+        .collect()
+}
+
 /// 削除されたプロファイル `id` のデータを全ストアから掃除する。ベストエフォート:
 /// 失敗したストアは `(名前, エラー)` で返し、他のストアの掃除は続ける。
 pub async fn cleanup_profile(id: &str) -> Vec<(&'static str, AppError)> {
+    cleanup_in(PROFILE_SCOPED_STORES, id).await
+}
+
+async fn cleanup_in(
+    stores: &'static [ProfileScopedStore],
+    id: &str,
+) -> Vec<(&'static str, AppError)> {
     let mut failures = Vec::new();
-    for s in PROFILE_SCOPED_STORES {
+    for s in stores {
         let mut targets: Vec<String> = match (s.profile_ids)().await {
             Ok(ids) => ids.into_iter().filter(|p| belongs_to(p, id)).collect(),
             Err(e) => {
@@ -172,44 +217,65 @@ pub async fn cleanup_profile(id: &str) -> Vec<(&'static str, AppError)> {
     failures
 }
 
-/// 各ストアにあるプロファイル ID のうち、`known` (存在するプロファイル) に無いもの。
-/// 派生接続の ID は元のプロファイルで判定する。
-async fn orphan_ids(known: &HashSet<String>) -> Vec<(&'static ProfileScopedStore, Vec<String>)> {
-    let mut out = Vec::new();
-    for s in PROFILE_SCOPED_STORES {
-        match (s.profile_ids)().await {
-            Ok(ids) => {
-                let orphans: Vec<String> = ids
-                    .into_iter()
-                    .filter(|p| !known.contains(base_id(p)))
-                    .collect();
-                if !orphans.is_empty() {
-                    out.push((s, orphans));
+/// 存在するプロファイルの ID 集合。プロファイル一覧を確実に読めないときは `None`
+/// (読めないまま「存在しない」と見なして消すと、健全なデータまで失う)。
+async fn known_profile_ids() -> Option<HashSet<String>> {
+    blocking_store(|| {
+        let profiles = store::load_all()?;
+        if profiles.is_empty() {
+            // 空 = 全削除済みか、profiles.json が壊れて退避された直後かを区別できない。
+            return Ok(None);
+        }
+        let mut known: HashSet<String> = profiles.into_iter().map(|p| p.id).collect();
+        // 解釈できずに読み飛ばされた要素 (新しい版が足したものなど) の ID も「存在する」扱い。
+        // ID が読めない要素があるときは判定できないので掃除しない。
+        for skipped in store::list_skipped()? {
+            match skipped.id {
+                Some(id) => {
+                    known.insert(id);
                 }
+                None => return Ok(None),
             }
+        }
+        Ok(Some(known))
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+/// 孤立データの掃除の本体。**先に各ストアの ID を列挙し、その後で** `known` を読む
+/// (逆だと、読んだ後に作られたプロファイルのデータを孤立と誤認して消しうる)。
+/// `known` が `None` なら何もせず `None`、掃除したら全ストア成功かを `Some` で返す。
+async fn sweep_in(
+    stores: &'static [ProfileScopedStore],
+    known: impl Future<Output = Option<HashSet<String>>>,
+) -> Option<bool> {
+    let mut listed = Vec::new();
+    for s in stores {
+        match (s.profile_ids)().await {
+            Ok(ids) => listed.push((s, ids)),
             Err(e) => {
                 tracing::warn!(store = s.name, error = %e, "failed to list profile ids for orphan sweep");
             }
         }
     }
-    out
-}
-
-/// 存在するプロファイルの ID 集合。プロファイル一覧を確実に読めないときは `None`
-/// (読めないまま「存在しない」と見なして消すと、健全なデータまで失う)。
-fn known_profile_ids() -> Option<HashSet<String>> {
-    let profiles = store::load_all().ok()?;
-    if profiles.is_empty() {
-        // 空 = 全削除済みか、profiles.json が壊れて退避された直後かを区別できない。何もしない。
-        return None;
+    let known = known.await?;
+    let mut all_ok = listed.len() == stores.len();
+    for (s, ids) in listed {
+        for id in select_orphans(ids, &known) {
+            match (s.delete)(&id).await {
+                Ok(n) => {
+                    tracing::info!(store = s.name, profile_id = %id, count = n, "swept orphaned profile data");
+                }
+                Err(e) => {
+                    all_ok = false;
+                    tracing::warn!(store = s.name, profile_id = %id, error = %e, "failed to sweep orphaned profile data");
+                }
+            }
+        }
     }
-    let mut known: HashSet<String> = profiles.into_iter().map(|p| p.id).collect();
-    // 解釈できずに読み飛ばされた要素 (新しい版が足したものなど) の ID も「存在する」扱い。
-    // ID が読めない要素があるときは判定できないので掃除しない。
-    for skipped in store::list_skipped().ok()? {
-        known.insert(skipped.id?);
-    }
-    Some(known)
+    Some(all_ok)
 }
 
 fn marker_path() -> Option<PathBuf> {
@@ -223,28 +289,21 @@ pub async fn sweep_orphans_once() {
     let Some(marker) = marker_path() else {
         return;
     };
-    if marker.exists() {
-        return;
-    }
-    let Some(known) = known_profile_ids() else {
-        return;
+    let done = {
+        let marker = marker.clone();
+        tauri::async_runtime::spawn_blocking(move || marker.exists())
+            .await
+            .unwrap_or(true)
     };
-    let mut all_ok = true;
-    for (s, ids) in orphan_ids(&known).await {
-        for id in ids {
-            match (s.delete)(&id).await {
-                Ok(n) => {
-                    tracing::info!(store = s.name, profile_id = %id, count = n, "swept orphaned profile data");
-                }
-                Err(e) => {
-                    all_ok = false;
-                    tracing::warn!(store = s.name, profile_id = %id, error = %e, "failed to sweep orphaned profile data");
-                }
-            }
-        }
+    if done {
+        return;
     }
-    if all_ok {
-        if let Err(e) = std::fs::write(&marker, b"") {
+    if sweep_in(PROFILE_SCOPED_STORES, known_profile_ids()).await == Some(true) {
+        let wrote = tauri::async_runtime::spawn_blocking(move || std::fs::write(&marker, b""))
+            .await
+            .map_err(|e| e.to_string())
+            .and_then(|r| r.map_err(|e| e.to_string()));
+        if let Err(e) = wrote {
             tracing::warn!(error = %e, "failed to write orphan sweep marker");
         }
     }
@@ -281,9 +340,19 @@ mod tests {
         }
     }
 
-    /// `#[cfg(test)]` より前 (本体コード) だけを返す。
+    /// テストモジュール (`#[cfg(test)]` の直後に `mod tests` が来る位置) より前だけを返す。
+    /// 先頭付近の `#[cfg(test)]` 付きの関数・定数で本体が切れないようにする。
     fn production_part(src: &str) -> &str {
-        src.find("#[cfg(test)]").map_or(src, |i| &src[..i])
+        let mut from = 0;
+        while let Some(i) = src[from..].find("#[cfg(test)]") {
+            let at = from + i;
+            let rest = src[at + "#[cfg(test)]".len()..].trim_start();
+            if rest.starts_with("mod tests") {
+                return &src[..at];
+            }
+            from = at + 1;
+        }
+        src
     }
 
     fn rel(src_root: &Path, p: &Path) -> String {
@@ -331,6 +400,8 @@ mod tests {
                 continue;
             }
             // 型の定義は同じディレクトリの mod.rs にあることが多いので、そちらも見る。
+            // 限界: 探すのは同じディレクトリの mod.rs だけ。それ以外の場所 (別モジュール) に
+            // `profile_id` を持つ型を置くストアは検出できないので、そのときは手で登録すること。
             let mut scoped = body.contains("profile_id");
             if !scoped && !name.ends_with("mod.rs") {
                 let sibling = path.with_file_name("mod.rs");
@@ -375,5 +446,103 @@ mod tests {
             assert!(seen.insert(p), "掃除対象と許可リストで重複: {p}");
             assert!(!reason.trim().is_empty(), "理由が空: {p}");
         }
+    }
+
+    fn set(ids: &[&str]) -> HashSet<String> {
+        ids.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn strs(ids: &[&str]) -> Vec<String> {
+        ids.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn select_orphans_keeps_known_derived_sandbox_and_prefix_ids() {
+        let known = set(&["abc", "a|b"]);
+        let ids = strs(&[
+            "abc",           // 既知
+            "abc::db::shop", // 既知の派生接続
+            "gone",          // 未知 = 孤立
+            "gone::db::x",   // 未知の派生接続 = 孤立
+            "sandbox:s1",    // サンドボックスの合成 ID
+            "a",             // 既知 "a|b" の接頭辞 (キーを最初の | で切った結果)
+            "a|b",           // 既知
+            "abcd",          // 既知 "abc" と接頭辞が同じだけの別 ID = 孤立
+        ]);
+        assert_eq!(
+            select_orphans(ids, &known),
+            strs(&["gone", "gone::db::x", "abcd"])
+        );
+        assert!(select_orphans(strs(&["sandbox:x"]), &set(&[])).is_empty());
+    }
+
+    use std::sync::Mutex;
+
+    static CLEAN_LOG: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    static SWEEP_LOG: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    static NOT_CALLED_LOG: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+    fn fake_ids() -> BoxFut<'static, Vec<String>> {
+        Box::pin(async { Ok(strs(&["p", "p::db::x", "pp", "q", "sandbox:s1"])) })
+    }
+
+    static CLEAN_STORES: &[ProfileScopedStore] = &[ProfileScopedStore {
+        name: "fake-clean",
+        source: "fake.rs",
+        profile_ids: fake_ids,
+        delete: |id| {
+            let id = id.to_string();
+            Box::pin(async move {
+                CLEAN_LOG.lock().expect("lock").push(id);
+                Ok(1)
+            })
+        },
+    }];
+
+    static SWEEP_STORES: &[ProfileScopedStore] = &[ProfileScopedStore {
+        name: "fake-sweep",
+        source: "fake.rs",
+        profile_ids: fake_ids,
+        delete: |id| {
+            let id = id.to_string();
+            Box::pin(async move {
+                SWEEP_LOG.lock().expect("lock").push(id);
+                Ok(1)
+            })
+        },
+    }];
+
+    static NOT_CALLED_STORES: &[ProfileScopedStore] = &[ProfileScopedStore {
+        name: "fake-unknown",
+        source: "fake.rs",
+        profile_ids: fake_ids,
+        delete: |id| {
+            let id = id.to_string();
+            Box::pin(async move {
+                NOT_CALLED_LOG.lock().expect("lock").push(id);
+                Ok(1)
+            })
+        },
+    }];
+
+    #[tokio::test]
+    async fn cleanup_deletes_the_profile_and_its_derived_ids_only() {
+        let failures = cleanup_in(CLEAN_STORES, "p").await;
+        assert!(failures.is_empty());
+        assert_eq!(*CLEAN_LOG.lock().expect("lock"), strs(&["p", "p::db::x"]));
+    }
+
+    #[tokio::test]
+    async fn sweep_deletes_only_orphans() {
+        let known = async { Some(set(&["p", "pp"])) };
+        assert_eq!(sweep_in(SWEEP_STORES, known).await, Some(true));
+        // p / pp (既知)・p::db::x (既知の派生)・sandbox:s1 は残し、q だけが孤立。
+        assert_eq!(*SWEEP_LOG.lock().expect("lock"), strs(&["q"]));
+    }
+
+    #[tokio::test]
+    async fn sweep_does_nothing_when_the_profile_list_is_unknown() {
+        assert_eq!(sweep_in(NOT_CALLED_STORES, async { None }).await, None);
+        assert!(NOT_CALLED_LOG.lock().expect("lock").is_empty());
     }
 }

@@ -109,6 +109,15 @@ pub fn partition(
 
 /// プロファイル削除時に、そのプロファイルの「対応しない」をすべて消す。削除した件数を返す。
 pub fn delete_profile_data(profile_id: &str) -> Result<u64> {
+    // 該当が無ければ書き込まない (先に読んで確認する)。
+    let file: IgnoreFile = STORE.read()?;
+    if !file
+        .ignores
+        .iter()
+        .any(|e| e.profile_id.as_deref() == Some(profile_id))
+    {
+        return Ok(0);
+    }
     STORE.update::<IgnoreFile, _>(|f| purge_profile(f, profile_id))
 }
 

@@ -72,11 +72,19 @@ pub fn attach_and_roll(
 /// プロファイル削除時に、そのプロファイルのスナップショットをすべて消す (全データベース分)。
 /// 削除した件数を返す。キーは `"{profile_id}|{database}"`。
 pub fn delete_profile_data(profile_id: &str) -> Result<u64> {
+    // 該当が無ければ書き込まない (先に読んで確認する)。
+    let prefix = format!("{profile_id}|");
+    let file: SnapshotFile = STORE.read()?;
+    if !file.snapshots.keys().any(|k| k.starts_with(&prefix)) {
+        return Ok(0);
+    }
     STORE.update::<SnapshotFile, _>(|f| purge_profile(f, profile_id))
 }
 
 /// 保存済みのプロファイル ID (起動時の孤立データ掃除用)。プロファイルを持たない一時接続
-/// (キー接頭辞 `-`) は含まない。
+/// (キー接頭辞 `-`) は含まない。キーは最初の `|` で分けるので、`|` を含む ID は先頭部分だけが
+/// 返る。呼び出し側 (`profiles::cleanup::select_orphans`) が、既知 ID の接頭辞になっている
+/// 候補を除いて誤削除を防ぐ。
 pub fn profile_ids() -> Result<Vec<String>> {
     let file: SnapshotFile = STORE.read()?;
     Ok(ids_in(&file))
@@ -257,5 +265,22 @@ mod tests {
         assert_eq!(purge_profile(&mut file, "p"), 2);
         assert_eq!(ids_in(&file), vec!["pp"]);
         assert_eq!(file.snapshots.len(), 2);
+    }
+
+    #[test]
+    fn ids_split_at_the_first_pipe_so_pipe_ids_yield_a_prefix() {
+        let mut file = SnapshotFile::default();
+        let mut stats = vec![stat("a", 1, 1)];
+        attach_in(
+            &mut file,
+            Some("a|b"),
+            "db",
+            &mut stats,
+            "2026-01-01T00:00:00Z",
+        );
+        // 呼び出し側 (cleanup::select_orphans) が既知 ID の接頭辞として除外できる形で返る。
+        assert_eq!(ids_in(&file), vec!["a"]);
+        // 接頭辞だけの ID を消しても、`|` を含む別 ID のキーは巻き込まない。
+        assert_eq!(purge_profile(&mut file, "a|b"), 1);
     }
 }
