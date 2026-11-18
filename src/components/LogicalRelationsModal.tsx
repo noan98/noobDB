@@ -34,6 +34,8 @@ import { Button, Checkbox, Radio } from "./ui";
 interface Props {
   sessionId: string;
   database: string;
+  /** 接続先のドライバ。MySQL / SQLite は取り込み時に表・列名の大文字小文字を無視して照合する。 */
+  driver?: string;
   /** 登録・削除に成功したとき (キャッシュの取り直しを親に任せる)。 */
   onChanged?: (database: string) => void;
   onClose: () => void;
@@ -60,7 +62,7 @@ const BLOCKED_PREVIEW_LIMIT = 50;
 
 type ImportMode = "add" | "replace";
 
-export function LogicalRelationsModal({ sessionId, database, onChanged, onClose }: Props) {
+export function LogicalRelationsModal({ sessionId, database, driver, onChanged, onClose }: Props) {
   const t = useT();
   const toast = useToast();
   const [loaded, setLoaded] = useState<Loaded | null>(null);
@@ -79,6 +81,7 @@ export function LogicalRelationsModal({ sessionId, database, onChanged, onClose 
 
   const [importing, setImporting] = useState<LogicalRelationsImportParse | null>(null);
   const [importMode, setImportMode] = useState<ImportMode>("add");
+  const importCancelRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -193,9 +196,22 @@ export function LogicalRelationsModal({ sessionId, database, onChanged, onClose 
   };
 
   const classified = useMemo(
-    () => (importing && loaded ? classifyImport(importing.relations, loaded.tables, loaded.relations) : null),
-    [importing, loaded],
+    () =>
+      importing && loaded
+        ? classifyImport(
+            importing.relations,
+            loaded.tables,
+            loaded.relations,
+            driver === "mysql" || driver === "sqlite",
+          )
+        : null,
+    [importing, loaded, driver],
   );
+
+  // 上書きは破壊的なので、キャンセルに初期フォーカスを置く。
+  useEffect(() => {
+    if (importing && importMode === "replace") importCancelRef.current?.focus();
+  }, [importing, importMode]);
 
   const describeReason = (reason: ImportBlockReason) =>
     reason.kind === "missingTable"
@@ -221,7 +237,14 @@ export function LogicalRelationsModal({ sessionId, database, onChanged, onClose 
       if (typeof picked !== "string" || !picked) return;
       const json = await api.exportLogicalRelations(sessionId, database);
       await api.writeTextFile(picked, json);
-      toast.success(t("logicalRelExportSaved", { count: loaded.relations.length, path: picked }));
+      let count = loaded.relations.length;
+      try {
+        const written = (JSON.parse(json) as { relations?: unknown[] }).relations;
+        if (Array.isArray(written)) count = written.length;
+      } catch {
+        // 件数が読めなければ画面上の件数で表示する。
+      }
+      toast.success(t("logicalRelExportSaved", { count, path: picked }));
     } catch (e) {
       toast.error(t("logicalRelExportError", { error: String(e) }));
     }
@@ -247,11 +270,28 @@ export function LogicalRelationsModal({ sessionId, database, onChanged, onClose 
   };
 
   const confirmImport = async () => {
-    if (!classified || busy) return;
+    if (!classified || busy || !importing) return;
     const applicable = [...classified.addable, ...classified.existing];
     if (importMode === "add" ? classified.addable.length === 0 : applicable.length === 0) return;
     setBusy(true);
     try {
+      if (importMode === "replace" && loaded) {
+        // 確定直前に取り直し、プレビュー時と削除件数が変わっていたら確定せず再プレビューする。
+        const fresh = await api.listLogicalRelations(sessionId, database);
+        const recheck = classifyImport(
+          importing.relations,
+          loaded.tables,
+          fresh,
+          driver === "mysql" || driver === "sqlite",
+        );
+        if (recheck.removedCount !== classified.removedCount) {
+          if (mountedRef.current) {
+            setLoaded((l) => (l ? { ...l, relations: fresh } : l));
+            toast.info(t("logicalRelImportChanged"));
+          }
+          return;
+        }
+      }
       const relations =
         importMode === "add"
           ? await api.saveLogicalRelations(sessionId, database, classified.addable.map(relationInput))
@@ -261,9 +301,12 @@ export function LogicalRelationsModal({ sessionId, database, onChanged, onClose 
       setLoaded((l) => (l ? { ...l, relations } : l));
       setImporting(null);
       toast.success(
-        t("logicalRelImportDone", {
-          count: importMode === "add" ? classified.addable.length : applicable.length,
-        }),
+        importMode === "add"
+          ? t("logicalRelImportDone", { count: classified.addable.length })
+          : t("logicalRelImportReplaced", {
+              added: classified.addable.length,
+              removed: classified.removedCount,
+            }),
       );
     } catch (e) {
       toast.error(t("logicalRelImportError", { error: String(e) }));
@@ -410,33 +453,57 @@ export function LogicalRelationsModal({ sessionId, database, onChanged, onClose 
                   </Flex>
                   {importMode === "replace" && (
                     <Callout tone="warning" role="status">
-                      {t("logicalRelImportReplaceWarn", {
-                        count: loaded.relations.filter(
-                          (r) => !classified.existing.some((e) => relationKey(e) === relationKey(r)),
-                        ).length,
-                      })}
+                      {t("logicalRelImportReplaceWarn", { count: classified.removedCount })}
                     </Callout>
                   )}
-                  <Flex align="center" gap="2">
-                    <div style={{ flex: 1 }} />
-                    <Button type="button" variant="secondary" size="sm" onClick={() => setImporting(null)}>
-                      {t("logicalRelImportCancel")}
-                    </Button>
-                    <Button
-                      type="button"
-                      variant={importMode === "replace" ? "dangerOutline" : "primary"}
-                      size="sm"
-                      disabled={
-                        busy ||
-                        (importMode === "add"
-                          ? classified.addable.length === 0
-                          : classified.addable.length + classified.existing.length === 0)
-                      }
-                      onClick={() => void confirmImport()}
-                    >
-                      {t("logicalRelImportApply")}
-                    </Button>
-                  </Flex>
+                  {(() => {
+                    const replacing = importMode === "replace";
+                    const apply = (
+                      <Button
+                        type="button"
+                        variant={replacing ? "dangerOutline" : "primary"}
+                        size="sm"
+                        disabled={
+                          busy ||
+                          (replacing
+                            ? classified.addable.length + classified.existing.length === 0
+                            : classified.addable.length === 0)
+                        }
+                        onClick={() => void confirmImport()}
+                      >
+                        {t("logicalRelImportApply")}
+                      </Button>
+                    );
+                    const cancel = (
+                      <Button
+                        type="button"
+                        variant={replacing ? "primary" : "secondary"}
+                        size="sm"
+                        ref={importCancelRef}
+                        onClick={() => setImporting(null)}
+                      >
+                        {t("logicalRelImportCancel")}
+                      </Button>
+                    );
+                    // 通常は「キャンセル → 主アクション」、破壊的な上書きは「実行 → spacer → キャンセル」。
+                    return (
+                      <Flex align="center" gap="2">
+                        {replacing ? (
+                          <>
+                            {apply}
+                            <div style={{ flex: 1 }} />
+                            {cancel}
+                          </>
+                        ) : (
+                          <>
+                            <div style={{ flex: 1 }} />
+                            {cancel}
+                            {apply}
+                          </>
+                        )}
+                      </Flex>
+                    );
+                  })()}
                 </chakra.div>
               )}
               {loaded.relations.length === 0 ? (

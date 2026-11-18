@@ -306,4 +306,38 @@ describe("classifyImport (#2423)", () => {
     const res = classifyImport([rel("Orders", ["user_id"], "users", ["id"])], tables, []);
     expect(res.blocked).toHaveLength(1);
   });
+
+  it("keeps a registered relation as existing even when its table or column is gone", () => {
+    const stale = rel("legacy", ["x"], "users", ["id"]);
+    const gone = rel("old", ["y"], "users", ["id"]);
+    const res = classifyImport([stale], tables, [stale, gone]);
+    expect(res.existing).toEqual([stale]);
+    expect(res.blocked).toEqual([]);
+    expect(res.removedCount).toBe(1);
+  });
+
+  it("falls back to a unique case-insensitive match only when asked, rewriting to the target spelling", () => {
+    const upper = rel("ORDERS", ["USER_ID"], "Users", ["ID"]);
+    const exact = classifyImport([upper], tables, [], false);
+    expect(exact.blocked).toHaveLength(1);
+    const folded = classifyImport([upper], tables, [], true);
+    expect(folded.addable).toEqual([rel("orders", ["user_id"], "users", ["id"])]);
+    // 書き換えた結果が登録済みと同じなら existing になる。
+    const reg = rel("orders", ["user_id"], "users", ["id"]);
+    expect(classifyImport([upper], tables, [reg], true).existing).toEqual([reg]);
+  });
+
+  it("keeps ambiguous case-insensitive matches blocked and prefers an exact match", () => {
+    const ambiguous = [
+      { name: "Users", columns: [colInfo("id")] },
+      { name: "users", columns: [colInfo("id")] },
+      { name: "orders", columns: [colInfo("user_id")] },
+    ];
+    expect(
+      classifyImport([rel("orders", ["user_id"], "USERS", ["id"])], ambiguous, [], true).blocked,
+    ).toHaveLength(1);
+    expect(
+      classifyImport([rel("orders", ["user_id"], "users", ["id"])], ambiguous, [], true).addable,
+    ).toHaveLength(1);
+  });
 });
