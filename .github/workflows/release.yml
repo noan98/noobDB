@@ -205,7 +205,7 @@ jobs:
       # crates.io インデックス更新 (`Updating crates.io index`) を省く (#1680, ci.yml の
       # rust (windows) と同じ方式)。rust-cache は sparse index (registry/index) を復元しない
       # ため、index だけを自前の actions/cache で持つ。ダウンロード済みクレート
-      # (registry/cache) は rust-cache が復元する。保存は main への push だけ。
+      # (registry/cache) は rust-cache が復元する。保存は github.ref が main のときだけ (push / schedule / main への dispatch)。
       # キー用の hashFiles は `Sync version to tag` より前に評価される (main の Cargo.lock と一致)。
       - name: Cache cargo registry index
         id: cargo-index-cache
@@ -358,7 +358,7 @@ jobs:
             done
           fi
 
-      # index は main への push で、完全一致のキーが無かったときだけ保存する (#2413)。
+      # index は main ref で、完全一致のキーが無かったときだけ保存する (#2413)。
       - name: Save cargo registry index (main only)
         if: success() && github.ref == 'refs/heads/main' && steps.cargo-index-cache.outputs.cache-hit != 'true' && inputs.measure != 'cold' && inputs.measure != 'cold-devdrive'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

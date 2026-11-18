@@ -57,7 +57,7 @@
   `src/__tests__/windowsJobParity.test.ts` が 3 ワークフローの抜けを検出する。
 - `release.yml` にも `ci.yml` と同じ registry index の自前キャッシュと
   `cargo fetch --locked --offline` の probe を入れた (#1680 と同方式。キーは
-  `cargo-index-<OS>-release-<Cargo.lock のハッシュ>`、保存は main push のみ)。
+  `cargo-index-<OS>-release-<Cargo.lock のハッシュ>`、保存は `github.ref == main` のとき: main push・schedule・main への dispatch)。
   そろっていれば `CARGO_NET_OFFLINE=true`、足りなければオンラインのまま。
 - `build` ジョブの最後の `Job timing & cache summary (#565)` が、所要時間・rust-cache の
   ヒット・offline 化の有無・計測モードを Job Summary に出す。前後比較はここを見る。
@@ -68,10 +68,11 @@
 クラウド実行環境では Windows ランナーを動かせないため、計測用の条件付きステップだけを
 `release.yml` に入れてある (通常実行では走らない)。
 
+0. `release.yml` は `concurrency` で main の実行を cancel-in-progress するため、1 本ずつ順に、main への push が無い時間帯に実行する。
 1. Actions の `release` を `workflow_dispatch` で **同じ main の ref** に対し 2 回実行する。
    入力 `measure` を (a) `cold` と (b) `cold-devdrive` にする。どちらも rust-cache と
    registry index のキャッシュを使わない (復元も保存もしない) コールドビルドで、
-   (b) だけが ReFS の VHD (V:) に `CARGO_HOME` / `CARGO_TARGET_DIR` を置く。
+   (b) だけが ReFS の VHD (V:。`diskpart` の `format fs=refs` で、Dev Drive 指定の `Format-Volume -DevDrive` ではない) に `CARGO_HOME` / `CARGO_TARGET_DIR` を置く。
    Defender 停止は両方に入っている (「停止後も効果があるか」の条件)。
 2. 各 run の Job Summary の「所要時間」を比べる。ノイズを見るため各 2 回ずつ (計 4 回) 推奨。
 3. `rust (windows)` 側は、同じ要領で一時的に Dev Drive ステップを足したブランチで
