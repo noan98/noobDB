@@ -3,6 +3,9 @@ import aiRs from "../../src-tauri/src/commands/ai.rs?raw";
 import cellBlobRs from "../../src-tauri/src/commands/cell_blob.rs?raw";
 import connectionRs from "../../src-tauri/src/commands/connection.rs?raw";
 import diffRs from "../../src-tauri/src/commands/diff.rs?raw";
+import exportRs from "../../src-tauri/src/commands/export.rs?raw";
+import resultStoreRs from "../../src-tauri/src/db/result_store.rs?raw";
+import rowMergeRs from "../../src-tauri/src/db/row_merge.rs?raw";
 import resultRs from "../../src-tauri/src/commands/result.rs?raw";
 import scriptRs from "../../src-tauri/src/commands/script.rs?raw";
 import localRs from "../../src-tauri/src/commands/local.rs?raw";
@@ -21,6 +24,9 @@ import tasksRs from "../../src-tauri/src/tasks/mod.rs?raw";
 import timelapseRs from "../../src-tauri/src/timelapse/mod.rs?raw";
 import conversationTs from "../ai/conversation.ts?raw";
 import schemaDocTs from "../ai/schemaDoc.ts?raw";
+import cellEditTs from "../components/cellEdit.ts?raw";
+import resultHandleTs from "../components/resultHandle.ts?raw";
+import rowMergeTs from "../components/rowMerge.ts?raw";
 import advisorTs from "../components/advisor.ts?raw";
 import duplicateKeysTs from "../components/duplicateKeys.ts?raw";
 import localQueryTs from "../components/localQuery.ts?raw";
@@ -68,6 +74,10 @@ const OPEN_DATABASE_TS = src("openDatabase.ts", openDatabaseTs);
 const SCRIPT_RUN_TS = src("scriptRun.ts", scriptRunTs);
 const BROADCAST_COMPARE_TS = src("broadcastCompare.ts", broadcastCompareTs);
 const LOCAL_QUERY_TS = src("components/localQuery.ts", localQueryTs);
+const CELL_EDIT_TS = src("components/cellEdit.ts", cellEditTs);
+const EXPORT_RS = src("commands/export.rs", exportRs);
+const RESULT_HANDLE_TS = src("components/resultHandle.ts", resultHandleTs);
+const ROW_MERGE_TS = src("components/rowMerge.ts", rowMergeTs);
 const SQLITE_ATTACH_TS = src("components/sqliteAttach.ts", sqliteAttachTs);
 
 const SUBSET_RS = src("db/subset.rs", subsetRs);
@@ -88,6 +98,8 @@ const PROFILE_STORE_RS = src("profiles/store.rs", profileStoreRs);
 const SCRIPT_RS = src("commands/script.rs", scriptRs);
 const BROADCAST_DIFF_RS = src("db/broadcast_diff.rs", broadcastDiffRs);
 const LOCAL_RS = src("commands/local.rs", localRs);
+const RESULT_STORE_RS = src("db/result_store.rs", resultStoreRs);
+const ROW_MERGE_RS = src("db/row_merge.rs", rowMergeRs);
 const SQLITE_RS = src("db/sqlite.rs", sqliteRs);
 const CLONE_ROWS_TS = src("components/cloneRows.ts", cloneRowsTs);
 const CLONE_ROWS_RS = src("db/clone_rows.rs", cloneRowsRs);
@@ -131,6 +143,9 @@ const PAIRS: { ts: Src; rs: Src; names: [string, string][] }[] = [
     names: [["MAX_BROADCAST_COMPARE_ROWS", "MAX_BROADCAST_COMPARE_ROWS"]],
   },
   { ts: LOCAL_QUERY_TS, rs: LOCAL_RS, names: [["MAX_LOCAL_TABLE_ROWS", "MAX_LOCAL_TABLE_ROWS"]] },
+  { ts: CELL_EDIT_TS, rs: EXPORT_RS, names: [["FALLBACK_INSERT_TABLE", "DEFAULT_SQL_TABLE"]] },
+  { ts: RESULT_HANDLE_TS, rs: RESULT_STORE_RS, names: [["RESULT_GONE_MARKER", "RESULT_GONE"]] },
+  { ts: ROW_MERGE_TS, rs: ROW_MERGE_RS, names: [["ROW_MERGE_MAX_ROWS", "MAX_MERGE_ROWS"]] },
   { ts: SQLITE_ATTACH_TS, rs: SQLITE_RS, names: [["MAX_ATTACHED", "SQLITE_MAX_ATTACHED"]] },
   { ts: CLONE_ROWS_TS, rs: CLONE_ROWS_RS, names: [["CLONE_MAX_ROWS", "MAX_CLONE_ROWS"]] },
   {
@@ -275,8 +290,21 @@ describe("Rust ⇔ TS 定数パリティ (#2301): 対応表", () => {
 // 対応表に無い「バックエンドと揃える」定数の追加を検出する。コメントを grep し、マーカーのコメント行から
 // 次の空行までに宣言された `const NAME` を集めて、各 NAME が対応表 (PAIRS) の TS 名か、定数単位の
 // EXEMPT にあることを確かめる (すでに対応表にあるファイルへ後から足した定数も検出できる)。
-const COMMENT_MARKER =
-  /(?:バックエンド|Rust)[^\n]*と(?:揃える|同じ値)|mirroring the backend (?:clamp|limit|bounds)|(?:バックエンド|Rust)[^\n]*`[A-Z][A-Z0-9]*_[A-Z0-9_]+`/i;
+// 判定は「連続するコメント行を 1 ブロック」にまとめた文字列に対して行う (定数名と「バックエンド」が別の
+// 行にあっても検出するため)。
+const COMMENT_MARKERS: RegExp[] = [
+  /(?:バックエンド|Rust|backend)[\s\S]*?と(?:揃える|同じ値)/i,
+  /mirroring the backend (?:clamp|limit|bounds)/i,
+  // 「バックエンド / Rust / backend」と大文字の定数名 (`NAME`) を同じブロックで言及している。
+  /(?:バックエンド|Rust|[Bb]ackend)[\s\S]*?`[A-Za-z][A-Za-z0-9]*_[A-Za-z0-9_]+`/,
+  // `src-tauri/.../local.rs::NAME` 形式、「`....rs` の `NAME`」形式。
+  /\.rs`?::[A-Z][A-Z0-9]*_[A-Z0-9_]+/,
+  /\.rs` の `[A-Z][A-Z0-9]*_[A-Z0-9_]+`/,
+];
+
+function isMarkerComment(block: string): boolean {
+  return COMMENT_MARKERS.some((re) => re.test(block));
+}
 
 /** 対応表の外にある定数 ("ファイルパス:定数名" → 理由)。固定の仕組みが別にあるものだけ。 */
 const EXEMPT: Record<string, string> = {
@@ -289,11 +317,17 @@ const EXEMPT: Record<string, string> = {
   "components/pgListen.ts:PG_LISTEN_PREVIEW_CHARS":
     "一覧の表示用の省略幅で UI だけの値。Rust に対応する定数は無い",
   "components/sqliteAttach.ts:MAX_ATTACH_ALIAS_LENGTH":
-    "Rust は is_valid_attach_alias 内のリテラル (64) で定数が無い。上限数 MAX_ATTACHED は対応表で固定",
+    "Rust は is_valid_attach_alias 内のリテラル (64) で定数が無い。境界は sqliteAttachVectors.json で固定。上限数 MAX_ATTACHED は対応表で固定",
   "dangerousSql.ts:ALTER_DROP_NON_COLUMN":
-    "集合の一致は共有ゴールデンベクタ (src/__tests__/fixtures) で固定する",
+    "集合の一致は共有ゴールデンベクタ dangerousSqlVectors.json (Rust は db/script_analysis.rs の alter_drop_kind) で固定する",
   "dangerousSql.ts:SCHEMA_MUTATING_KEYWORDS":
     "集合の一致は共有ゴールデンベクタ (schemaMutatingVectors.json) で固定する",
+  "dangerousSql.ts:LOCKING_CLAUSES":
+    "ロック句の語彙は共有ゴールデンベクタ autoLimitVectors.json (Rust は db/mod.rs の LOCKING_CLAUSES / has_locking_clause) で固定する",
+  "dangerousSql.ts:LOCKING_TABLE_HINTS":
+    "ロックヒント (NOLOCK 等) の語彙は共有ゴールデンベクタ (Rust は db/mod.rs) で固定する。fixtures に無い語は Rust 側テストで確認",
+  "dangerousSql.ts:READ_ONLY_PREFIXES_ALL_DRIVERS":
+    "読み取り専用判定の語彙は共有ゴールデンベクタ readOnlySqlVectors.json (Rust は db/mod.rs の is_read_only_sql_masked) で固定する",
   "taskFormat.ts:WORKDAYS_MASK": "Rust に対応する定数は無い (表示用の平日判定)。全曜日マスクは対応表で固定",
 };
 
@@ -303,19 +337,29 @@ const sources = import.meta.glob(["../**/*.ts", "../**/*.tsx", "!../__tests__/**
   eager: true,
 }) as Record<string, string>;
 
-/** マーカーのコメント行から次の空行までに宣言された const 名を "ファイル:NAME" で集める。 */
+/** マーカーのコメントブロックの直後 (次の空行まで) に宣言された const 名を "ファイル:NAME" で集める。 */
 function markedConsts(files: Record<string, string>): string[] {
   const out: string[] = [];
+  const isComment = (l: string) => /^\s*(?:\/\/|\/\*|\*)/.test(l);
   for (const [path, text] of Object.entries(files)) {
     const file = path.replace(/^\.\.\//, "");
     const lines = text.split("\n");
-    lines.forEach((line, i) => {
-      if (!(/^\s*(?:\/\/|\/?\*)/.test(line) && COMMENT_MARKER.test(line))) return;
-      for (let j = i + 1; j < lines.length && lines[j].trim() !== ""; j++) {
-        const m = /^(?:export\s+)?const\s+([A-Z][A-Z0-9_]*)\b/.exec(lines[j]);
-        if (m) out.push(`${file}:${m[1]}`);
+    let i = 0;
+    while (i < lines.length) {
+      if (!isComment(lines[i])) {
+        i++;
+        continue;
       }
-    });
+      let end = i;
+      while (end < lines.length && isComment(lines[end])) end++;
+      if (isMarkerComment(lines.slice(i, end).join("\n"))) {
+        for (let j = end; j < lines.length && lines[j].trim() !== ""; j++) {
+          const m = /^(?:export\s+)?const\s+([A-Z][A-Z0-9_]*)\b/.exec(lines[j]);
+          if (m) out.push(`${file}:${m[1]}`);
+        }
+      }
+      i = end;
+    }
   }
   return [...new Set(out)];
 }
@@ -328,6 +372,11 @@ describe("Rust ⇔ TS 定数パリティ (#2301): コメントの網羅チェッ
     expect(marked).toContain("components/subsetExtract.ts:SUBSET_MAX_ROOT_LIMIT");
     expect(marked).toContain("components/TaskManager.tsx:MAX_PAUSE_AFTER_FAILURES");
     expect(marked).toContain("settings.ts:MAX_TIMELAPSE_MAX_GENERATIONS");
+    // 定数名とバックエンドが別行 / `.rs::NAME` 形式 / 英語の backend (#2412)。
+    expect(marked).toContain("scriptRun.ts:FILE_CHANGED_MARKER");
+    expect(marked).toContain("components/localQuery.ts:MAX_LOCAL_TABLE_ROWS");
+    expect(marked).toContain("openDatabase.ts:DB_VARIANT_SEP");
+    expect(marked).toContain("components/resultHandle.ts:RESULT_GONE_MARKER");
   });
 
   it("「バックエンドと揃える」コメント直下の定数は対応表か EXEMPT にある", () => {

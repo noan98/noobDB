@@ -11,6 +11,7 @@
  */
 import type { ConnectionProfile } from "./api/tauri";
 
+/** 派生プロファイル ID の区切り (バックエンド `profiles/store.rs::DB_VARIANT_SEP` と同じ値)。 */
 export const DB_VARIANT_SEP = "::db::";
 
 /** 派生プロファイル ID から元のプロファイル ID を取り出す (通常の ID はそのまま)。 */
