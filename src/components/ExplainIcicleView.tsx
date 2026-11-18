@@ -165,16 +165,6 @@ export function ExplainIcicleView({
         e.preventDefault();
         choose(r.id);
         return;
-      case "Escape":
-      case "Backspace": {
-        const crumbs = icicleBreadcrumb(root, layout.focusId);
-        if (crumbs.length > 1) {
-          e.preventDefault();
-          e.stopPropagation();
-          setFocusId(crumbs[crumbs.length - 2].id);
-        }
-        return;
-      }
       default:
         return;
     }
@@ -185,11 +175,30 @@ export function ExplainIcicleView({
   };
 
   const crumbs = icicleBreadcrumb(root, layout.focusId);
+  const canZoomOut = crumbs.length > 1;
+
+  // Esc / Backspace でズームを一段戻す。ズームアウトできる間は Modal の Esc での dismiss を
+  // `data-modal-esc-guard` で止めている (Modal.tsx)。全景では何もせず、Esc はモーダルへ届く。
+  const onRootKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if ((e.key !== "Escape" && e.key !== "Backspace") || !canZoomOut) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setFocusId(crumbs[crumbs.length - 2].id);
+  };
   const legendGradient = `linear-gradient(to right, ${stops.map((c, i) => `${c} ${(i / (stops.length - 1)) * 100}%`).join(", ")})`;
   const exportSize = { width: VIEW_W, height };
 
   return (
-    <Box flex="1" minHeight={0} minWidth={0} display="flex" flexDirection="column" overflow="hidden">
+    <Box
+      flex="1"
+      minHeight={0}
+      minWidth={0}
+      display="flex"
+      flexDirection="column"
+      overflow="hidden"
+      data-modal-esc-guard={canZoomOut ? "" : undefined}
+      onKeyDown={onRootKeyDown}
+    >
       <Box css={barCss}>
         <chakra.span color="app.textSecondary">
           {t(basis === "actual" ? "explainIcicleBasisActual" : "explainIcicleBasisCost")}

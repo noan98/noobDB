@@ -1,6 +1,7 @@
 import { fireEvent, screen } from "@testing-library/react";
 import { renderWithProviders } from "./testUtils";
 import { useState } from "react";
+import { Modal, ModalBody } from "../components/Modal";
 import { describe, expect, it, vi } from "vitest";
 import { ExplainIcicleView } from "../components/ExplainIcicleView";
 import { parsePostgresPlan, type PlanNode } from "../components/explainPlan";
@@ -139,5 +140,44 @@ describe("ExplainIcicleView", () => {
     fireEvent.click(badge);
     expect(onSelect).toHaveBeenCalledWith(root.children[0].id);
     expect(ids()).toHaveLength(3);
+  });
+
+  it("Modal 内: ズーム中の Esc はズームだけ戻し、全景の Esc でモーダルが閉じる", async () => {
+    const onClose = vi.fn();
+    function Harness() {
+      const [sel, setSel] = useState(root.id);
+      return (
+        <Modal onClose={onClose}>
+          <ModalBody>
+            <ExplainIcicleView root={root} selectedId={sel} onSelect={setSel} />
+          </ModalBody>
+        </Modal>
+      );
+    }
+    renderWithProviders(<Harness />);
+    const scanId = root.children[0].id;
+    const el = await vi.waitFor(() => {
+      const e = document.querySelector(`[data-icicle-id="${CSS.escape(scanId)}"]`) as SVGGElement | null;
+      if (!e) throw new Error("not rendered");
+      return e;
+    });
+    // Modal (zag) の Esc は HTML 要素から来たキーを対象にするので、フォーカスは HTML のバッジに置く。
+    const badge = screen
+      .getAllByRole("button")
+      .find((b) => /Seq Scan/.test(b.textContent ?? "")) as HTMLElement;
+    // 全景では Esc を奪わない (Modal の dismiss を止める印が無い)。
+    expect(document.querySelector("[data-modal-esc-guard]")).toBeNull();
+    fireEvent.click(el);
+    expect(ids()).toEqual([scanId]);
+    // ズーム中はズームアウトできるので、Modal の Esc dismiss を止める印が付く。
+    expect(document.querySelector("[data-modal-esc-guard]")).not.toBeNull();
+    badge.focus();
+    fireEvent.keyDown(badge, { key: "Escape" });
+    expect(ids()).toHaveLength(3);
+    await new Promise((r) => setTimeout(r, 600));
+    expect(onClose).not.toHaveBeenCalled();
+    // 全景に戻ったので、次の Esc はモーダルを閉じる。
+    fireEvent.keyDown(badge, { key: "Escape" });
+    await vi.waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
   });
 });
