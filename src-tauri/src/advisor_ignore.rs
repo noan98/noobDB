@@ -107,6 +107,29 @@ pub fn partition(
         .partition(|f| !ignored.contains(&f.key()))
 }
 
+/// プロファイル削除時に、そのプロファイルの「対応しない」をすべて消す。削除した件数を返す。
+pub fn delete_profile_data(profile_id: &str) -> Result<u64> {
+    STORE.update::<IgnoreFile, _>(|f| purge_profile(f, profile_id))
+}
+
+/// 保存済みのプロファイル ID (起動時の孤立データ掃除用)。
+pub fn profile_ids() -> Result<Vec<String>> {
+    let file: IgnoreFile = STORE.read()?;
+    let set: std::collections::BTreeSet<&str> = file
+        .ignores
+        .iter()
+        .filter_map(|e| e.profile_id.as_deref())
+        .collect();
+    Ok(set.into_iter().map(str::to_string).collect())
+}
+
+fn purge_profile(file: &mut IgnoreFile, profile_id: &str) -> u64 {
+    let before = file.ignores.len();
+    file.ignores
+        .retain(|e| e.profile_id.as_deref() != Some(profile_id));
+    (before - file.ignores.len()) as u64
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -154,5 +177,21 @@ mod tests {
         let (active, silenced) = partition(vec![a.clone(), b.clone(), c.clone()], &ignored);
         assert_eq!(active, vec![a, c]);
         assert_eq!(silenced, vec![b]);
+    }
+
+    #[test]
+    fn purge_profile_removes_only_that_profile() {
+        let mut file = IgnoreFile::default();
+        let finding = f(RuleId::MissingPrimaryKey, "t", &[], &[]);
+        add_to(&mut file, Some("p"), "db1", &finding, "t");
+        add_to(&mut file, Some("p"), "db2", &finding, "t");
+        add_to(&mut file, Some("q"), "db1", &finding, "t");
+        add_to(&mut file, None, "db1", &finding, "t");
+        assert_eq!(purge_profile(&mut file, "p"), 2);
+        assert_eq!(file.ignores.len(), 2);
+        assert!(file
+            .ignores
+            .iter()
+            .all(|e| e.profile_id.as_deref() != Some("p")));
     }
 }

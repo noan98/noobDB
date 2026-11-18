@@ -69,6 +69,36 @@ pub fn attach_and_roll(
     STORE.update::<SnapshotFile, _>(|f| attach_in(f, profile_id, database, stats, &now))
 }
 
+/// プロファイル削除時に、そのプロファイルのスナップショットをすべて消す (全データベース分)。
+/// 削除した件数を返す。キーは `"{profile_id}|{database}"`。
+pub fn delete_profile_data(profile_id: &str) -> Result<u64> {
+    STORE.update::<SnapshotFile, _>(|f| purge_profile(f, profile_id))
+}
+
+/// 保存済みのプロファイル ID (起動時の孤立データ掃除用)。プロファイルを持たない一時接続
+/// (キー接頭辞 `-`) は含まない。
+pub fn profile_ids() -> Result<Vec<String>> {
+    let file: SnapshotFile = STORE.read()?;
+    Ok(ids_in(&file))
+}
+
+fn ids_in(file: &SnapshotFile) -> Vec<String> {
+    let set: std::collections::BTreeSet<&str> = file
+        .snapshots
+        .keys()
+        .filter_map(|k| k.split_once('|').map(|(p, _)| p))
+        .filter(|p| *p != "-")
+        .collect();
+    set.into_iter().map(str::to_string).collect()
+}
+
+fn purge_profile(file: &mut SnapshotFile, profile_id: &str) -> u64 {
+    let prefix = format!("{profile_id}|");
+    let before = file.snapshots.len();
+    file.snapshots.retain(|k, _| !k.starts_with(&prefix));
+    (before - file.snapshots.len()) as u64
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -194,5 +224,38 @@ mod tests {
             );
         }
         assert_eq!(file.snapshots.len(), MAX_KEYS);
+    }
+
+    #[test]
+    fn purge_profile_removes_only_that_profile_and_lists_ids() {
+        let mut file = SnapshotFile::default();
+        let mut stats = vec![stat("a", 1, 1)];
+        attach_in(
+            &mut file,
+            Some("p"),
+            "db1",
+            &mut stats,
+            "2026-01-01T00:00:00Z",
+        );
+        attach_in(
+            &mut file,
+            Some("p"),
+            "db2",
+            &mut stats,
+            "2026-01-01T00:00:00Z",
+        );
+        attach_in(
+            &mut file,
+            Some("pp"),
+            "db1",
+            &mut stats,
+            "2026-01-01T00:00:00Z",
+        );
+        attach_in(&mut file, None, "db1", &mut stats, "2026-01-01T00:00:00Z");
+        assert_eq!(ids_in(&file), vec!["p", "pp"]);
+        // 接頭辞が同じ別 ID ("pp") は巻き込まない。
+        assert_eq!(purge_profile(&mut file, "p"), 2);
+        assert_eq!(ids_in(&file), vec!["pp"]);
+        assert_eq!(file.snapshots.len(), 2);
     }
 }

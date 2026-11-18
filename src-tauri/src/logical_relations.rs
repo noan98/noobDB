@@ -167,6 +167,34 @@ pub fn remove(
     })
 }
 
+/// プロファイル削除時に、そのプロファイルの論理リレーションをすべて消す (全データベース分)。
+/// 削除した件数を返す。
+pub fn delete_profile_data(profile_id: &str) -> Result<u64> {
+    STORE.update::<RelationFile, _>(|f| purge_profile(f, profile_id))
+}
+
+/// 保存済みのプロファイル ID (起動時の孤立データ掃除用)。プロファイルを持たない一時接続は含まない。
+pub fn profile_ids() -> Result<Vec<String>> {
+    let file: RelationFile = STORE.read()?;
+    Ok(distinct_ids(
+        file.relations
+            .iter()
+            .filter_map(|e| e.profile_id.as_deref()),
+    ))
+}
+
+fn purge_profile(file: &mut RelationFile, profile_id: &str) -> u64 {
+    let before = file.relations.len();
+    file.relations
+        .retain(|e| e.profile_id.as_deref() != Some(profile_id));
+    (before - file.relations.len()) as u64
+}
+
+fn distinct_ids<'a>(ids: impl Iterator<Item = &'a str>) -> Vec<String> {
+    let set: std::collections::BTreeSet<&str> = ids.collect();
+    set.into_iter().map(str::to_string).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -232,5 +260,26 @@ mod tests {
         let again: RelationFile =
             serde_json::from_str(&serde_json::to_string(&file).unwrap()).unwrap();
         assert_eq!(again.relations, file.relations);
+    }
+
+    #[test]
+    fn purge_profile_removes_only_that_profile_across_databases() {
+        let mut f = RelationFile::default();
+        let i = input("orders", &["user_id"], "users", &["id"]);
+        add_to(&mut f, Some("p"), "db1", &i, "t");
+        add_to(&mut f, Some("p"), "db2", &i, "t");
+        add_to(&mut f, Some("q"), "db1", &i, "t");
+        add_to(&mut f, None, "db1", &i, "t");
+        assert_eq!(purge_profile(&mut f, "p"), 2);
+        assert!(list_from(&f, Some("p"), "db1").is_empty());
+        assert!(list_from(&f, Some("p"), "db2").is_empty());
+        assert_eq!(list_from(&f, Some("q"), "db1").len(), 1);
+        assert_eq!(list_from(&f, None, "db1").len(), 1);
+        assert_eq!(purge_profile(&mut f, "p"), 0);
+    }
+
+    #[test]
+    fn distinct_ids_dedupes_and_sorts() {
+        assert_eq!(distinct_ids(["b", "a", "b"].into_iter()), vec!["a", "b"]);
     }
 }

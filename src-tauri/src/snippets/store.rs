@@ -199,6 +199,21 @@ pub fn new_snippet_id() -> String {
         .collect()
 }
 
+/// 特定プロファイル専用のスコープを持つスニペットが参照しているプロファイル ID
+/// (起動時の孤立データ掃除用)。
+pub fn scoped_profile_ids() -> Result<Vec<String>> {
+    let _guard = lock_store()?;
+    let all = load_all_locked()?;
+    let set: std::collections::BTreeSet<&str> = all
+        .iter()
+        .filter_map(|s| match &s.scope {
+            super::SnippetScope::Profile { profile_id } => Some(profile_id.as_str()),
+            _ => None,
+        })
+        .collect();
+    Ok(set.into_iter().map(str::to_string).collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

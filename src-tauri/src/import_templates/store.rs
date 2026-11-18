@@ -154,6 +154,36 @@ pub fn delete(id: &str) -> Result<()> {
     Ok(())
 }
 
+/// プロファイル削除時に、そのプロファイルのインポートテンプレートをすべて消す。
+/// 削除した件数を返す。
+pub fn delete_profile_data(profile_id: &str) -> Result<u64> {
+    let _guard = lock_store()?;
+    let path = store_path()?;
+    let mut all = load_at(&path)?;
+    let n = purge_profile(&mut all, profile_id);
+    if n > 0 {
+        save_at(&path, &all)?;
+    }
+    Ok(n)
+}
+
+/// 保存済みのプロファイル ID (起動時の孤立データ掃除用)。
+pub fn profile_ids() -> Result<Vec<String>> {
+    let _guard = lock_store()?;
+    Ok(ids_in(&load_at(&store_path()?)?))
+}
+
+fn purge_profile(all: &mut Vec<ImportTemplate>, profile_id: &str) -> u64 {
+    let before = all.len();
+    all.retain(|t| t.profile_id != profile_id);
+    (before - all.len()) as u64
+}
+
+fn ids_in(all: &[ImportTemplate]) -> Vec<String> {
+    let set: std::collections::BTreeSet<&str> = all.iter().map(|t| t.profile_id.as_str()).collect();
+    set.into_iter().map(str::to_string).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::TemplateColumn;
@@ -275,5 +305,19 @@ mod tests {
         assert!(!keys
             .iter()
             .any(|k| k.contains("path") || k.contains("password")));
+    }
+
+    #[test]
+    fn purge_profile_removes_only_that_profile() {
+        let mut all = vec![
+            tpl("p", Some("shop"), "orders"),
+            tpl("p", None, "users"),
+            tpl("q", Some("shop"), "orders"),
+        ];
+        assert_eq!(ids_in(&all), vec!["p", "q"]);
+        assert_eq!(purge_profile(&mut all, "p"), 2);
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].profile_id, "q");
+        assert_eq!(purge_profile(&mut all, "p"), 0);
     }
 }

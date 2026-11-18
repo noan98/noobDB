@@ -1,4 +1,5 @@
 pub mod backup;
+pub mod cleanup;
 pub mod secrets;
 pub mod store;
 

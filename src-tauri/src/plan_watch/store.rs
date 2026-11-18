@@ -166,6 +166,17 @@ pub async fn import_legacy(profile_id: &str, watches: Vec<WatchEntry>) -> Result
     import_legacy_in(pool().await?, profile_id, watches).await
 }
 
+/// プロファイル削除時に、そのプロファイルのウォッチと世代 (計画) をすべて消す。
+/// 削除した世代数を返す。
+pub async fn delete_profile_data(profile_id: &str) -> Result<u64> {
+    delete_profile_data_in(pool().await?, profile_id).await
+}
+
+/// 保存済みのプロファイル ID (起動時の孤立データ掃除用)。
+pub async fn profile_ids() -> Result<Vec<String>> {
+    profile_ids_in(pool().await?).await
+}
+
 // ── 本体 (プール注入) ──
 
 struct NewGeneration<'a> {
@@ -340,6 +351,30 @@ async fn record_in(
     .execute(pool)
     .await?;
     Ok(RecordOutcome { added: true, prev })
+}
+
+async fn delete_profile_data_in(pool: &SqlitePool, profile_id: &str) -> Result<u64> {
+    let _guard = WRITE_LOCK.lock().await;
+    let n = sqlx::query(
+        "DELETE FROM generation WHERE watch_id IN (SELECT id FROM watch WHERE profile_id = ?)",
+    )
+    .bind(profile_id)
+    .execute(pool)
+    .await?
+    .rows_affected();
+    sqlx::query("DELETE FROM watch WHERE profile_id = ?")
+        .bind(profile_id)
+        .execute(pool)
+        .await?;
+    Ok(n)
+}
+
+async fn profile_ids_in(pool: &SqlitePool) -> Result<Vec<String>> {
+    Ok(
+        sqlx::query_scalar("SELECT DISTINCT profile_id FROM watch ORDER BY profile_id")
+            .fetch_all(pool)
+            .await?,
+    )
 }
 
 async fn delete_snippet_in(pool: &SqlitePool, snippet_id: &str) -> Result<u64> {
@@ -577,5 +612,19 @@ mod tests {
             "driver":"sqlite","payloadKind":"sqliteRows","payload":"[[2,0,\"SCAN t\"]]","fingerprint":"[]"}]}"#;
         let e: WatchEntry = serde_json::from_str(json).unwrap();
         assert_eq!(e.generations[0].payload_kind, PayloadKind::SqliteRows);
+    }
+
+    #[tokio::test]
+    async fn delete_profile_data_removes_watches_and_generations_of_that_profile_only() {
+        let pool = temp_pool().await;
+        set_watched_in(&pool, "p", "s1", true).await.unwrap();
+        set_watched_in(&pool, "q", "s1", true).await.unwrap();
+        rec(&pool, "p", "s1", "a", 20).await;
+        rec(&pool, "q", "s1", "a", 20).await;
+        assert_eq!(profile_ids_in(&pool).await.unwrap(), vec!["p", "q"]);
+        assert_eq!(delete_profile_data_in(&pool, "p").await.unwrap(), 1);
+        assert!(list_in(&pool, "p").await.unwrap().is_empty());
+        assert_eq!(list_in(&pool, "q").await.unwrap()[0].generations.len(), 1);
+        assert_eq!(profile_ids_in(&pool).await.unwrap(), vec!["q"]);
     }
 }
