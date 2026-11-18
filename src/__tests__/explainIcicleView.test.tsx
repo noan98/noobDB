@@ -55,11 +55,89 @@ describe("ExplainIcicleView", () => {
 
   it("ホットスポットのバッジが自己時間で出る", () => {
     renderWithProviders(<ExplainIcicleView root={root} selectedId={root.id} onSelect={() => {}} />);
-    expect(screen.getAllByRole("button").some((b) => /70/.test(b.textContent ?? ""))).toBe(true);
+    expect(
+      screen.getByRole("button", { name: /Seq Scan: 自己 70 ms \(70%\)|Seq Scan: self 70 ms \(70%\)/ }),
+    ).toBeTruthy();
   });
 
   it("色リテラルを書かず colorScale を使う", () => {
     expect(source).toContain("SEQUENTIAL_RAMPS");
     expect(source).not.toMatch(/#[0-9a-fA-F]{6}\b/);
+  });
+
+  const ids = () =>
+    [...document.querySelectorAll("[data-icicle-id]")].map((e) => e.getAttribute("data-icicle-id"));
+  const rectEl = (id: string) =>
+    document.querySelector(`[data-icicle-id="${CSS.escape(id)}"]`) as SVGGElement;
+
+  it("キーボード: 矢印で移動し、Enter でズーム、Esc で戻る (伝播しない)", () => {
+    function Harness() {
+      const [sel, setSel] = useState(root.id);
+      return <ExplainIcicleView root={root} selectedId={sel} onSelect={setSel} />;
+    }
+    const outer = vi.fn();
+    renderWithProviders(
+      <div onKeyDown={outer}>
+        <Harness />
+      </div>,
+    );
+    const [scan, index] = root.children;
+    rectEl(root.id).focus();
+    fireEvent.keyDown(rectEl(root.id), { key: "ArrowDown" });
+    expect(document.activeElement).toBe(rectEl(scan.id));
+    fireEvent.keyDown(rectEl(scan.id), { key: "ArrowRight" });
+    expect(document.activeElement).toBe(rectEl(index.id));
+    fireEvent.keyDown(rectEl(index.id), { key: "ArrowLeft" });
+    expect(document.activeElement).toBe(rectEl(scan.id));
+    fireEvent.keyDown(rectEl(scan.id), { key: "ArrowUp" });
+    expect(document.activeElement).toBe(rectEl(root.id));
+    fireEvent.keyDown(rectEl(scan.id), { key: "Enter" });
+    expect(ids()).toEqual([scan.id]);
+    expect(rectEl(scan.id).getAttribute("aria-selected")).toBe("true");
+    outer.mockClear();
+    fireEvent.keyDown(rectEl(scan.id), { key: "Escape" });
+    expect(ids()).toHaveLength(3);
+    expect(outer).not.toHaveBeenCalled();
+  });
+
+  it("描ける値が無い計画は空表示", () => {
+    const empty = parsePostgresPlan(JSON.stringify([{ Plan: { "Node Type": "Result" } }])).root as PlanNode;
+    renderWithProviders(<ExplainIcicleView root={empty} selectedId={null} onSelect={() => {}} />);
+    expect(screen.getByText(/描画できる|no time or cost/i)).toBeTruthy();
+  });
+
+  it("選択ノードが見えないとき、Tab 停止位置は見えている祖先になる", () => {
+    const tiny = parsePostgresPlan(
+      JSON.stringify([
+        {
+          Plan: {
+            "Node Type": "Sort",
+            "Actual Rows": 1,
+            "Actual Loops": 1,
+            "Actual Total Time": 100000,
+            Plans: [
+              { "Node Type": "Seq Scan", "Actual Rows": 1, "Actual Loops": 1, "Actual Total Time": 99999 },
+              { "Node Type": "Index Scan", "Actual Rows": 1, "Actual Loops": 1, "Actual Total Time": 0.001 },
+            ],
+          },
+        },
+      ]),
+    ).root as PlanNode;
+    renderWithProviders(
+      <ExplainIcicleView root={tiny} selectedId={tiny.children[1].id} onSelect={() => {}} />,
+    );
+    expect(rectEl(tiny.children[1].id)).toBeNull();
+    expect(rectEl(tiny.id).getAttribute("tabindex")).toBe("0");
+  });
+
+  it("ホットスポットのバッジは選択だけでズームしない", () => {
+    const onSelect = vi.fn();
+    renderWithProviders(<ExplainIcicleView root={root} selectedId={root.id} onSelect={onSelect} />);
+    const badge = screen
+      .getAllByRole("button")
+      .find((b) => /Seq Scan/.test(b.textContent ?? "")) as HTMLElement;
+    fireEvent.click(badge);
+    expect(onSelect).toHaveBeenCalledWith(root.children[0].id);
+    expect(ids()).toHaveLength(3);
   });
 });

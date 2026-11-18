@@ -52,10 +52,14 @@ export function nodeInclusive(node: PlanNode, basis: IcicleBasis): number | null
 
 export interface SelfTimeEntry {
   id: string;
-  /** 包含値。自身が申告しない中継ノードは子の包含値の和。 */
+  /** 壁時計ベースの包含値 (並列・loops の重複計上を縮小した値)。幅と share はこれで決める。 */
   inclusive: number;
-  /** 自己値 = max(0, 包含 − 子の包含の和)。 */
+  /** 壁時計ベースの自己値 = 縮小後の max(0, 包含 − 子の包含の和)。 */
   self: number;
+  /** 申告値のままの包含値 (縮小前)。自身が申告しない中継ノードは子の rawInclusive の和。 */
+  rawInclusive: number;
+  /** 申告値のままの自己値 (縮小前)。 */
+  rawSelf: number;
   /** 子の合計が自身を超え、自己値を 0 へ丸めた (並列ワーカー / loops 由来)。 */
   clamped: boolean;
 }
@@ -64,9 +68,14 @@ export interface SelfTimeEntry {
  * 全ノードの包含値と自己値を計算する。
  * 並列 (PostgreSQL の `Gather` の下は loops = ワーカー数 + 1) や MySQL の loops で
  * 子の包含値の和が親を超えることがあり、その場合の自己値は 0 に丸めて `clamped` を立てる。
+ * さらに、超えた親の子孫には縮小率 (親の包含 / 子の和) を部分木へ累積して掛け、
+ * `layoutIcicle` の幅の縮小と同じ比率の壁時計ベースの値 (`inclusive` / `self`) にする。
+ * これで self の share は 100% を超えず、全ノードの self の和はルートの包含値に一致する。
+ * 縮小前の申告値は `rawInclusive` / `rawSelf` に残す。
  */
 export function computeSelfTimes(root: PlanNode, basis: IcicleBasis): Map<string, SelfTimeEntry> {
   const out = new Map<string, SelfTimeEntry>();
+  const childSums = new Map<string, number>();
   const walk = (node: PlanNode): number => {
     let childSum = 0;
     for (const c of node.children) childSum += walk(c);
@@ -74,10 +83,22 @@ export function computeSelfTimes(root: PlanNode, basis: IcicleBasis): Map<string
     const inclusive = own ?? childSum;
     const over = childSum - inclusive;
     const clamped = own !== null && over > Math.max(CLAMP_ABS_TOLERANCE, inclusive * CLAMP_REL_TOLERANCE);
-    out.set(node.id, { id: node.id, inclusive, self: Math.max(0, inclusive - childSum), clamped });
+    const rawSelf = Math.max(0, inclusive - childSum);
+    childSums.set(node.id, childSum);
+    out.set(node.id, { id: node.id, inclusive, self: rawSelf, rawInclusive: inclusive, rawSelf, clamped });
     return inclusive;
   };
   walk(root);
+  const scaleDown = (node: PlanNode, scale: number) => {
+    const e = out.get(node.id);
+    if (!e) return;
+    e.inclusive = e.rawInclusive * scale;
+    e.self = e.rawSelf * scale;
+    const childSum = childSums.get(node.id) ?? 0;
+    const ratio = childSum > e.rawInclusive && childSum > 0 ? e.rawInclusive / childSum : 1;
+    for (const c of node.children) scaleDown(c, scale * ratio);
+  };
+  scaleDown(root, 1);
   return out;
 }
 
@@ -155,7 +176,7 @@ export function layoutIcicle(root: PlanNode, basis: IcicleBasis, focusId?: strin
       w,
       inclusive: e.inclusive,
       self: e.self,
-      share: e.self / planTotal,
+      share: Math.min(1, e.self / planTotal),
       heat: maxSelf > 0 ? e.self / maxSelf : 0,
       clamped: e.clamped,
     });
@@ -185,7 +206,12 @@ export function layoutIcicle(root: PlanNode, basis: IcicleBasis, focusId?: strin
     .filter((e) => e.self > 0)
     .sort((a, b) => b.self - a.self || (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0))
     .slice(0, ICICLE_HOTSPOT_COUNT)
-    .map((e) => ({ id: e.id, label: labelOf.get(e.id) ?? e.id, self: e.self, share: e.self / planTotal }));
+    .map((e) => ({
+      id: e.id,
+      label: labelOf.get(e.id) ?? e.id,
+      self: e.self,
+      share: Math.min(1, e.self / planTotal),
+    }));
 
   return {
     basis,
@@ -197,6 +223,11 @@ export function layoutIcicle(root: PlanNode, basis: IcicleBasis, focusId?: strin
     hotspots,
     estimated: all.some((e) => e.clamped),
   };
+}
+
+/** 図に描ける量 (ルートの包含値 > 0) があるか。SQLite のようにコストも実測も無い計画は false。 */
+export function icicleAvailable(root: PlanNode): boolean {
+  return layoutIcicle(root, icicleBasis(root)) !== null;
 }
 
 /** ルートからズーム先までのパンくず (ルート → … → ズーム先)。見つからなければ空。 */

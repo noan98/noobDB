@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   computeSelfTimes,
+  icicleAvailable,
   icicleBasis,
   icicleBreadcrumb,
   layoutIcicle,
@@ -83,7 +84,9 @@ describe("computeSelfTimes: PostgreSQL EXPLAIN ANALYZE", () => {
     });
     const m = computeSelfTimes(root, "actual");
     expect(m.get(root.id)).toMatchObject({ inclusive: 40, self: 0, clamped: true });
-    expect(m.get(root.children[0].id)?.inclusive).toBe(90);
+    // 申告値は rawInclusive に残り、壁時計ベースの値は親 (40) に収まる
+    expect(m.get(root.children[0].id)?.rawInclusive).toBe(90);
+    expect(m.get(root.children[0].id)?.inclusive).toBeCloseTo(40);
     const layout = layoutIcicle(root, "actual");
     expect(layout?.estimated).toBe(true);
     // 子は親の枠 (幅 1) に収まる
@@ -213,5 +216,60 @@ describe("layoutIcicle: ズーム", () => {
       root.children[1].id,
     ]);
     expect(icicleBreadcrumb(root, "nope")).toEqual([]);
+  });
+});
+
+describe("並列配下の壁時計ベースの値 (share は 100% を超えない)", () => {
+  const root = pg({
+    "Node Type": "Aggregate",
+    "Actual Rows": 1,
+    "Actual Loops": 1,
+    "Actual Total Time": 110,
+    Plans: [
+      {
+        "Node Type": "Gather",
+        "Actual Rows": 1,
+        "Actual Loops": 1,
+        "Actual Total Time": 105,
+        Plans: [
+          { "Node Type": "Parallel Seq Scan", "Actual Rows": 1, "Actual Loops": 3, "Actual Total Time": 100 },
+        ],
+      },
+    ],
+  });
+
+  it("縮小率を部分木へ伝播し、self / share が実時間を超えない", () => {
+    const layout = layoutIcicle(root, "actual");
+    const scan = layout?.rects.find((r) => r.label === "Parallel Seq Scan");
+    expect(scan?.self).toBeCloseTo(105);
+    expect(scan?.share).toBeLessThanOrEqual(1);
+    expect(scan?.share).toBeCloseTo(105 / 110);
+    const m = computeSelfTimes(root, "actual");
+    const raw = m.get(root.children[0].children[0].id);
+    expect(raw).toMatchObject({ rawInclusive: 300, rawSelf: 300 });
+    for (const r of layout?.rects ?? []) expect(r.share).toBeLessThanOrEqual(1);
+  });
+
+  it("全ノードの self の share 合計 ≈ 1", () => {
+    for (const r of [root, pg(PG_ANALYZE)]) {
+      const layout = layoutIcicle(r, "actual");
+      const sum = (layout?.rects ?? []).reduce((acc, x) => acc + x.share, 0);
+      expect(sum).toBeCloseTo(1);
+    }
+  });
+
+  it("子の幅は親の枠に収まる", () => {
+    const layout = layoutIcicle(root, "actual");
+    const gather = layout?.rects.find((r) => r.label === "Gather");
+    const scan = layout?.rects.find((r) => r.label === "Parallel Seq Scan");
+    expect((scan?.x ?? 0) + (scan?.w ?? 0)).toBeLessThanOrEqual((gather?.x ?? 0) + (gather?.w ?? 0) + 1e-9);
+  });
+});
+
+describe("icicleAvailable", () => {
+  it("値のある計画は true、SQLite の計画は false", () => {
+    expect(icicleAvailable(pg(PG_ANALYZE))).toBe(true);
+    const { root } = parseSqlitePlan([{ id: 2, parent: 0, detail: "SCAN users" }]);
+    expect(icicleAvailable(root as PlanNode)).toBe(false);
   });
 });

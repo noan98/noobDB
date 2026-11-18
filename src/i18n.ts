@@ -1983,6 +1983,9 @@ const en = {
   explainIcicleEstimatedNote:
     "Where child nodes add up to more than their parent (parallel workers, loops), self time is clamped to 0, so these values are estimates.",
   explainIcicleEmpty: "There is no time or cost data to draw.",
+  explainIcicleCostNote:
+    "Estimated costs include cumulative values, so treat the breakdown as a rough guide.",
+  explainIcicleUnavailable: "This plan has no timing or cost values to draw.",
   explainIcicleHotspots: "Hotspots",
   explainIcicleHotspotBadge: "{name}: self {value} ({pct}%)",
   explainIcicleBreadcrumb: "Zoom path",
@@ -10962,6 +10965,8 @@ const ja: Dict = {
   explainIcicleEstimatedNote:
     "子ノードの合計が親を超える箇所 (並列ワーカー・ループ) は自己時間を 0 に丸めているため、推定値です。",
   explainIcicleEmpty: "描画できる時間・コストの情報がありません。",
+  explainIcicleCostNote: "推定コストは累積値を含むため、配分は目安です。",
+  explainIcicleUnavailable: "この計画には描画できる時間・コストの値がありません。",
   explainIcicleHotspots: "ホットスポット",
   explainIcicleHotspotBadge: "{name}: 自己 {value} ({pct}%)",
   explainIcicleBreadcrumb: "ズームの経路",

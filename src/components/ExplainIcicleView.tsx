@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Box, chakra } from "@chakra-ui/react";
 import { motion, useReducedMotion } from "motion/react";
 
 import { SEQUENTIAL_RAMPS, rampStops, readableInk, sampleRamp, useIsDarkTheme } from "../colorScale";
 import { useT } from "../i18n";
 import { transitions } from "../motion";
-import { formatDurationMs, formatNumber, type PlanNode } from "./explainPlan";
+import { findNode, formatDurationMs, formatNumber, type PlanNode } from "./explainPlan";
 import {
   ICICLE_MIN_VISIBLE_WIDTH,
   icicleBasis,
@@ -81,7 +81,10 @@ export function ExplainIcicleView({
     setFocusId(root.id);
   }, [root]);
 
-  const layout = useMemo(() => layoutIcicle(root, basis, focusId), [root, basis, focusId]);
+  // 計画切替直後の 1 フレームは focusId が古いままなので、無ければルートで描く。
+  const activeFocus = findNode(root, focusId) ? focusId : root.id;
+  const layout = useMemo(() => layoutIcicle(root, basis, activeFocus), [root, basis, activeFocus]);
+  const clipPrefix = `icicle-clip-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
 
   // ツリー側などで選択がズーム範囲外へ移ったら、全景へ戻して選択ノードが見えるようにする。
   useEffect(() => {
@@ -101,7 +104,20 @@ export function ExplainIcicleView({
   const byId = new Map(layout.rects.map((r) => [r.id, r]));
   const height = (layout.maxDepth + 1) * ROW_H;
   const move = reduced ? { duration: 0 } : transitions.emphasized;
-  const tabStop = selectedId && byId.has(selectedId) ? selectedId : layout.focusId;
+  const visibleIds = new Set(visible.map((r) => r.id));
+  // 選択ノードが見えない (幅が極小 / 範囲外) ときは、最も近い見えている祖先、無ければズーム先を Tab 停止位置にする。
+  let tabStop = layout.focusId;
+  for (
+    let cur = selectedId ? byId.get(selectedId) : undefined;
+    cur;
+    cur = cur.parentId ? byId.get(cur.parentId) : undefined
+  ) {
+    if (visibleIds.has(cur.id)) {
+      tabStop = cur.id;
+      break;
+    }
+  }
+  const hotspotIds = new Set(layout.hotspots.map((h) => h.id));
   const shown = byId.get(hoverId ?? selectedId ?? "") ?? byId.get(layout.focusId);
 
   const describe = (r: IcicleRect) =>
@@ -154,6 +170,7 @@ export function ExplainIcicleView({
         const crumbs = icicleBreadcrumb(root, layout.focusId);
         if (crumbs.length > 1) {
           e.preventDefault();
+          e.stopPropagation();
           setFocusId(crumbs[crumbs.length - 2].id);
         }
         return;
@@ -191,7 +208,14 @@ export function ExplainIcicleView({
           {t("explainIcicleHotspots")}
         </chakra.span>
         {layout.hotspots.map((h) => (
-          <Button key={h.id} size="sm" variant="secondary" onClick={() => choose(h.id)}>
+          <Button
+            key={h.id}
+            size="sm"
+            variant="secondary"
+            onClick={() => onSelect(h.id)}
+            onMouseEnter={() => setHoverId(h.id)}
+            onMouseLeave={() => setHoverId(null)}
+          >
             {t("explainIcicleHotspotBadge", {
               name: h.label,
               value: formatValue(h.self, basis),
@@ -221,7 +245,7 @@ export function ExplainIcicleView({
           ref={svgRef}
           viewBox={`0 0 ${VIEW_W} ${height}`}
           width="100%"
-          role="group"
+          role="listbox"
           aria-label={t("explainIcicleSvgLabel")}
           onKeyDown={onKeyDown}
           style={{ display: "block" }}
@@ -234,14 +258,17 @@ export function ExplainIcicleView({
             const ink = readableInk(fill);
             const sel = r.id === selectedId;
             const label = clip(r.label, w);
+            const rw = Math.max(0, w - ROW_GAP);
+            const emphasized = sel || r.id === hoverId;
+            const clipId = `${clipPrefix}-${r.id.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
             return (
               <g
                 key={r.id}
                 data-icicle-id={r.id}
-                role="button"
+                role="option"
                 tabIndex={r.id === tabStop ? 0 : -1}
                 aria-label={describe(r)}
-                aria-pressed={sel}
+                aria-selected={sel}
                 style={{ cursor: "pointer", outline: "none" }}
                 onClick={() => choose(r.id)}
                 onMouseEnter={() => setHoverId(r.id)}
@@ -249,17 +276,32 @@ export function ExplainIcicleView({
                 onFocus={() => setHoverId(r.id)}
                 onBlur={() => setHoverId(null)}
               >
+                <clipPath id={clipId}>
+                  <motion.rect
+                    initial={false}
+                    animate={{ attrX: x, attrY: y, width: rw, height: ROW_H - ROW_GAP }}
+                    transition={move}
+                  />
+                </clipPath>
                 <motion.rect
                   initial={false}
-                  animate={{ attrX: x, attrY: y, width: Math.max(0, w - ROW_GAP), height: ROW_H - ROW_GAP }}
+                  animate={{ attrX: x, attrY: y, width: rw, height: ROW_H - ROW_GAP }}
                   transition={move}
                   rx={3}
                   fill={fill}
-                  stroke={sel || r.id === hoverId ? "var(--accent)" : "var(--border-subtle)"}
-                  strokeWidth={sel ? 2 : 1}
+                  stroke={
+                    emphasized
+                      ? "var(--accent)"
+                      : hotspotIds.has(r.id)
+                        ? "var(--text)"
+                        : "var(--border-subtle)"
+                  }
+                  strokeWidth={emphasized || hotspotIds.has(r.id) ? 2 : 1}
+                  strokeDasharray={hotspotIds.has(r.id) && !emphasized ? "4 3" : undefined}
                 />
                 {label && (
                   <motion.text
+                    clipPath={`url(#${clipId})`}
                     initial={false}
                     animate={{ attrX: x + LABEL_PAD, attrY: y + ROW_H / 2 }}
                     transition={move}
@@ -276,11 +318,7 @@ export function ExplainIcicleView({
         </svg>
       </Box>
       <Box css={barCss} borderTop="1px solid var(--border-subtle)" borderBottom="none">
-        {shown && (
-          <chakra.span textStyle="numeric" role="status" aria-live="polite">
-            {describe(shown)}
-          </chakra.span>
-        )}
+        {shown && <chakra.span textStyle="numeric">{describe(shown)}</chakra.span>}
         <Box flex="1" />
         <chakra.span textStyle="caption">{t("explainIcicleLegendLow")}</chakra.span>
         <Box
@@ -293,10 +331,10 @@ export function ExplainIcicleView({
         />
         <chakra.span textStyle="caption">{t("explainIcicleLegendHigh")}</chakra.span>
       </Box>
-      {layout.estimated && (
+      {(basis === "cost" || layout.estimated) && (
         <Box css={barCss} borderTop="1px solid var(--border-subtle)" borderBottom="none">
           <chakra.span textStyle="caption" color="app.textWarning">
-            {t("explainIcicleEstimatedNote")}
+            {t(basis === "cost" ? "explainIcicleCostNote" : "explainIcicleEstimatedNote")}
           </chakra.span>
         </Box>
       )}
