@@ -35,7 +35,9 @@ export type CteRunBlock =
   /** 対象に書き込みを含む CTE が含まれる。 */
   | "writes"
   /** 組み立てた SQL が読み取り専用ガードを通らない。 */
-  | "notReadOnly";
+  | "notReadOnly"
+  /** 定義を確実に切り出せない / 依存を確実に解決できない (SEARCH・CYCLE 句、SQLite の角括弧名など)。 */
+  | "unparsed";
 
 /** 実行できない理由 → 表示文言のキー (ツールチップ / トースト共通)。`unsupported` は WITH 非対応のサーバ。 */
 export const CTE_BLOCK_KEYS: Record<CteRunBlock | "unsupported", I18nKey> = {
@@ -43,6 +45,7 @@ export const CTE_BLOCK_KEYS: Record<CteRunBlock | "unsupported", I18nKey> = {
   notInCte: "cteRunBlockedNotInCte",
   writes: "cteRunBlockedWrites",
   notReadOnly: "cteRunBlockedNotReadOnly",
+  unparsed: "cteRunBlockedUnparsed",
   unsupported: "cteRunBlockedUnsupported",
 };
 
@@ -50,18 +53,21 @@ export type CteRunPlan =
   | { ok: true; sql: string; name: string; title: string; recursive: boolean; keptNames: string[] }
   | { ok: false; reason: CteRunBlock };
 
-const IDENT_RE = /`[^`]+`|"[^"]+"|[A-Za-z_]\w*/g;
+const IDENT_RE = /`[^`]+`|"[^"]+"|\[[^\]]+\]|[A-Za-z_]\w*/g;
 const WRITE_KW = /\b(?:INSERT|UPDATE|DELETE|MERGE)\b(?!\s*\()/i;
 /** `FOR UPDATE` / `FOR NO KEY UPDATE` はロックであってデータ変更ではない (可否は読み取り専用ガードに任せる)。 */
 const LOCK_CLAUSE = /\bFOR\s+(?:NO\s+KEY\s+)?UPDATE\b/gi;
 
 /** 本体 (マスク済み) が参照している識別子 (小文字・引用符なし)。 */
-function referencedNames(maskedBody: string): Set<string> {
+function referencedNames(maskedBody: string, driver: string): Set<string> {
   const out = new Set<string>();
   for (const m of maskedBody.matchAll(IDENT_RE)) {
     const idx = m.index ?? 0;
     if (maskedBody[idx - 1] === ".") continue;
-    out.add(unquote(m[0]).toLowerCase());
+    // `[name]` は SQLite だけが識別子として読む (PG の配列添字・MySQL では識別子ではない)。
+    const bracket = m[0][0] === "[";
+    if (bracket && driver !== "sqlite") continue;
+    out.add((bracket ? m[0].slice(1, -1) : unquote(m[0])).toLowerCase());
   }
   return out;
 }
@@ -82,18 +88,24 @@ export function buildCteRun(opts: {
   const stmt = text.slice(range.from, range.to);
   const rel = Math.max(0, Math.min(offset - range.from, stmt.length));
   const masked = maskLiterals(stmt, driver, { keepQuotedIdentifiers: true, cache: false });
-  const parsed = parseCteDefs(masked);
-  if (!parsed || parsed.defs.length === 0) return { ok: false, reason: "noCte" };
-  const { defs, recursive } = parsed;
+  const parsed = parseCteDefs(masked, driver);
+  if (!parsed) return { ok: false, reason: "noCte" };
+  // WITH で始まるのに 1 つも定義を読めない (角括弧名など) ときは、CTE が無いのではなく解釈できない。
+  if (parsed.defs.length === 0) return { ok: false, reason: parsed.complete ? "noCte" : "unparsed" };
+  const { defs, recursive, complete } = parsed;
   // 前方参照・自己参照 (再帰) できるか。SQLite は RECURSIVE と書かなくても再帰を実行する。
   const forward = recursive || driver === "sqlite";
 
-  const target = defs.findIndex((d) => rel >= d.start && rel <= d.close + 1);
-  if (target < 0) return { ok: false, reason: "notInCte" };
+  const target = defs.findIndex((d) => rel >= d.start && rel <= d.end + 1);
+  if (target < 0) {
+    // 読めなかった定義 (角括弧名など) の中にカーソルがあるかもしれない場合は、WITH 句の外とは言い切れない。
+    const last = defs[defs.length - 1];
+    return { ok: false, reason: !complete && rel > last.start ? "unparsed" : "notInCte" };
+  }
 
   // 対象から推移的に参照される CTE を集める。
   const bodies = defs.map((d) => masked.slice(d.open + 1, d.close));
-  const refs = bodies.map(referencedNames);
+  const refs = bodies.map((b) => referencedNames(b, driver));
   const byName = new Map<string, number[]>();
   defs.forEach((d, i) => {
     const k = d.name.toLowerCase();
@@ -115,6 +127,12 @@ export function buildCteRun(opts: {
   }
   const kept = [...keep].sort((a, b) => a - b);
 
+  // SEARCH / CYCLE の後ろが読めない定義は正しく切り出せない。後続の定義を読み切れていない状態で
+  // 前方参照できる (依存が後段に伸びうる) ときも、依存を確実に解決できないので実行しない。
+  if (kept.some((i) => defs[i].tailUnparsed) || (!complete && forward)) {
+    return { ok: false, reason: "unparsed" };
+  }
+
   if (kept.some((i) => WRITE_KW.test(bodies[i].replace(LOCK_CLAUSE, " "))))
     return { ok: false, reason: "writes" };
 
@@ -123,7 +141,7 @@ export function buildCteRun(opts: {
     forward && kept.some((i) => [...refs[i]].some((n) => (byName.get(n) ?? []).some((j) => j >= i)));
 
   const target0: CteDef = defs[target];
-  const defsSql = kept.map((i) => stmt.slice(defs[i].start, defs[i].close + 1)).join(",\n");
+  const defsSql = kept.map((i) => stmt.slice(defs[i].start, defs[i].end + 1)).join(",\n");
   let sql = `WITH ${recursive ? "RECURSIVE " : ""}${defsSql}\nSELECT * FROM ${target0.rawName}`;
   if (isRecursive && opts.limit && opts.limit > 0) sql += `\nLIMIT ${Math.floor(opts.limit)}`;
 

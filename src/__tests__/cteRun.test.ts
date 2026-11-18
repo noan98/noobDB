@@ -4,7 +4,7 @@ import { buildCteRun, supportsCte } from "../cteRun";
 /** `|` をカーソル位置として、その印を除いた本文でビルドする。 */
 function run(src: string, driver = "postgres", limit: number | null = null) {
   const offset = src.indexOf("|");
-  const text = src.replace("|", "");
+  const text = src.replace(/\|/, "");
   return buildCteRun({ text, offset, driver, limit });
 }
 
@@ -40,6 +40,74 @@ describe("buildCteRun", () => {
   it("先頭の CTE を選ぶと後段は含まれない", () => {
     const r = run("WITH a AS (SELECT |1), b AS (SELECT * FROM a) SELECT * FROM b");
     expect(r).toMatchObject({ ok: true, keptNames: ["a"] });
+  });
+
+  it("引用符付き識別子の中の括弧は構造として数えない", () => {
+    const sql = sqlOf('WITH a AS (SELECT |7 AS "n)") SELECT * FROM a');
+    expect(sql).toBe('WITH a AS (SELECT 7 AS "n)")\nSELECT * FROM a');
+    expect(sqlOf("WITH a AS (SELECT |7 AS `n)`) SELECT * FROM a", "mysql")).toBe(
+      "WITH a AS (SELECT 7 AS `n)`)\nSELECT * FROM a",
+    );
+    expect(sqlOf("WITH a AS (SELECT |7 AS [n)]) SELECT * FROM a", "sqlite")).toBe(
+      "WITH a AS (SELECT 7 AS [n)])\nSELECT * FROM a",
+    );
+  });
+
+  it("SQLite の [name] 参照を依存として認識する (宣言は二重引用符)", () => {
+    const r = run('WITH "a b" AS (SELECT 7 AS n), b AS (SELECT * FROM [a b]|) SELECT * FROM b', "sqlite");
+    expect(r).toMatchObject({ ok: true, keptNames: ["a b", "b"] });
+  });
+
+  it("PG / MySQL では [x] を識別子として読まない (配列添字)", () => {
+    const r = run("WITH a AS (SELECT 1), b AS (SELECT arr[a] FROM t|) SELECT 1", "postgres");
+    expect(r).toMatchObject({ ok: true, keptNames: ["b"] });
+  });
+
+  it("SQLite の角括弧で宣言した CTE が絡み依存を確実に解決できないときは拒否する", () => {
+    expect(run('WITH [a b] AS (SELECT 7), b AS (SELECT * FROM "a b"|) SELECT * FROM b', "sqlite")).toEqual({
+      ok: false,
+      reason: "unparsed",
+    });
+    expect(run("WITH [a b] AS (SELECT |7) SELECT * FROM [a b]", "sqlite")).toEqual({
+      ok: false,
+      reason: "unparsed",
+    });
+    // 解析できた前段だけで完結する (非 forward ドライバの) 場合は実行できる。
+    expect(run("WITH a AS (SELECT |1), [x y] AS (SELECT 2) SELECT 1", "mysql")).toMatchObject({
+      ok: true,
+      keptNames: ["a"],
+    });
+  });
+
+  it("PG の SEARCH / CYCLE 句を定義に含め、後続の CTE も読める", () => {
+    const src =
+      "WITH RECURSIVE t(id, n) AS (SELECT 1, 1 UNION ALL SELECT id, n + 1 FROM t WHERE |n < 3) " +
+      "SEARCH DEPTH FIRST BY id SET ord CYCLE id SET is_cycle USING path, u AS (SELECT * FROM t) SELECT * FROM u";
+    const r = run(src, "postgres", 50);
+    expect(r).toMatchObject({ ok: true, keptNames: ["t"], recursive: true });
+    expect(sqlOf(src, "postgres", 50)).toContain(
+      "SEARCH DEPTH FIRST BY id SET ord CYCLE id SET is_cycle USING path\nSELECT",
+    );
+    const later = run(
+      src.replace("|", "").replace("SELECT * FROM u", "SELECT * FROM |u").replace("|", ""),
+      "postgres",
+    );
+    expect(later).toBeDefined();
+    expect(
+      run(
+        src.replace("WHERE |n < 3", "WHERE n < 3").replace("(SELECT * FROM t)", "(SELECT * FROM |t)"),
+        "postgres",
+      ),
+    ).toMatchObject({
+      ok: true,
+      keptNames: ["t", "u"],
+    });
+  });
+
+  it("読めない形の SEARCH / CYCLE 句がある定義は拒否する", () => {
+    expect(
+      run("WITH RECURSIVE t AS (SELECT |1) CYCLE weird syntax, u AS (SELECT 2) SELECT 1", "postgres"),
+    ).toEqual({ ok: false, reason: "unparsed" });
   });
 
   it("MySQL / PG の非 RECURSIVE では後段の同名は参照元にしない (実テーブルを指す)", () => {

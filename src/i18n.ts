@@ -862,6 +862,8 @@ const en = {
   cteRunBlockedNoCte: "The statement under the cursor has no WITH clause (CTE).",
   cteRunBlockedNotInCte:
     "Place the cursor inside a CTE definition (from its name to its closing parenthesis).",
+  cteRunBlockedUnparsed:
+    "This CTE (or one it depends on) cannot be extracted reliably (e.g. SEARCH / CYCLE clause, bracketed name), so it was not run.",
   cteRunBlockedWrites: "A CTE that modifies data (INSERT / UPDATE / DELETE) cannot be run on its own.",
   cteRunBlockedNotReadOnly: "This CTE cannot be run on its own because it fails the read-only check.",
   cteRunBlockedUnsupported:
@@ -9843,6 +9845,8 @@ const ja: Dict = {
     "カーソルのある WITH 句の CTE と、それが依存する前段の CTE だけを新しい結果タブで実行します (エディタの本文は変わりません)。",
   cteRunBlockedNoCte: "カーソルのある文に WITH 句 (CTE) がありません。",
   cteRunBlockedNotInCte: "カーソルを CTE の定義 (名前から閉じ括弧まで) の中に置いてください。",
+  cteRunBlockedUnparsed:
+    "この CTE (または依存する CTE) の定義を確実に切り出せないため実行しません (SEARCH / CYCLE 句・角括弧の名前など)。",
   cteRunBlockedWrites: "データ変更を含む CTE (INSERT / UPDATE / DELETE) は単体実行の対象外です。",
   cteRunBlockedNotReadOnly: "読み取り専用の検査を通らないため、この CTE は単体実行できません。",
   cteRunBlockedUnsupported:
