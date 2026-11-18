@@ -1441,6 +1441,17 @@ export const PaneView = memo(
                                         )
                                       : undefined
                                   }
+                                  onDescribePeekTable={
+                                    sessionId
+                                      ? gridStable.fn(`${tab.id}:describePeek`, (table: string) =>
+                                          api.describeTable(
+                                            sessionId,
+                                            tab.database ?? selectedProfile?.database ?? "",
+                                            table,
+                                          ),
+                                        )
+                                      : undefined
+                                  }
                                   onLookupQuery={
                                     sessionId
                                       ? gridStable.memo(

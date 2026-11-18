@@ -93,6 +93,9 @@ import { useValuePicker, ValueDatalist, type ValueLookup, type ValuePicker } fro
 /** 候補なしを表す共有の空配列 (レンダーごとに新しい配列を作らない)。 */
 const EMPTY_PICKER_VALUES: string[] = [];
 import { RowInspector } from "./RowInspector";
+import { FkPeekCard } from "./FkPeekCard";
+import type { TooltipRect } from "./tooltipPosition";
+import { FK_PEEK_CLOSE_GRACE_MS, FK_PEEK_HOVER_DELAY_MS, type PeekStep } from "../fkPeek";
 import { SqlEditToggle } from "./SqlEditToggle";
 import type { SqlEditToggleView } from "../sqlResultEdit";
 import { inspectorEditableColumns, inspectorRowEditBlock } from "./rowInspectorEdit";
@@ -1384,6 +1387,11 @@ interface Props {
    * `incomingFks` と揃うときだけタブを出す。
    */
   onRunRelatedQuery?: (sql: string) => Promise<QueryResult>;
+  /**
+   * FK セルの参照先カード (#2405) が、たどった先のテーブルの列メタ (PK・FK の判定) を引く。
+   * `onRunRelatedQuery` と揃うときだけカードを出す。
+   */
+  onDescribePeekTable?: (table: string) => Promise<TableColumnInfo[]>;
   /** 削除予定の行: rowEditKey の集合。 */
   pendingDeleteKeys?: Set<string>;
   /** 追加予定の新規行の数 (変更セットバーの「追加」ピル、#2235)。 */
@@ -3704,6 +3712,10 @@ type GridRowHandlers = {
   onCellContextMenu: (e: ReactMouseEvent<HTMLTableCellElement>, rowIdx: number, colIdx: number) => void;
   /** FK セルのジャンプアイコン (#1393)。右クリックメニューの「参照先へジャンプ」と同じ経路。 */
   onFkCellJump: (rowIdx: number, colIdx: number) => void;
+  /** FK セルのホバー / Alt+クリックで参照先カードを開く (#2405)。`pinned` は Alt+クリック (自動で閉じない)。 */
+  onFkCellPeek: (el: HTMLElement, rowIdx: number, colIdx: number, pinned: boolean) => void;
+  /** FK セルからポインタが離れた (ホバーで開く予約の取り消しと、開いたカードの自動クローズ)。 */
+  onFkCellPeekLeave: () => void;
   onCellDoubleClick: (
     rowIdx: number,
     colIdx: number,
@@ -3963,6 +3975,19 @@ const GridRow = memo(function GridRow({
           })
         }
         onContextMenu={(e) => handlers.onCellContextMenu(e, row.index, colIdx)}
+        onMouseEnter={
+          isFkCell ? (e) => handlers.onFkCellPeek(e.currentTarget, row.index, colIdx, false) : undefined
+        }
+        onMouseLeave={isFkCell ? () => handlers.onFkCellPeekLeave() : undefined}
+        onClick={
+          isFkCell
+            ? (e) => {
+                if (!e.altKey) return;
+                e.preventDefault();
+                handlers.onFkCellPeek(e.currentTarget, row.index, colIdx, true);
+              }
+            : undefined
+        }
       >
         {isEditingHere ? (
           <div className="cell-edit-wrap">
@@ -4205,6 +4230,7 @@ export const DataGrid = memo(function DataGrid({
   columnMeta,
   incomingFks,
   onRunRelatedQuery,
+  onDescribePeekTable,
   onFkJump,
   paginationState,
   onPaginationChange,
@@ -4379,6 +4405,11 @@ export const DataGrid = memo(function DataGrid({
    * `incomingFks` と揃うときだけタブを出す。
    */
   onRunRelatedQuery?: (sql: string) => Promise<QueryResult>;
+  /**
+   * FK セルの参照先カード (#2405) が、たどった先のテーブルの列メタ (PK・FK の判定) を引く。
+   * `onRunRelatedQuery` と揃うときだけカードを出す。
+   */
+  onDescribePeekTable?: (table: string) => Promise<TableColumnInfo[]>;
   /** Called when the user triggers a FK jump with the generated SELECT SQL. */
   onFkJump?: (sql: string) => void;
   /** When set, TanStack pagination is activated and only this page of rows is rendered. */
@@ -6657,6 +6688,90 @@ export const DataGrid = memo(function DataGrid({
       }),
     };
   };
+  // FK セルの参照先カード (#2405)。ホバー (遅延) か Alt+クリックで開き、タブは増やさない。
+  // 取得は `onRunRelatedQuery` (内部クエリ: 履歴に残らず読み取り専用ガードを通る) の `LIMIT 1`。
+  // マスク中・NULL のセルは `fkJumpFor` が null を返すので出さない。
+  const [peek, setPeek] = useState<{
+    anchor: TooltipRect;
+    rowIdx: number;
+    colIdx: number;
+    step: PeekStep;
+    pinned: boolean;
+    seq: number;
+  } | null>(null);
+  // 行インスペクタで開く (参照先の行をそのまま読み取り専用で見る)。
+  const [peekInspect, setPeekInspect] = useState<{
+    columns: Column[];
+    values: CellValue[];
+    masked: boolean[] | undefined;
+  } | null>(null);
+  const peekOpenTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const peekCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const peekSeq = useRef(0);
+  const clearPeekTimers = useCallback(() => {
+    if (peekOpenTimer.current) clearTimeout(peekOpenTimer.current);
+    if (peekCloseTimer.current) clearTimeout(peekCloseTimer.current);
+    peekOpenTimer.current = null;
+    peekCloseTimer.current = null;
+  }, []);
+  useEffect(() => clearPeekTimers, [clearPeekTimers]);
+  const closePeek = (restoreFocus: boolean) => {
+    clearPeekTimers();
+    const cur = peek;
+    setPeek(null);
+    if (restoreFocus && cur) cellRefs.current.get(`${cur.rowIdx}:${cur.colIdx}`)?.focus();
+  };
+  const peekAvailable = !!onRunRelatedQuery && !!fkCols;
+  // 結果が入れ替わった・スクロールしたらアンカーがずれるので、ホバーで開いたカードは閉じる。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: rows の入れ替わりだけを契機にする
+  useEffect(() => {
+    clearPeekTimers();
+    setPeek(null);
+  }, [rows]);
+  useEffect(() => {
+    const scroller = scrollContainerRef?.current;
+    if (!peek || peek.pinned || !scroller) return;
+    const onScroll = () => {
+      clearPeekTimers();
+      setPeek(null);
+    };
+    scroller.addEventListener("scroll", onScroll, { passive: true });
+    return () => scroller.removeEventListener("scroll", onScroll);
+  }, [peek, scrollContainerRef, clearPeekTimers]);
+  const openPeek = (el: HTMLElement, rowIdx: number, colIdx: number, pinned: boolean) => {
+    const jump = fkJumpFor(rowIdx, colIdx);
+    const m = metaByName?.get(columns[colIdx]?.name ?? "");
+    if (!jump || !m?.referenced_table || !m.referenced_column) return;
+    const r = el.getBoundingClientRect();
+    peekSeq.current += 1;
+    setPeek({
+      anchor: {
+        top: r.top,
+        left: r.left,
+        right: r.right,
+        bottom: r.bottom,
+        width: r.width,
+        height: r.height,
+      },
+      rowIdx,
+      colIdx,
+      step: {
+        table: m.referenced_table,
+        column: m.referenced_column,
+        value: rows[rowIdx]?.[colIdx] ?? null,
+        valueType: columns[colIdx]?.type_name,
+      },
+      pinned,
+      seq: peekSeq.current,
+    });
+  };
+  const scheduleClosePeek = () => {
+    if (peekCloseTimer.current) clearTimeout(peekCloseTimer.current);
+    peekCloseTimer.current = setTimeout(() => {
+      peekCloseTimer.current = null;
+      setPeek((cur) => (cur && !cur.pinned ? null : cur));
+    }, FK_PEEK_CLOSE_GRACE_MS);
+  };
   // クリック&ドラッグのマーキー選択 (#1578)。mousedown で追跡を始め、ポインタが
   // しきい値を超えて「別のセル」に入った時点で初めてマーキーになる (同じセル内の
   // ドラッグはブラウザ既定のセル内テキスト選択のまま)。選択の基点は mousedown の
@@ -6805,6 +6920,28 @@ export const DataGrid = memo(function DataGrid({
     onFkCellJump: (rowIdx: number, colIdx: number) => {
       const jump = fkJumpFor(rowIdx, colIdx);
       if (jump) onFkJump?.(jump.sql);
+    },
+    onFkCellPeek: (el: HTMLElement, rowIdx: number, colIdx: number, pinned: boolean) => {
+      if (!peekAvailable || editing !== null) return;
+      if (peekOpenTimer.current) clearTimeout(peekOpenTimer.current);
+      if (peekCloseTimer.current) clearTimeout(peekCloseTimer.current);
+      peekCloseTimer.current = null;
+      if (pinned) {
+        peekOpenTimer.current = null;
+        openPeek(el, rowIdx, colIdx, true);
+        return;
+      }
+      // ピン留め中のカードは、別セルへのホバーで動かさない。
+      if (peek?.pinned) return;
+      peekOpenTimer.current = setTimeout(() => {
+        peekOpenTimer.current = null;
+        openPeek(el, rowIdx, colIdx, false);
+      }, FK_PEEK_HOVER_DELAY_MS);
+    },
+    onFkCellPeekLeave: () => {
+      if (peekOpenTimer.current) clearTimeout(peekOpenTimer.current);
+      peekOpenTimer.current = null;
+      if (peek && !peek.pinned) scheduleClosePeek();
     },
     onCellDoubleClick: (
       rowIdx: number,
@@ -7131,7 +7268,8 @@ export const DataGrid = memo(function DataGrid({
         break;
       case "Escape":
         e.preventDefault();
-        if (inspectorOpen) setInspectorOpen(false);
+        if (peekInspect) setPeekInspect(null);
+        else if (inspectorOpen) setInspectorOpen(false);
         else if (selection) setSelection(null);
         // activeCell は保持する: null にすると全セルが tabIndex=-1 になり、
         // 矢印キー・Shift+Tab でグリッドへ戻れなくなる。
@@ -8855,7 +8993,56 @@ export const DataGrid = memo(function DataGrid({
             );
           })()}
       </AnimatePresence>
-      {inspectorOpen &&
+      {peek && peekAvailable && onRunRelatedQuery && (
+        <FkPeekCard
+          key={peek.seq}
+          anchor={peek.anchor}
+          origin={rowSqlTable ?? null}
+          initial={peek.step}
+          driver={rowSqlDriver ?? "mysql"}
+          database={rowSqlDatabase ?? null}
+          runQuery={onRunRelatedQuery}
+          describeTable={onDescribePeekTable}
+          onOpenInGrid={
+            onFkJump
+              ? (sql) => {
+                  closePeek(false);
+                  onFkJump(sql);
+                }
+              : undefined
+          }
+          onOpenInInspector={(r) => {
+            closePeek(false);
+            setPeekInspect(r);
+          }}
+          onHoverChange={(inside) => {
+            if (inside) {
+              if (peekCloseTimer.current) clearTimeout(peekCloseTimer.current);
+              peekCloseTimer.current = null;
+            } else if (!peek.pinned) scheduleClosePeek();
+          }}
+          onPin={() => {
+            if (peekCloseTimer.current) clearTimeout(peekCloseTimer.current);
+            peekCloseTimer.current = null;
+            setPeek((cur) => (cur && !cur.pinned ? { ...cur, pinned: true } : cur));
+          }}
+          onClose={() => closePeek(true)}
+        />
+      )}
+      {peekInspect && (
+        <RowInspector
+          columns={peekInspect.columns}
+          values={peekInspect.values}
+          maskedColumns={peekInspect.masked}
+          columnKinds={peekInspect.columns.map((c) => classifyTypeName(c.type_name))}
+          rowNumber={1}
+          onClose={() => setPeekInspect(null)}
+          hasPrev={false}
+          hasNext={false}
+        />
+      )}
+      {!peekInspect &&
+        inspectorOpen &&
         activeCell &&
         rows[activeCell.rowIdx] &&
         (() => {
@@ -9126,6 +9313,7 @@ export const ResultGrid = memo(
       onFkJump,
       incomingFks,
       onRunRelatedQuery,
+      onDescribePeekTable,
       pendingDeleteKeys,
       pendingInsertCount,
       onToggleRowDelete,
@@ -11085,6 +11273,7 @@ export const ResultGrid = memo(
               columnMeta={tableColumns ?? undefined}
               incomingFks={incomingFks}
               onRunRelatedQuery={onRunRelatedQuery}
+              onDescribePeekTable={onDescribePeekTable}
               onFkJump={onFkJump}
               columnSizingStorageKey={columnSizingStorageKey}
               skeleton={!!streaming}
