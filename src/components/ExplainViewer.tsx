@@ -25,6 +25,7 @@ import { showsStatsSection } from "./statsAdvisor";
 import { getExplainPin, pinExplainPlan } from "../explainPins";
 import { AiExplainInterpret, type AiExplainInterpretProps } from "./AiExplainInterpret";
 import { staggerContainer, variants } from "../motion";
+import { icicleAvailable } from "./explainIcicle";
 import { EXPLAIN_SKELETON_ROWS, staggerPlanIds } from "./explainSkeleton";
 import {
   type Heat,
@@ -58,6 +59,10 @@ const MotionTree = chakra(motion.div, {}, { forwardProps: ["variants", "initial"
 const MotionNode = chakra(motion.div, {}, { forwardProps: ["variants"] });
 
 const EMPTY_IDS: ReadonlySet<string> = new Set();
+
+const ExplainIcicleView = lazy(() =>
+  import("./ExplainIcicleView").then((m) => ({ default: m.ExplainIcicleView })),
+);
 
 const ExplainGraphView = lazy(() =>
   import("./ExplainGraphView").then((m) => ({ default: m.ExplainGraphView })),
@@ -881,9 +886,14 @@ function ExplainViewerBody({
 }) {
   const t = useT();
   const { raw, root, error } = parsed;
-  const [view, setView] = useState<"tree" | "graph">("tree");
+  const [view, setView] = useState<"tree" | "graph" | "icicle">("tree");
   const max = useMemo(() => (root ? maxCost(root) : 0), [root]);
   const score = useMemo(() => (root ? scorePlan(root) : null), [root]);
+  const icicleOk = useMemo(() => (root ? icicleAvailable(root) : false), [root]);
+  // 新しい計画に描ける値が無ければ (SQLite など)、時間配分表示のままにせずツリーへ戻す。
+  useEffect(() => {
+    if (!icicleOk) setView((v) => (v === "icicle" ? "tree" : v));
+  }, [icicleOk]);
   // 実測モードの結果か (ノードのどれかが実測値を持つ)。ルートの実時間は実行時間の目安。
   const analyzed = useMemo(() => hasActual(root), [root]);
   const rootTotalMs = root ? actualTotalMs(root) : null;
@@ -1133,6 +1143,17 @@ function ExplainViewerBody({
               {t("explainViewGraph")}
             </Button>
           </Tooltip>
+          <Tooltip label={icicleOk ? t("explainViewIcicle") : t("explainIcicleUnavailable")}>
+            <Button
+              size="sm"
+              px="2.5"
+              variant={view === "icicle" ? "primary" : "secondary"}
+              disabled={!icicleOk}
+              onClick={() => setView("icicle")}
+            >
+              {t("explainViewIcicle")}
+            </Button>
+          </Tooltip>
           {view === "tree" && (
             <>
               <Tooltip label={t("explainExpandAll")}>
@@ -1164,7 +1185,26 @@ function ExplainViewerBody({
             </>
           )}
         </Box>
-        {view === "graph" ? (
+        {view === "icicle" ? (
+          <Box flex="1" minHeight={0} position="relative" display="flex">
+            <Suspense
+              fallback={
+                <Box
+                  position="absolute"
+                  inset={0}
+                  display="flex"
+                  alignItems="center"
+                  justifyContent="center"
+                  color="app.textMuted"
+                >
+                  <Spinner size={18} />
+                </Box>
+              }
+            >
+              <ExplainIcicleView root={root} selectedId={selectedId} onSelect={setSelectedId} />
+            </Suspense>
+          </Box>
+        ) : view === "graph" ? (
           <Box flex="1" minHeight={0} position="relative">
             <Suspense
               fallback={

@@ -199,6 +199,12 @@ export function Modal({
         if (document.activeElement?.closest('[aria-expanded="true"][aria-haspopup]')) {
           e.preventDefault();
         }
+        // 内側で Esc を「一段戻る」に使っている部品 (実行計画のアイシクル図のズームなど) は、
+        // 戻れる間だけ `data-modal-esc-guard` を付ける。その内側にフォーカスがあれば dismiss せず、
+        // 部品側の onKeyDown に任せる。
+        if (document.activeElement?.closest("[data-modal-esc-guard]")) {
+          e.preventDefault();
+        }
       }}
       initialFocusEl={initialFocusEl ?? defaultInitialFocus}
       // 開閉アニメは motion 側で対称に行うため、Chakra/Ark の CSS プリセットは無効化。

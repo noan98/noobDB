@@ -896,6 +896,8 @@ describe("共通コンポーネントの迂回", () => {
     // データを描くチャート/メトリクス面: 軸・バー・折れ線などを算出した座標で
     // 描画する図であり、固定グリフの選択ではないため対象外。
     "../components/ChartView.tsx",
+    // 実行計画の時間配分アイシクル図 (#2407): 計画から算出した矩形を描くデータの図。
+    "../components/ExplainIcicleView.tsx",
     "../components/ServerMetricsPanel.tsx",
     // 空間データの形状プレビュー (#2379): 座標から算出したパス・目盛りを描くデータの図。
     "../components/SpatialPreview.tsx",
