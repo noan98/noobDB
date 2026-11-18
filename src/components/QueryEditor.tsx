@@ -90,6 +90,7 @@ import { t, useT } from "../i18n";
 import { markFeatureTried, useSettings } from "../settings";
 import { springs } from "../motion";
 import { statementAtOffset, statementsFromOffset } from "../sqlScript";
+import { insertHints, insertHintsRefresh } from "./insertHintsExtension";
 import { identifierHover, type IdentifierHoverLabels } from "./identifierHoverExtension";
 import { diagnosticsFromTree, type SqlLintMessages } from "./sqlLint";
 import { createMarkerLayer, markerAt, type EditorMarker } from "./editorMarkers";
@@ -108,6 +109,7 @@ import { locateErrorRange } from "../outputLog";
 import { matchErrorHint } from "../errorHints";
 import {
   buildSemanticSchema,
+  insertArityDiagnostics,
   semanticDiagnostics,
   type SemanticSchema,
   type SqlSemanticMessages,
@@ -988,6 +990,7 @@ export const QueryEditor = memo(
     const semanticMessages: SqlSemanticMessages = {
       unknownTable: t("editorLintUnknownTable"),
       unknownColumn: t("editorLintUnknownColumn"),
+      valueCount: t("editorLintValueCount"),
     };
     const semanticMessagesRef = useRef(semanticMessages);
     semanticMessagesRef.current = semanticMessages;
@@ -1030,6 +1033,9 @@ export const QueryEditor = memo(
                 return [
                   ...diagnosticsFromTree(tree, doc, lintMessagesRef.current, { cursor }),
                   ...semanticDiagnostics(tree, doc, semanticSchemaRef.current, semanticMessagesRef.current, {
+                    cursor,
+                  }),
+                  ...insertArityDiagnostics(doc, semanticSchemaRef.current, semanticMessagesRef.current, {
                     cursor,
                   }),
                 ];
@@ -1096,6 +1102,7 @@ export const QueryEditor = memo(
         `x${extraTablesRev}`,
         semanticMessages.unknownTable,
         semanticMessages.unknownColumn,
+        semanticMessages.valueCount,
         lintMessages.syntaxError,
         lintMessages.unterminated,
         lintMessages.unknownStatementStart,
@@ -1311,6 +1318,8 @@ export const QueryEditor = memo(
     const rowEstimateCacheRef = useRef(new Map<string, Promise<number | null>>());
     const identifierHoverEnabledRef = useRef(settings.identifierHoverEnabled);
     identifierHoverEnabledRef.current = settings.identifierHoverEnabled;
+    const insertColumnHintsRef = useRef(settings.insertColumnHints);
+    insertColumnHintsRef.current = settings.insertColumnHints;
     const tabIdRef = useRef(tabId);
     tabIdRef.current = tabId;
     const driverRef = useRef(driver);
@@ -1590,6 +1599,19 @@ export const QueryEditor = memo(
               getLabels: identifierHoverLabels,
               onReveal: (target) => onRevealSchemaObjectRef.current?.(target),
               onOpenStructure: (database, table) => onOpenStructureRef.current?.(database, table),
+            }),
+            // INSERT の VALUES への列名インレイヒント (#2424)。
+            insertHints({
+              getMode: () => insertColumnHintsRef.current,
+              getSchema: () => {
+                const a = sqlArgsRef.current;
+                return {
+                  tables: a.databaseSchema,
+                  defaultDatabase: a.schemaTable?.database ?? a.defaultDatabase,
+                  driver: a.driver,
+                  schemaTable: a.schemaTable,
+                };
+              },
             }),
             // 構文チェック (#704) は Compartment 越しにして、設定トグルや言語切替で
             // 再構成できるようにする。作成時点の設定値で初期化する。
@@ -1941,6 +1963,12 @@ export const QueryEditor = memo(
         view.dispatch({ effects: batchErrorLayer.update((list) => [...list, ...added]) });
       }
     }, [batchScript, batchResults, batchRunning, batchWrapped, tabId]);
+
+    // 列名ヒントの表示モード・スキーマ・方言が変わったら再描画する (#2424)。
+    // biome-ignore lint/correctness/useExhaustiveDependencies: スキーマ/方言/モードは ref 越しに読まれ、依存はそれらが変わった合図
+    useEffect(() => {
+      viewRef.current?.dispatch({ effects: insertHintsRefresh.of(null) });
+    }, [settings.insertColumnHints, databaseSchema, schemaTable, defaultDatabase, driver]);
 
     // compartment の設定が実際に変わったときだけ reconfigure する (#1308)。初回マウントや、
     // 設定が同じタブ同士の切替では何もしない。以前は補完・構文チェック・キーマップの

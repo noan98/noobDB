@@ -26,6 +26,12 @@ import {
   rememberScope,
   saveRemembered,
 } from "./rememberedInputs";
+import {
+  TYPE_DEF_LANGS,
+  TYPE_DEF_NAMINGS,
+  type TypeDefLang,
+  type TypeDefNaming,
+} from "./components/typeDefGen";
 import { parseTextEncodingId } from "./sqlFileIO";
 
 // ---------------------------------------------------------------------------
@@ -226,6 +232,38 @@ export function loadTablesExportPrefs(scope: string): TablesExportPrefs | null {
 
 export function saveTablesExportPrefs(scope: string, prefs: TablesExportPrefs): void {
   saveRemembered(TABLES_EXPORT_MEMORY_FEATURE, scope, prefs);
+}
+
+// ---------------------------------------------------------------------------
+// 型定義の生成 (接続単位, #2411)
+// ---------------------------------------------------------------------------
+
+export const TYPE_DEFS_MEMORY_FEATURE = "typeDefs";
+
+export interface TypeDefsPrefs {
+  lang: TypeDefLang;
+  naming: TypeDefNaming;
+}
+
+export function sanitizeTypeDefsPrefs(raw: unknown): TypeDefsPrefs | null {
+  const o = asRecord(raw);
+  if (!o) return null;
+  return {
+    lang: pickOneOf(o.lang, TYPE_DEF_LANGS, "typescript"),
+    naming: pickOneOf(o.naming, TYPE_DEF_NAMINGS, "snake"),
+  };
+}
+
+export function typeDefsScope(profileId: string | undefined): string {
+  return rememberScope(profileId);
+}
+
+export function loadTypeDefsPrefs(scope: string): TypeDefsPrefs | null {
+  return loadRemembered(TYPE_DEFS_MEMORY_FEATURE, scope, sanitizeTypeDefsPrefs);
+}
+
+export function saveTypeDefsPrefs(scope: string, prefs: TypeDefsPrefs): void {
+  saveRemembered(TYPE_DEFS_MEMORY_FEATURE, scope, prefs);
 }
 
 // ---------------------------------------------------------------------------

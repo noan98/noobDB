@@ -768,12 +768,11 @@ pub async fn delete_profile(id: String) -> Result<()> {
     // 本体は既に消えているので掃除する。
     let gone = store::load_all().is_ok_and(|all| !all.iter().any(|p| p.id == id));
     if gone {
-        if let Err(e) = crate::snippets::store::release_profile_scope(&id) {
-            tracing::warn!(profile_id = %id, error = %e, "failed to release snippets scoped to deleted profile");
-        }
-        // テーブル・タイムラプスの行データ (機微データを含みうる) を残さない。ベストエフォート。
-        if let Err(e) = crate::timelapse::store::delete_profile_data(&id).await {
-            tracing::warn!(profile_id = %id, error = %e, "failed to delete timelapse data of deleted profile");
+        // 付随ストア (スニペットのスコープ・タイムラプス・論理リレーション・アドバイザの無視設定・
+        // 統計スナップショット・スキーマドリフトの世代・プラン監視・インポートテンプレート) を
+        // 掃除する。対象は `profiles::cleanup::PROFILE_SCOPED_STORES` の 1 か所。ベストエフォート。
+        for (store_name, e) in crate::profiles::cleanup::cleanup_profile(&id).await {
+            tracing::warn!(profile_id = %id, store = store_name, error = %e, "failed to clean up data of deleted profile");
         }
     }
     result

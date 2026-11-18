@@ -281,6 +281,7 @@ export function TableStructurePanel({
   onAttachPartition,
   onAddPartitions,
   onManageAudit,
+  onCopyTypeDefs,
   auditTick = 0,
 }: {
   sessionId: string;
@@ -292,6 +293,8 @@ export function TableStructurePanel({
   onSelectTable: (target: StructureTarget) => void;
   /** 読み取り専用接続では、パーティションの保守 / 削除メニューを無効にする。 */
   readOnly?: boolean;
+  /** 型定義 (TS / Go / Rust / Python) 生成モーダルを開く (#2411)。未指定ならボタンを出さない。 */
+  onCopyTypeDefs?: (database: string, tables: string[]) => void;
   /**
    * パーティションの保守コマンド (ANALYZE 等) を確認のうえ実行する (App の既存保守経路)。
    * 実行できたら true — パネルは一覧を取り直す。
@@ -1132,6 +1135,16 @@ export function TableStructurePanel({
                       label={t("structureDdlCopy")}
                       copiedLabel={t("gridCopied")}
                     />
+                  )}
+                  {onCopyTypeDefs && (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => onCopyTypeDefs(database, [table])}
+                    >
+                      {t("structureTypeDefs")}
+                    </Button>
                   )}
                 </Flex>
                 {ddl.kind === "loading" && (

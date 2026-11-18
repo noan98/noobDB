@@ -71,6 +71,8 @@ interface Props {
     columns: QueryResult["columns"];
     values: CellValue[];
     masked: boolean[] | undefined;
+    /** いま表示している参照先のテーブル (カード内で FK をたどった後はその先のテーブル)。 */
+    table: string;
   }) => void;
   /** ポインタがカードの中にあるか (ホバーで開いたカードの自動クローズ判定に使う)。 */
   onHoverChange: (inside: boolean) => void;
@@ -470,6 +472,7 @@ export function FkPeekCard({
                   columns,
                   values: row,
                   masked: masked ?? undefined,
+                  table: step.table,
                 });
               }
             }}

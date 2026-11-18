@@ -45,6 +45,7 @@ import {
 import { formatJsonCompact } from "../components/cellFormat";
 import { TOOLTIP_OPEN_DELAY_MS } from "../components/Tooltip";
 import { registerTreeDropTarget } from "../components/treeDragStore";
+import { KeepAlive } from "../components/KeepAlive";
 import { FK_PEEK_CLOSE_GRACE_MS, FK_PEEK_HOVER_DELAY_MS } from "../fkPeek";
 
 // 選択範囲エクスポート (#917) のテストが `ExportModal` を実際にマウントするため、
@@ -3064,6 +3065,35 @@ describe("FK セルのリンク・アフォーダンス (#1393)", () => {
       const nav = screen.getByRole("navigation", { name: t("fkPeekBreadcrumbAria") });
       expect(nav.textContent).toContain("users");
       expect(nav.textContent).toContain("regions");
+      // 行インスペクタの見出しは、たどった先のテーブル (regions)。
+      fireEvent.click(screen.getByText(t("fkPeekOpenInInspector")));
+      expect(await screen.findByRole("dialog", { name: "regions" })).toBeInTheDocument();
+    });
+
+    it("KeepAlive で非表示になった (別タブへ切り替えた) ら、ピン留め中のカードも閉じる", async () => {
+      const runQuery = vi.fn().mockResolvedValue(peekResult());
+      const grid = (
+        <ResultGrid
+          result={result}
+          tableColumns={meta("users", "id")}
+          onFkJump={vi.fn()}
+          onRunRelatedQuery={runQuery}
+          driver="mysql"
+        />
+      );
+      const { container, rerender } = renderWithProviders(
+        <KeepAlive activeKey="a" limit={4}>
+          {grid}
+        </KeepAlive>,
+      );
+      fireEvent.click(container.querySelector("td.is-fk") as HTMLElement, { altKey: true });
+      await screen.findByText("Alice");
+      rerender(
+        <KeepAlive activeKey="b" limit={4}>
+          <div />
+        </KeepAlive>,
+      );
+      await waitFor(() => expect(screen.queryByTestId("fk-peek-card")).toBeNull());
     });
   });
 

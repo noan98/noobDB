@@ -207,7 +207,20 @@ pub async fn delete_profile_data(profile_id: &str) -> Result<u64> {
     delete_profile_data_in(pool().await?, profile_id).await
 }
 
+/// 保存済みのプロファイル ID (起動時の孤立データ掃除用)。
+pub async fn profile_ids() -> Result<Vec<String>> {
+    profile_ids_in(pool().await?).await
+}
+
 // ── 本体 (プール注入) ──
+
+async fn profile_ids_in(pool: &SqlitePool) -> Result<Vec<String>> {
+    Ok(
+        sqlx::query_scalar("SELECT DISTINCT profile_id FROM watch ORDER BY profile_id")
+            .fetch_all(pool)
+            .await?,
+    )
+}
 
 async fn upsert_watch_in(
     pool: &SqlitePool,
@@ -607,7 +620,9 @@ mod tests {
             .unwrap();
         record(&pool, a, &snap(1), 10).await;
         record(&pool, b, &snap(1), 10).await;
+        assert_eq!(profile_ids_in(&pool).await.unwrap(), vec!["p", "q"]);
         assert_eq!(delete_profile_data_in(&pool, "p").await.unwrap(), 1);
+        assert_eq!(profile_ids_in(&pool).await.unwrap(), vec!["q"]);
         assert!(list_watches_in(&pool, "p").await.unwrap().is_empty());
         let q = list_watches_in(&pool, "q").await.unwrap();
         assert_eq!(q.len(), 1);

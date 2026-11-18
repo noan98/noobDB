@@ -55,6 +55,13 @@
   されることも無いため、保存 (~1 分) が純粋な無駄になるからです。タグビルドは
   main スコープのキャッシュを復元のみで利用します。
 
+**Windows ビルドの I/O 対策 (#2413)。** `build` ジョブは先頭 (checkout より前) で
+Defender のリアルタイム保護を止め、`ci.yml` の `rust (windows)` と同じ registry index の
+自前キャッシュ + `cargo fetch --offline` の probe を持つ (保存は `github.ref == main` のとき)。ジョブ末尾の
+`Job timing & cache summary (#565)` が所要時間を Job Summary に出す。`workflow_dispatch` の
+入力 `measure` (`cold` / `cold-devdrive`) は Dev Drive 計測専用で、通常運用では `default`。
+手順と判断基準は `build-performance.md`。
+
 Linux CI では Tauri 2 のシステムパッケージ (`libwebkit2gtk-4.1-dev`,
 `libgtk-3-dev`, `libsoup-3.0-dev`, `librsvg2-dev`, `libxdo-dev`,
 `libayatana-appindicator3-dev`) が必要です。

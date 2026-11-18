@@ -10,7 +10,7 @@
  *   (`buildSnapshot`) と書き出すとき (`serializeNotebook`) の両方で、対象列の値を伏せ字にする。
  *   書き出し時にもう一度掛けるのは、取得後に設定やパターンを変えた場合でも平文をファイルへ残さないため。
  */
-import type { CellValue, Column } from "./api/tauri";
+import type { CellValue, Column, ConnectionProfile } from "./api/tauri";
 import { MASK_PLACEHOLDER, resolveMaskedColumns, type MaskConfig } from "./components/columnMask";
 import { isReadOnlySql } from "./dangerousSql";
 import type { ChartConfig } from "./components/chartData";
@@ -78,6 +78,11 @@ export interface NotebookSqlCell {
   snapshot: NotebookSnapshot | null;
   view: NotebookCellView;
   chart: ChartConfig | null;
+  /**
+   * このセルの実行先の接続 (#2396)。null = 文書の既定 (実行時点の現在の接続)。
+   * ファイルにはプロファイル ID と表示名だけを書く (秘密情報は入れない)。
+   */
+  connection: NotebookConnectionRef | null;
 }
 
 export type NotebookCell = NotebookMarkdownCell | NotebookSqlCell;
@@ -111,7 +116,16 @@ export function newMarkdownCell(text = ""): NotebookMarkdownCell {
 }
 
 export function newSqlCell(sql = ""): NotebookSqlCell {
-  return { id: newCellId(), kind: "sql", sql, collapsed: false, snapshot: null, view: "table", chart: null };
+  return {
+    id: newCellId(),
+    kind: "sql",
+    sql,
+    collapsed: false,
+    snapshot: null,
+    view: "table",
+    chart: null,
+    connection: null,
+  };
 }
 
 export function createEmptyNotebook(connection: NotebookConnectionRef | null = null): NotebookDoc {
@@ -185,6 +199,40 @@ export function sqlCellsToRun(cells: readonly NotebookCell[], fromId?: string | 
     if (idx >= 0) start = idx;
   }
   return cells.slice(start).filter((c): c is NotebookSqlCell => c.kind === "sql" && c.sql.trim().length > 0);
+}
+
+/** セルの実行先の解決結果 (#2396)。 */
+export type NotebookCellTarget =
+  /** 文書の既定。実行時点の現在の接続で動く。 */
+  | { kind: "current" }
+  /** 別の接続が開いていて、そこで動く。 */
+  | { kind: "open"; profile: ConnectionProfile; sessionId: string }
+  /** 保存されたプロファイルが見つからない (削除された / 別マシンで開いた)。実行できない。 */
+  | { kind: "missing"; ref: NotebookConnectionRef }
+  /** プロファイルはあるが、いま開いていない。接続してから実行する。 */
+  | { kind: "closed"; ref: NotebookConnectionRef; profile: ConnectionProfile };
+
+/**
+ * セルの実行先を決める純関数。`connection` が無い、または現在の接続と同じなら `current`。
+ * 開いている接続 (`openConnections`: アクティブ + 背景) を先に探し (「別 DB で開く」の一時プロファイルも含む)、
+ * 無ければ保存済みプロファイル (`profiles`) で「開いていない」と「見つからない」を区別する。
+ */
+export function resolveCellTarget(
+  connection: NotebookConnectionRef | null,
+  currentProfileId: string | null,
+  profiles: readonly ConnectionProfile[],
+  openConnections: readonly { sessionId: string; profile: ConnectionProfile }[],
+): NotebookCellTarget {
+  if (!connection || connection.profileId === currentProfileId) return { kind: "current" };
+  const open = openConnections.find((c) => c.profile.id === connection.profileId);
+  // 開いている接続のプロファイルは接続時点のまま (編集保存しても更新されない) なので、安全網の設定
+  // (本番表示など) は保存済みプロファイルの最新を優先する。派生接続など保存一覧に無いときだけ開いている側。
+  if (open) {
+    const fresh = profiles.find((p) => p.id === connection.profileId) ?? open.profile;
+    return { kind: "open", profile: fresh, sessionId: open.sessionId };
+  }
+  const saved = profiles.find((p) => p.id === connection.profileId);
+  return saved ? { kind: "closed", ref: connection, profile: saved } : { kind: "missing", ref: connection };
 }
 
 /** 書き込み文を含むセルか (セルに印を付ける)。 */
@@ -354,6 +402,7 @@ export function serializeNotebook(doc: NotebookDoc, mask: MaskConfig, now: Date 
             collapsed: c.collapsed,
             view: c.view,
             chart: c.chart,
+            connection: c.connection ? { profileId: c.connection.profileId, name: c.connection.name } : null,
             snapshot: c.snapshot ? snapshotForFile(c.snapshot, mask) : null,
           },
     ),
@@ -373,6 +422,12 @@ const num = (v: unknown, fallback = 0): number =>
 function parseCellValue(v: unknown): CellValue {
   if (v === null || typeof v === "boolean" || typeof v === "number" || typeof v === "string") return v;
   return null;
+}
+
+/** `{ profileId, name }` だけを読む。ID が空なら null (それ以外のプロパティは無視する)。 */
+function parseConnectionRef(raw: unknown): NotebookConnectionRef | null {
+  if (!isObj(raw) || typeof raw.profileId !== "string" || raw.profileId === "") return null;
+  return { profileId: str(raw.profileId, 200), name: str(raw.name, 200) };
 }
 
 function parseSnapshot(raw: unknown, limit: number): NotebookSnapshot | null {
@@ -443,16 +498,17 @@ export function parseNotebook(text: string): ParseNotebookResult {
         snapshot,
         view: c.view === "chart" ? "chart" : "table",
         chart: snapshot ? sanitizeChartConfig(c.chart, snapshot.columns) : null,
+        connection: parseConnectionRef(c.connection),
       });
     }
   }
-  const conn = isObj(raw.connection) && typeof raw.connection.profileId === "string" ? raw.connection : null;
+  const docConnection = parseConnectionRef(raw.connection);
   return {
     ok: true,
     doc: {
       title: str(raw.title, 200),
       database: typeof raw.database === "string" && raw.database ? raw.database.slice(0, 200) : null,
-      connection: conn ? { profileId: str(conn.profileId, 200), name: str(conn.name, 200) } : null,
+      connection: docConnection,
       snapshotRowLimit: limit,
       cells,
     },

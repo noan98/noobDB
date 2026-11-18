@@ -6843,6 +6843,15 @@ export const DataGrid = memo(function DataGrid({
     setPeek(null);
     peekCache.current = newFkPeekCache();
   }, [rows]);
+  // KeepAlive で非表示になった (別タブへ切り替えた) ら閉じる。カードは document.body へ
+  // portal するので、グリッドを隠しても残って Esc を奪ってしまう。
+  const peekGridActive = useKeepAliveActive();
+  useEffect(() => {
+    if (!peekGridActive) {
+      clearPeekTimers();
+      setPeek(null);
+    }
+  }, [peekGridActive, clearPeekTimers]);
   // セルの編集を始めたらカードは閉じる (編集中のセルに被せない)。
   useEffect(() => {
     if (editing) {
@@ -9208,7 +9217,7 @@ export const DataGrid = memo(function DataGrid({
           onOpenInInspector={(r) => {
             const origin = { rowIdx: peek.rowIdx, colIdx: peek.colIdx };
             closePeek(false);
-            setPeekInspect({ ...r, table: peek.step.table, origin });
+            setPeekInspect({ ...r, origin });
           }}
           onHoverChange={(inside) => {
             if (inside) {

@@ -677,6 +677,12 @@ const en = {
   settingsSqlLintEnabled: "Enable syntax check",
   settingsSqlLintEnabledHelp:
     "Flags misspelled keywords (SELEC, FRM, WHER), empty clauses (FROM WHERE), extra commas, GROUP / ORDER without BY, statements that end mid-clause, misordered clauses (e.g. WHERE after ORDER BY), unmatched brackets, and unterminated strings or comments, following the connected driver's dialect. Conservative by design: it prefers missing an error over a false positive.",
+  settingsInsertColumnHints: "Column names in INSERT values",
+  settingsInsertColumnHintsHelp:
+    "Shows the target column name in front of each value of INSERT ... VALUES so you can tell which column a value goes to (the table's column order is used when the column list is omitted). Display only; nothing is added to your SQL.",
+  settingsInsertColumnHintsCursor: "Cursor line only",
+  settingsInsertColumnHintsAlways: "Always",
+  settingsInsertColumnHintsOff: "Off",
   settingsIdentifierHoverEnabled: "Hover info for identifiers",
   settingsIdentifierHoverEnabledHelp:
     "Hover a table or column name in the editor to see its type and constraints, and underline the names that Ctrl/Cmd+click can jump to while the key is held. Ctrl/Cmd+click itself keeps working when this is off.",
@@ -702,7 +708,7 @@ const en = {
   editorScrollMarkerMore: "+{n} more nearby",
   settingsSqlSemanticLintEnabled: "Warn on unknown tables and columns",
   settingsSqlSemanticLintEnabledHelp:
-    "Underlines table and column names that don't exist in the connected schema, before you run. Aliases, CTEs, subqueries and functions are resolved, and anything it can't resolve is left alone. Works only while the syntax check is on, and needs the schema to be loaded. On SQLite only table names are checked.",
+    "Underlines table and column names that don't exist in the connected schema, before you run. Aliases, CTEs, subqueries and functions are resolved, and anything it can't resolve is left alone. Works only while the syntax check is on, and needs the schema to be loaded. On SQLite only table names are checked. It also warns when the number of values in an INSERT ... VALUES row doesn't match the column count.",
 
   settingsPreflightImpact: "Impact-row preflight",
   settingsPreflightImpactHelp:
@@ -1908,6 +1914,7 @@ const en = {
   editorLintIncomplete: "Statement ends unexpectedly — something is missing after this",
   editorLintUnknownTable: 'Table "{name}" was not found in the connected schema',
   editorLintUnknownColumn: 'Column "{name}" was not found in the tables of this query',
+  editorLintValueCount: "{values} values for {columns} columns",
 
   // Impact-row preflight badge (#737).
   editorPreflightImpact: "Affects ~{count} rows",
@@ -1976,6 +1983,24 @@ const en = {
   explainKindTableNamed: "Table: {name}",
   explainViewTree: "Tree",
   explainViewGraph: "Diagram",
+  explainViewIcicle: "Time breakdown",
+  explainIcicleBasisActual: "Actual time (EXPLAIN ANALYZE): width = inclusive time, color = self-time share",
+  explainIcicleBasisCost:
+    "Estimated cost (no actual timings): width = inclusive cost, color = self-cost share",
+  explainIcicleEstimatedNote:
+    "Where child nodes add up to more than their parent (parallel workers, loops), self time is clamped to 0, so these values are estimates.",
+  explainIcicleEmpty: "There is no time or cost data to draw.",
+  explainIcicleCostNote:
+    "Estimated costs include cumulative values, so treat the breakdown as a rough guide.",
+  explainIcicleUnavailable: "This plan has no timing or cost values to draw.",
+  explainIcicleHotspots: "Hotspots",
+  explainIcicleHotspotBadge: "{name}: self {value} ({pct}%)",
+  explainIcicleBreadcrumb: "Zoom path",
+  explainIcicleNodeLabel: "{label}: inclusive {inclusive}, self {self} ({pct}%)",
+  explainIcicleSvgLabel: "Time breakdown icicle chart of the execution plan",
+  explainIcicleLegendLow: "Low self",
+  explainIcicleLegendHigh: "High self",
+  explainIcicleZoomHint: "Click a node to zoom in. Use the path above to zoom out.",
   explainExpandAll: "Expand all",
   explainCollapseAll: "Collapse all",
   explainExpandNode: "Expand",
@@ -3836,6 +3861,34 @@ const en = {
   // テーブルの複数選択と一括操作 (#1399)。
   batchMenuShowDdl: "Show DDL of {count} tables",
   batchMenuCopyDdl: "Copy DDL of {count} tables",
+  // 型定義の生成 (#2411)。
+  contextMenuCopyTypeDefs: "Copy type definitions...",
+  batchMenuCopyTypeDefs: "Copy type definitions of {count} tables...",
+  structureTypeDefs: "Type definitions",
+  cmdkActionTypeDefs: "Copy type definitions (TypeScript / Go / Rust / Python)",
+  typeDefTitle: "Copy type definitions",
+  typeDefClose: "Cancel",
+  typeDefCopy: "Copy",
+  typeDefCopied: "Copied the type definitions of {count} tables",
+  typeDefLoading: "Loading table definitions...",
+  typeDefLoadError: "Failed to load table definitions: {error}",
+  typeDefLanguage: "Language",
+  typeDefNaming: "Field naming",
+  typeDefNamingFixed: "Go and Rust follow the language convention (PascalCase / snake_case).",
+  typeDefNamingSnake: "snake_case",
+  typeDefNamingCamel: "camelCase",
+  typeDefTables: "Tables",
+  typeDefTablesFilter: "Filter tables",
+  typeDefTablesSelectedCount: "{count} selected",
+  typeDefNoTables: "Select at least one table.",
+  typeDefPreview: "Preview",
+  typeDefEnumNote: "PostgreSQL enum values could not be read; those columns are generated as string.",
+  typeDefLangTypescript: "TypeScript (interface)",
+  typeDefLangTypescriptZod: "TypeScript (zod)",
+  typeDefLangGo: "Go (struct + db tag)",
+  typeDefLangRust: "Rust (sqlx::FromRow)",
+  typeDefLangPython: "Python (dataclass)",
+  typeDefLangPythonPydantic: "Python (Pydantic)",
   batchMenuCopyNames: "Copy {count} table names (one per line)",
   batchMenuCopyNamesComma: "Copy {count} table names (comma-separated)",
   batchNamesCopied: "Copied {count} table names",
@@ -8947,6 +9000,8 @@ const en = {
   notebookCollapse: "Collapse cell",
   notebookExpand: "Expand cell",
   notebookOpenInEditor: "Open in a query tab",
+  notebookOpenInEditorOtherConn:
+    "This cell uses a different connection than the active one. Query tabs open on the active connection only, so switch to it first.",
   notebookWritesBadge: "Writes",
   notebookWritesTip:
     "This cell contains a statement that changes data or schema. Running it goes through the same confirmations as the editor.",
@@ -8983,6 +9038,23 @@ const en = {
   notebookRebindMessageProd:
     "The current connection “{current}” is a PRODUCTION connection, but this notebook was saved with “{saved}”. Cells will run on “{current}”, and the notebook will be tied to it.",
   notebookRebindConfirm: "Run here",
+  notebookCellConn: "Connection for this cell",
+  notebookCellConnDefault: "Current connection",
+  notebookCellConnMissing:
+    "The connection “{name}” saved with this cell no longer exists. Choose another connection to run it.",
+  notebookCellConnNotOpen:
+    "The connection “{name}” is not open. Connect to it from the connection list, then run the cell.",
+  notebookCellConnTitle: "Run on other connections?",
+  notebookCellConnMessage:
+    "Cells will run on {names}, not the current connection “{current}”. Dangerous-query confirmations and read-only settings follow each cell's own connection.",
+  notebookCellConnMessageProd:
+    "Cells will run on {names}, which includes a PRODUCTION connection, not the current connection “{current}”. Dangerous-query confirmations and read-only settings follow each cell's own connection.",
+  notebookCellConnConfirm: "Run",
+  notebookCellConnReconnected:
+    "The connection “{name}” was reconnected, so the run was stopped. Run it again.",
+  notebookCellConnName: "“{name}”",
+  notebookCellConnNameSep: ", ",
+  notebookCellConnChanged: "A cell's connection was changed while running. Stopped; run it again to confirm.",
   notebookTooLarge:
     "The notebook is {size} MiB, over the {limit} MiB limit for opening files. Lower the snapshot rows and run the cells again.",
   notebookTooManyCells:
@@ -9672,6 +9744,12 @@ const ja: Dict = {
   settingsSqlLintEnabled: "構文チェックを有効化",
   settingsSqlLintEnabledHelp:
     "キーワードのタイポ (SELEC / FRM / WHER など)・中身が空の句 (FROM WHERE など)・余分なカンマ・BY の抜けた GROUP / ORDER・途中で終わった文・句の順序ミス (ORDER BY の後の WHERE など)・括弧の不整合・未終端の文字列やコメントを、接続中ドライバの方言に沿って検出します。誤検出より見逃しを優先する保守的な判定です。",
+  settingsInsertColumnHints: "INSERT の値に列名を表示",
+  settingsInsertColumnHintsHelp:
+    "INSERT ... VALUES の各値の手前に、入る列の名前を薄く表示します (列リストを省略した文はテーブルの列順を使います)。表示だけで、SQL には何も追加されません。",
+  settingsInsertColumnHintsCursor: "カーソルのある行のみ",
+  settingsInsertColumnHintsAlways: "常に表示",
+  settingsInsertColumnHintsOff: "オフ",
   settingsIdentifierHoverEnabled: "識別子のホバー情報",
   settingsIdentifierHoverEnabledHelp:
     "エディタでテーブル名・列名にホバーすると型や制約を表示し、Ctrl/Cmd を押している間はクリックで移動できる識別子に下線を引きます。オフでも Ctrl/Cmd+クリックの移動は使えます。",
@@ -9697,7 +9775,7 @@ const ja: Dict = {
   editorScrollMarkerMore: "ほか {n} 件が近くにあります",
   settingsSqlSemanticLintEnabled: "存在しないテーブル・列を警告",
   settingsSqlSemanticLintEnabledHelp:
-    "接続中のスキーマに存在しないテーブル名・列名を、実行前に下線で警告します。エイリアス・CTE・サブクエリ・関数は解決し、解決できないものは警告しません。構文チェックがオンのときだけ働き、スキーマの取得後に有効になります。SQLite ではテーブル名だけを検査します。",
+    "接続中のスキーマに存在しないテーブル名・列名を、実行前に下線で警告します。エイリアス・CTE・サブクエリ・関数は解決し、解決できないものは警告しません。構文チェックがオンのときだけ働き、スキーマの取得後に有効になります。SQLite ではテーブル名だけを検査します。あわせて、INSERT ... VALUES の値の数が列数と合わない行も警告します。",
 
   settingsPreflightImpact: "影響行数プリフライト",
   settingsPreflightImpactHelp:
@@ -10895,6 +10973,7 @@ const ja: Dict = {
   editorLintIncomplete: "文が途中で終わっています — この後に続きが必要です",
   editorLintUnknownTable: 'テーブル "{name}" は接続中のスキーマに見つかりません',
   editorLintUnknownColumn: '列 "{name}" はこのクエリのテーブルに見つかりません',
+  editorLintValueCount: "{columns} 列に対して {values} 値",
 
   // 影響行数プリフライトのバッジ (#737)。
   editorPreflightImpact: "影響: 約 {count} 行",
@@ -10963,6 +11042,22 @@ const ja: Dict = {
   explainKindTableNamed: "テーブル: {name}",
   explainViewTree: "ツリー",
   explainViewGraph: "ダイアグラム",
+  explainViewIcicle: "時間配分",
+  explainIcicleBasisActual: "実測時間 (EXPLAIN ANALYZE): 幅 = 包含時間、色 = 自己時間の割合",
+  explainIcicleBasisCost: "推定コスト (実測なし): 幅 = 包含コスト、色 = 自己コストの割合",
+  explainIcicleEstimatedNote:
+    "子ノードの合計が親を超える箇所 (並列ワーカー・ループ) は自己時間を 0 に丸めているため、推定値です。",
+  explainIcicleEmpty: "描画できる時間・コストの情報がありません。",
+  explainIcicleCostNote: "推定コストは累積値を含むため、配分は目安です。",
+  explainIcicleUnavailable: "この計画には描画できる時間・コストの値がありません。",
+  explainIcicleHotspots: "ホットスポット",
+  explainIcicleHotspotBadge: "{name}: 自己 {value} ({pct}%)",
+  explainIcicleBreadcrumb: "ズームの経路",
+  explainIcicleNodeLabel: "{label}: 包含 {inclusive}、自己 {self} ({pct}%)",
+  explainIcicleSvgLabel: "実行計画の時間配分アイシクル図",
+  explainIcicleLegendLow: "自己が小",
+  explainIcicleLegendHigh: "自己が大",
+  explainIcicleZoomHint: "ノードをクリックで部分木へズーム。上の経路で戻れます。",
   explainExpandAll: "すべて展開",
   explainCollapseAll: "すべて折りたたむ",
   explainExpandNode: "展開",
@@ -12814,6 +12909,34 @@ const ja: Dict = {
   // テーブルの複数選択と一括操作 (#1399)。
   batchMenuShowDdl: "選択した {count} テーブルの DDL を表示",
   batchMenuCopyDdl: "選択した {count} テーブルの DDL をコピー",
+  // 型定義の生成 (#2411)。
+  contextMenuCopyTypeDefs: "型定義をコピー...",
+  batchMenuCopyTypeDefs: "選択した {count} テーブルの型定義をコピー...",
+  structureTypeDefs: "型定義",
+  cmdkActionTypeDefs: "型定義をコピー (TypeScript / Go / Rust / Python)",
+  typeDefTitle: "型定義をコピー",
+  typeDefClose: "キャンセル",
+  typeDefCopy: "コピー",
+  typeDefCopied: "{count} テーブルの型定義をコピーしました",
+  typeDefLoading: "テーブル定義を読み込み中...",
+  typeDefLoadError: "テーブル定義の取得に失敗しました: {error}",
+  typeDefLanguage: "言語",
+  typeDefNaming: "フィールド名の命名規則",
+  typeDefNamingFixed: "Go と Rust は言語の慣習 (PascalCase / snake_case) に従います。",
+  typeDefNamingSnake: "snake_case",
+  typeDefNamingCamel: "camelCase",
+  typeDefTables: "テーブル",
+  typeDefTablesFilter: "テーブルを絞り込み",
+  typeDefTablesSelectedCount: "{count} 件選択",
+  typeDefNoTables: "テーブルを 1 つ以上選んでください。",
+  typeDefPreview: "プレビュー",
+  typeDefEnumNote: "PostgreSQL の ENUM の値を取得できなかったため、該当列は string として生成しました。",
+  typeDefLangTypescript: "TypeScript (interface)",
+  typeDefLangTypescriptZod: "TypeScript (zod)",
+  typeDefLangGo: "Go (struct + db タグ)",
+  typeDefLangRust: "Rust (sqlx::FromRow)",
+  typeDefLangPython: "Python (dataclass)",
+  typeDefLangPythonPydantic: "Python (Pydantic)",
   batchMenuCopyNames: "選択した {count} テーブルの名前をコピー (改行区切り)",
   batchMenuCopyNamesComma: "選択した {count} テーブルの名前をコピー (カンマ区切り)",
   batchNamesCopied: "{count} 件のテーブル名をコピーしました",
@@ -17856,6 +17979,8 @@ const ja: Dict = {
   notebookCollapse: "セルを折りたたむ",
   notebookExpand: "セルを展開",
   notebookOpenInEditor: "クエリタブで開く",
+  notebookOpenInEditorOtherConn:
+    "このセルはアクティブな接続と別の接続を指しています。クエリタブはアクティブな接続でしか開けないため、先にその接続へ切り替えてください。",
   notebookWritesBadge: "書き込みあり",
   notebookWritesTip:
     "このセルにはデータやスキーマを変更する文が含まれます。実行はエディタと同じ確認を通ります。",
@@ -17893,6 +18018,23 @@ const ja: Dict = {
   notebookRebindMessageProd:
     "現在の接続「{current}」は本番接続ですが、このノートブックは「{saved}」で保存されました。セルは「{current}」で実行され、ノートブックの接続も付け替わります。",
   notebookRebindConfirm: "この接続で実行",
+  notebookCellConn: "このセルの接続",
+  notebookCellConnDefault: "現在の接続",
+  notebookCellConnMissing:
+    "このセルに保存された接続「{name}」が見つかりません。別の接続を選んでから実行してください。",
+  notebookCellConnNotOpen:
+    "接続「{name}」は開いていません。接続一覧から接続してから、セルを実行してください。",
+  notebookCellConnTitle: "別の接続で実行しますか?",
+  notebookCellConnMessage:
+    "セルは現在の接続「{current}」ではなく {names} で実行されます。危険クエリの確認と読み取り専用の設定は、セルごとの接続に従います。",
+  notebookCellConnMessageProd:
+    "セルは現在の接続「{current}」ではなく、本番接続を含む {names} で実行されます。危険クエリの確認と読み取り専用の設定は、セルごとの接続に従います。",
+  notebookCellConnConfirm: "実行",
+  notebookCellConnReconnected: "接続「{name}」が再接続されたため中止しました。もう一度実行してください。",
+  notebookCellConnName: "「{name}」",
+  notebookCellConnNameSep: "、",
+  notebookCellConnChanged:
+    "実行中にセルの接続が変更されたため停止しました。もう一度実行して確認してください。",
   notebookTooLarge:
     "ノートブックが {size} MiB で、開ける上限 ({limit} MiB) を超えています。保存行数を下げてセルを再実行してください。",
   notebookTooManyCells: "セルが {limit} 個を超えており、開き直せません。セルを減らしてから保存してください。",
