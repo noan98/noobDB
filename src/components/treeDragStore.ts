@@ -28,6 +28,8 @@ export interface TreeDropTarget {
   posAtCoords: (x: number, y: number) => number | null;
   /** 挿入予定位置のマーカーを出す / 消す (null)。 */
   setMarker: (pos: number | null) => void;
+  /** 現在の選択範囲 (無ければキャレット位置) を置き換えて挿入する (メニューからの「エディタへ挿入」用, #2406)。未実装なら文書末尾。 */
+  insertAtSelection?: (item: TreeDragItem) => void;
   /**
    * `pos` へ挿入する。`qualified=false` は列名のみ (Alt)。`joinFk=true` (Shift を押して
    * ドロップ) は、外部キー列なら通常の列名ではなく `JOIN 参照先 ON ...` の雛形を入れる
@@ -68,9 +70,58 @@ export function getTreeDragSnapshot(): TreeDragSnapshot {
 
 export function registerTreeDropTarget(target: TreeDropTarget): () => void {
   targets.add(target);
+  trackEditorFocus();
   return () => {
     targets.delete(target);
+    if (lastFocusedTarget === target) lastFocusedTarget = null;
   };
+}
+
+/** 最後にフォーカスされたドロップ先 (エディタ)。分割ペインで挿入先が複数見えるときの決め手。 */
+let lastFocusedTarget: TreeDropTarget | null = null;
+let focusTracking = false;
+function trackEditorFocus() {
+  if (focusTracking || typeof document === "undefined") return;
+  focusTracking = true;
+  document.addEventListener(
+    "focusin",
+    (e) => {
+      const el = e.target;
+      if (!(el instanceof Node)) return;
+      for (const t of targets) if (t.element.contains(el)) lastFocusedTarget = t;
+    },
+    true,
+  );
+}
+
+/** `a` と `b` の共通祖先の深さ (深いほど近い)。 */
+function commonAncestorDepth(a: Element, b: Element): number {
+  let node: Element | null = a;
+  while (node && !node.contains(b)) node = node.parentElement;
+  let depth = 0;
+  for (let n = node; n?.parentElement; n = n.parentElement) depth++;
+  return node ? depth : -1;
+}
+
+/**
+ * ドラッグを使わず、いま見えているエディタへ挿入する (結果グリッドの右クリック「エディタへ挿入」, #2406)。
+ * 見えるエディタが無い (別タブの KeepAlive など) ときは何もせず false。複数見えるときは、`anchor`
+ * (グリッド) と共通祖先が最も近いエディタ (= 同じペイン)、同点なら最後にフォーカスされたエディタを選ぶ。
+ * 挿入は選択範囲を置き換える (通常の貼り付けと同じ)。
+ */
+export function insertAtEditorCaret(item: TreeDragItem, anchor?: Element | null): boolean {
+  const visible = [...targets].filter((t) => t.element.getClientRects().length > 0);
+  if (visible.length === 0) return false;
+  let target = visible[0];
+  if (visible.length > 1) {
+    const depthOf = (t: TreeDropTarget) => (anchor ? commonAncestorDepth(anchor, t.element) : -1);
+    const best = Math.max(...visible.map(depthOf));
+    const nearest = visible.filter((t) => depthOf(t) === best);
+    target = nearest.find((t) => t === lastFocusedTarget) ?? nearest[nearest.length - 1];
+  }
+  if (target.insertAtSelection) target.insertAtSelection(item);
+  else target.insert(item, null, true, false);
+  return true;
 }
 
 /** 対話要素 (ボタン等) の上で押された場合はドラッグを始めない。 */
@@ -95,7 +146,22 @@ export function attachTreeDragSource(el: HTMLElement, getItem: () => TreeDragIte
   return () => el.removeEventListener("pointerdown", onPointerDown);
 }
 
-function startSession(source: HTMLElement, down: PointerEvent, item: TreeDragItem) {
+/**
+ * ツリー行以外 (結果グリッドの選択セルなど) からも、押下済みのポインタでドラッグを始める (#2406)。
+ * しきい値未満でボタンを離した場合は `onTap` を呼ぶ (クリック扱い。選択解除などに使う)。
+ */
+export function beginPointerDrag(
+  source: HTMLElement,
+  down: PointerEvent,
+  item: TreeDragItem,
+  onTap?: () => void,
+): boolean {
+  if (down.button !== 0 || !down.isPrimary || snapshot.active) return false;
+  startSession(source, down, item, onTap);
+  return true;
+}
+
+function startSession(source: HTMLElement, down: PointerEvent, item: TreeDragItem, onTap?: () => void) {
   let phase: TreeDragPhase = pressPhase(item, down.clientX, down.clientY);
   let dragged = false;
   let current: TreeDropTarget | null = null;
@@ -195,6 +261,7 @@ function startSession(source: HTMLElement, down: PointerEvent, item: TreeDragIte
     const pos = target ? target.posAtCoords(e.clientX, e.clientY) : null;
     cleanup();
     if (wasDragged) swallowClick();
+    else if (onTap) onTap();
     if (drop && target) target.insert(drop, pos, !(e.altKey || altKey), e.shiftKey);
   };
 

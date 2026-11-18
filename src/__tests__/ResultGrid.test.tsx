@@ -44,6 +44,7 @@ import {
 } from "../settings";
 import { formatJsonCompact } from "../components/cellFormat";
 import { TOOLTIP_OPEN_DELAY_MS } from "../components/Tooltip";
+import { registerTreeDropTarget } from "../components/treeDragStore";
 import { KeepAlive } from "../components/KeepAlive";
 import { FK_PEEK_CLOSE_GRACE_MS, FK_PEEK_HOVER_DELAY_MS } from "../fkPeek";
 
@@ -1202,6 +1203,120 @@ describe("キーボードセルナビゲーション (#406)", () => {
     });
     await user.click(await screen.findByRole("menuitem", { name: t("gridCopyAsCsv") }));
     await waitFor(() => expect(writeText).toHaveBeenLastCalledWith("name,qty\r\napple,5\r\n"));
+  });
+
+  it("右クリックの「条件としてコピー」「IN リストとしてコピー」は選択の形に応じた SQL 断片を出す (#2406)", async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      writable: true,
+      configurable: true,
+    });
+    const columns: Column[] = [
+      { name: "id", type_name: "BIGINT" },
+      { name: "note", type_name: "VARCHAR" },
+    ];
+    const result = makeResult(columns, [
+      ["9007199254740993", "a"],
+      ["9007199254740995", null],
+      ["9007199254740993", "c"],
+    ]);
+    const { container } = renderWithProviders(<ResultGrid result={result} driver="mysql" />);
+    const cells = dataCells(container);
+    const openCopy = async (cell: HTMLElement) => {
+      fireEvent.contextMenu(cell);
+      fireEvent.keyDown(await screen.findByRole("menuitem", { name: t("gridCopyGroup") }), {
+        key: "ArrowRight",
+      });
+    };
+
+    // 1 列 3 行: IN リスト (重複除去、2^53 超を丸めない)
+    fireEvent.focus(cells[0][0]);
+    fireEvent.keyDown(cells[0][0], { key: "ArrowDown", shiftKey: true });
+    fireEvent.keyDown(cells[1][0], { key: "ArrowDown", shiftKey: true });
+    await openCopy(cells[1][0]);
+    await user.click(await screen.findByRole("menuitem", { name: t("gridCopyAsInList") }));
+    await waitFor(() =>
+      expect(writeText).toHaveBeenLastCalledWith("`id` IN (9007199254740993, 9007199254740995)"),
+    );
+
+    // 1 行 2 列: AND 条件 (素のクリックで選択を解除してから選び直す)
+    fireEvent.keyDown(cells[2][0], { key: "ArrowUp" });
+    fireEvent.focus(cells[1][0]);
+    fireEvent.keyDown(cells[1][0], { key: "ArrowRight", shiftKey: true });
+    await openCopy(cells[1][1]);
+    expect(await screen.findByRole("menuitem", { name: t("gridCopyAsInList") })).toBeDisabled();
+    await user.click(await screen.findByRole("menuitem", { name: t("gridCopyAsCondition") }));
+    await waitFor(() =>
+      expect(writeText).toHaveBeenLastCalledWith("`id` = 9007199254740995 AND `note` IS NULL"),
+    );
+  });
+
+  it("マスク中のセルを含む選択では挿入・条件コピーが無効になり、理由がツールチップに出る (#2406)", async () => {
+    setColumnMaskEnabled(true);
+    setColumnMaskPatterns(["secret"]);
+    onTestFinished(() => {
+      setColumnMaskEnabled(false);
+      setColumnMaskPatterns([]);
+    });
+    const columns: Column[] = [
+      { name: "id", type_name: "INT" },
+      { name: "secret", type_name: "VARCHAR" },
+    ];
+    const { container } = renderWithProviders(
+      <ResultGrid result={makeResult(columns, [[1, "hunter2"]])} driver="mysql" />,
+    );
+    const cells = dataCells(container);
+    fireEvent.contextMenu(cells[0][1]);
+    const insert = await screen.findByRole("menuitem", { name: t("gridInsertToEditor") });
+    expect(insert).toBeDisabled();
+    // 無効項目の理由は Tooltip (focusableWrapper の span) に出る。
+    hoverForTooltip((insert.closest("span[tabindex]") ?? insert.parentElement) as HTMLElement);
+    expect(await screen.findByText(t("gridMaskedSqlCopyBlocked"))).toBeTruthy();
+  });
+
+  it("DB の種類が不明なグリッドでは挿入・条件コピーを無効にする (#2406)", async () => {
+    const columns: Column[] = [{ name: "id", type_name: "INT" }];
+    const { container } = renderWithProviders(<ResultGrid result={makeResult(columns, [[1]])} />);
+    fireEvent.contextMenu(dataCells(container)[0][0]);
+    expect(await screen.findByRole("menuitem", { name: t("gridInsertToEditor") })).toBeDisabled();
+  });
+
+  describe("エディタへ挿入 (キャレット位置, #2406)", () => {
+    const columns: Column[] = [{ name: "id", type_name: "INT" }];
+    const open = async () => {
+      const { container } = renderWithProviders(
+        <ResultGrid result={makeResult(columns, [[7]])} driver="postgres" />,
+      );
+      fireEvent.contextMenu(dataCells(container)[0][0]);
+      return screen.findByRole("menuitem", { name: t("gridInsertToEditor") });
+    };
+
+    it("見えているエディタへリテラルを挿入する", async () => {
+      const editor = document.createElement("div");
+      editor.getClientRects = () => [{}] as unknown as DOMRectList;
+      document.body.append(editor);
+      const insertAtSelection = vi.fn();
+      const off = registerTreeDropTarget({
+        element: editor,
+        posAtCoords: () => 0,
+        setMarker: () => {},
+        insert: vi.fn() as never,
+        insertAtSelection,
+      });
+      onTestFinished(() => {
+        off();
+        editor.remove();
+      });
+      await userEvent.setup().click(await open());
+      expect(insertAtSelection).toHaveBeenCalledWith({ kind: "text", text: "7", label: "7" });
+    });
+
+    it("エディタが無いときは挿入せずトーストで知らせる", async () => {
+      await userEvent.setup().click(await open());
+      expect(await screen.findByText(t("gridInsertNoEditor"))).toBeTruthy();
+    });
   });
 
   it("行コピー (TSV) は非表示列を含めず、列の並び替えに従う", async () => {

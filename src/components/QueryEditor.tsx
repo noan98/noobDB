@@ -1787,6 +1787,18 @@ export const QueryEditor = memo(
       const unregisterTreeDrop = registerTreeDropTarget({
         element: view.dom,
         posAtCoords: (x, y) => view.posAtCoords({ x, y }, false),
+        insertAtSelection: (item) => {
+          if (view.dom.isConnected === false) return;
+          // 通常の貼り付けと同じく、選択範囲があれば置き換える。
+          const text = treeItemInsertText(driverRef.current, item);
+          const { from, to } = view.state.selection.main;
+          view.dispatch({
+            changes: { from, to, insert: text },
+            selection: { anchor: from + text.length },
+            userEvent: "input.drop",
+          });
+          view.focus();
+        },
         setMarker: (pos) => view.dispatch({ effects: treeDropMarkerEffect.of(pos) }),
         insert: (item, pos, qualified, joinFk) => {
           // Shift ドロップ: FK 列なら JOIN 雛形 (#1540)。FK 一覧はエディタの対象 DB のものだけなので、

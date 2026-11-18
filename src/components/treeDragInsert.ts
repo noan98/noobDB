@@ -13,13 +13,16 @@ import { qualifiedTableName, qualifiedTableSql } from "./sqlDialect";
 
 export type TreeDragItem =
   | { kind: "table"; database: string; table: string }
-  | { kind: "column"; database: string; table: string; column: string };
+  | { kind: "column"; database: string; table: string; column: string }
+  /** 結果グリッドの選択範囲から作った挿入済みの文字列 (#2406)。`label` はゴーストに出す短い表示。 */
+  | { kind: "text"; text: string; label: string };
 
 /**
  * エディタへ挿入する文字列。テーブルは `SELECT * FROM <修飾名>` の雛形
  * (右クリックの「SELECT を挿入」と同じ)、列は `qualified` なら `表.列`、そうでなければ列名のみ。
  */
 export function treeItemInsertText(driver: string, item: TreeDragItem, qualified = true): string {
+  if (item.kind === "text") return item.text;
   if (item.kind === "table") return qualifiedTableSql(driver, item.database, item.table);
   return qualified
     ? qualifiedColumnInsertText(driver, item.table, item.column)
@@ -44,5 +47,6 @@ export function tableSelectWithColumnsText(
 
 /** ドラッグ中のゴーストに出すラベル (何を掴んでいるか)。 */
 export function treeDragLabel(item: TreeDragItem): string {
+  if (item.kind === "text") return item.label;
   return item.kind === "table" ? item.table : `${item.table}.${item.column}`;
 }

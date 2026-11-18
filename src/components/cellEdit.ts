@@ -1146,19 +1146,28 @@ export interface BuildRowSqlInput {
   pkIndices: number[];
 }
 
+/**
+ * 結果セルの値で行を引く `col = <値>` の項 (型付きリテラル版, #2406)。NULL は `IS NULL`、
+ * 真偽値は `boolWhere`、単精度 float は許容差比較、MySQL の空間型は `ST_Equals` にする。
+ * 行 → SQL の WHERE と、グリッドの選択を条件として挿入する機能が共有する。
+ */
+export function rowMatchClause(driver: string, col: Column, v: CellValue): string {
+  const quoted = quoteIdentFor(driver, col.name);
+  // A real WHERE `= NULL` never matches (SQL three-valued logic) — see
+  // `whereEqualsClause`'s doc for why this matters once identity can
+  // include nullable columns (#849's all_columns fallback).
+  if (v === null || v === undefined) return `${quoted} IS NULL`;
+  if (typeof v === "boolean") return boolWhere(driver, quoted, v);
+  const approx = singleFloatWhere(driver, col, v);
+  if (approx) return approx;
+  // MySQL は文字列と GEOMETRY を `=` で比べられないので ST_Equals (#2379)。
+  const spatial = spatialLiteral(driver, col, v);
+  if (spatial && driver === "mysql") return `ST_Equals(${quoted}, ${spatial})`;
+  return `${quoted} = ${rowValueLiteral(driver, v, col)}`;
+}
+
 function rowWhereParts(driver: string, columns: Column[], row: CellValue[], pkIndices: number[]): string[] {
-  return pkIndices.map((i) => {
-    const v = row[i];
-    const quoted = quoteIdentFor(driver, columns[i].name);
-    // A real WHERE `= NULL` never matches (SQL three-valued logic) — see
-    // `whereEqualsClause`'s doc for why this matters once identity can
-    // include nullable columns (#849's all_columns fallback).
-    if (v === null || v === undefined) return `${quoted} IS NULL`;
-    if (typeof v === "boolean") return boolWhere(driver, quoted, v);
-    const approx = singleFloatWhere(driver, columns[i], v);
-    if (approx) return approx;
-    return `${quoted} = ${rowValueLiteral(driver, v, columns[i])}`;
-  });
+  return pkIndices.map((i) => rowMatchClause(driver, columns[i], row[i]));
 }
 
 /**

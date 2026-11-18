@@ -21,6 +21,15 @@ import {
 import { AUTOFIT_SAMPLE_ROWS, computeAutoFitWidth } from "./gridAutoFit";
 import { useKeepAliveActive } from "./KeepAlive";
 import { useStableCallbacks } from "../useStableCallbacks";
+import {
+  buildGridInsertSelection,
+  gridInsertShapeBlock,
+  planGridInsert,
+  type GridInsertBlock,
+  type GridInsertKind,
+} from "./gridDragInsert";
+import { useGridSelectionDrag } from "./useGridSelectionDrag";
+import { insertAtEditorCaret } from "./treeDragStore";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { reducedMotionActive, transitions, variants } from "../motion";
@@ -6300,6 +6309,77 @@ export const DataGrid = memo(function DataGrid({
     }
     return { rowIndices: [rowIdx], colIndices: visibleColIds };
   };
+  // 選択範囲 (矩形選択に含まれるセルなら範囲全体、そうでなければそのセル 1 つ) を SQL 断片にする
+  // (#2406)。ドラッグ挿入・「エディタへ挿入」・条件 / IN リストのコピーが共有する。
+  // 矩形選択に含まれるセルなら範囲全体、そうでなければそのセル 1 つ。
+  const gridInsertRangeFor = (rowIdx: number, colIdx: number) => {
+    const inRect =
+      !!selectionRect && selectionRect.rowIndexSet.has(rowIdx) && selectionRect.colIdSet.has(colIdx);
+    return inRect
+      ? {
+          rowIndices: visibleRows.slice(selectionRect.r0, selectionRect.r1 + 1).map((r) => r.index),
+          colIndices: visibleColIds.slice(selectionRect.c0, selectionRect.c1 + 1),
+        }
+      : { rowIndices: [rowIdx], colIndices: [colIdx] };
+  };
+  // 出せない理由 (出せるなら null)。値を集めずに判定するので、メニューを開くたびに呼んでも軽い。
+  // 形 (行数 × 列数) を先に見るので、全選択のような巨大な範囲では何も走査しない。
+  const gridInsertBlockFor = (
+    rowIdx: number,
+    colIdx: number,
+    kind: GridInsertKind,
+  ): GridInsertBlock | null => {
+    // ドライバ不明 (プレビューグリッドなど) では引用符規則が決まらないので出さない。
+    if (!rowSqlDriver) return "driver";
+    const { rowIndices, colIndices } = gridInsertRangeFor(rowIdx, colIdx);
+    const shape = gridInsertShapeBlock(kind, rowIndices.length, colIndices.length);
+    if (shape) return shape;
+    const masked = rowIndices.some((ri) => colIndices.some((ci) => cellMaskedNow(ri, ci)));
+    return masked ? "masked" : null;
+  };
+  const gridInsertPlanFor = (rowIdx: number, colIdx: number, kind: GridInsertKind) => {
+    const block = gridInsertBlockFor(rowIdx, colIdx, kind);
+    if (block || !rowSqlDriver) return { ok: false as const, reason: block ?? ("driver" as const) };
+    const { rowIndices, colIndices } = gridInsertRangeFor(rowIdx, colIdx);
+    return planGridInsert(
+      kind,
+      buildGridInsertSelection({
+        driver: rowSqlDriver,
+        columns,
+        rows,
+        rowIndices,
+        colIndices,
+        isMasked: cellMaskedNow,
+      }),
+    );
+  };
+  const gridInsertBlockedTitle = (reason: GridInsertBlock, kind: GridInsertKind) =>
+    reason === "masked"
+      ? t("gridMaskedSqlCopyBlocked")
+      : reason === "driver"
+        ? t("gridInsertNoDriver")
+        : kind === "in"
+          ? t("gridInsertInListShape")
+          : t("gridInsertShape");
+  const insertGridSelection = (rowIdx: number, colIdx: number) => {
+    const plan = gridInsertPlanFor(rowIdx, colIdx, "auto");
+    setCopyMenu(null);
+    if (!plan.ok) return;
+    if (
+      !insertAtEditorCaret(
+        { kind: "text", text: plan.text, label: plan.label },
+        scrollContainerRef?.current ?? gridTableRef.current,
+      )
+    ) {
+      toast.info(t("gridInsertNoEditor"));
+    }
+  };
+  const copyGridCondition = (rowIdx: number, colIdx: number, kind: GridInsertKind) => {
+    const plan = gridInsertPlanFor(rowIdx, colIdx, kind);
+    if (!plan.ok) return;
+    void runCopy(plan.text);
+  };
+  const startGridSelectionDrag = useGridSelectionDrag();
   const copyAsFormat = (format: GridCopyFormat, target: { rowIndices: number[]; colIndices: number[] }) => {
     const text = buildGridCopyText(format, {
       columns,
@@ -6491,7 +6571,7 @@ export const DataGrid = memo(function DataGrid({
     enabled: virtualizerEnabled,
     initialRect: lastViewportRef.current,
     count: visibleRows.length,
-    getScrollElement: () => scrollContainerRef?.current ?? null,
+    getScrollElement: () => scrollContainerRef?.current ?? gridTableRef.current,
     estimateSize: () => knownRowHeight ?? DENSITY_ROW_ESTIMATE[density],
     // 行高は密度・フォント拡大が同じなら全行同じ (セルは 1 行表示)。測り済みの高さを
     // インスタンスに残し、再表示などで行を作り直すときの同期計測 (行数ぶんの
@@ -6557,7 +6637,7 @@ export const DataGrid = memo(function DataGrid({
     initialRect: lastViewportRef.current,
     horizontal: true,
     count: centerColumns.length,
-    getScrollElement: () => scrollContainerRef?.current ?? null,
+    getScrollElement: () => scrollContainerRef?.current ?? gridTableRef.current,
     // Column widths are exact (table state), not DOM-measured, so seed the
     // real size directly instead of a rough estimate.
     estimateSize: (index) => centerColumns[index]?.getSize() ?? defaultColumnSize("string"),
@@ -6926,6 +7006,31 @@ export const DataGrid = memo(function DataGrid({
       // selection, e.g. bulk edit) — never clear the selection here.
       dismissHoverPeek();
       if (e.button !== 0) return;
+      // 複数セルの矩形選択の内側を素のボタンで押したら、マーキーではなくエディタへのドラッグ挿入を
+      // 始める (#2406)。未選択のセル・単独のアクティブセル (そこからの範囲選択 #1578 を優先。1 セルの
+      // 挿入は右クリックメニュー)・マスク中・挿入できない形は従来どおり。
+      if (
+        !e.shiftKey &&
+        !e.ctrlKey &&
+        !e.metaKey &&
+        !e.altKey &&
+        editing === null &&
+        !(e.target as Element).closest?.("button, a, input, textarea, select, [contenteditable='true']")
+      ) {
+        const inRect =
+          !!selectionRect && selectionRect.rowIndexSet.has(rowIdx) && selectionRect.colIdSet.has(colIdx);
+        if (
+          inRect &&
+          startGridSelectionDrag(
+            e.currentTarget,
+            gridInsertPlanFor(rowIdx, colIdx, "auto"),
+            e,
+            selection ? () => setSelection(null) : undefined,
+          )
+        ) {
+          return;
+        }
+      }
       // Shift+click extends a rectangular selection from the active
       // cell; a plain click clears any selection (focus sets active).
       if (e.shiftKey && activeCell) {
@@ -8010,6 +8115,17 @@ export const DataGrid = memo(function DataGrid({
                     ];
                   })(),
                   { separator: true as const },
+                  // 条件 / IN リストとしてコピー (#2406)。
+                  ...(["where", "in"] as const).map((kind) => {
+                    const block = gridInsertBlockFor(copyMenu.rowIdx, copyMenu.colIdx, kind);
+                    return {
+                      label: t(kind === "where" ? "gridCopyAsCondition" : "gridCopyAsInList"),
+                      disabled: block !== null,
+                      title: block ? gridInsertBlockedTitle(block, kind) : undefined,
+                      onSelect: () => copyGridCondition(copyMenu.rowIdx, copyMenu.colIdx, kind),
+                    };
+                  }),
+                  { separator: true as const },
                   multiRow
                     ? {
                         label: insertPartialCols
@@ -8073,6 +8189,16 @@ export const DataGrid = memo(function DataGrid({
               })(),
               { icon: "copy" },
             ),
+            // 選択セルをエディタのキャレット位置へ挿入 (#2406)。ドラッグと同じ内容。
+            (() => {
+              const block = gridInsertBlockFor(copyMenu.rowIdx, copyMenu.colIdx, "auto");
+              return {
+                label: t("gridInsertToEditor"),
+                title: block ? gridInsertBlockedTitle(block, "auto") : t("gridInsertToEditorTitle"),
+                disabled: block !== null,
+                onSelect: () => insertGridSelection(copyMenu.rowIdx, copyMenu.colIdx),
+              };
+            })(),
             // 選択範囲のエクスポート/コピー (#917): 矩形選択が 2 セル以上を
             // 覆っているときだけ出す (単一セルは上の「値をコピー」で足りる)。
             // 選択範囲の列/行部分集合を一度だけ `onExportSelection` へ渡し、
