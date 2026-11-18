@@ -8,7 +8,7 @@ import { Button } from "./ui";
 
 /**
  * 結果パネルが表示している内容の種類。グリッド (素の結果表) / ピボット
- * (クロス集計) / チャート (可視化) / JSON (行オブジェクトの配列、#1113) / 階層 (自己参照の木、#2410) の 5 択 (階層は #2410) で、
+ * (クロス集計) / チャート (可視化) / JSON (行オブジェクトの配列、#1113) / 階層 (自己参照の木、#2410) の 5 択で、
  * `App` のタブ状態 (`showPivot` / `showChart` / `showJson` / `showHierarchy`) と 1 対 1 に対応する。
  */
 export type ResultViewKind = "grid" | "pivot" | "chart" | "json" | "hierarchy";

@@ -56,6 +56,8 @@ export interface HierarchyModel {
   cycles: number[];
   /** 循環に含まれる行の総数。 */
   cycleRowCount: number;
+  /** グループごとの木に属する行の総数 (根の数ではなく、子孫を含む)。見出しの件数に使う。 */
+  groupRows: Record<HierarchyGroup, number>;
   /** 子を持つ行 (展開できる行) の数。 */
   expandable: number;
 }
@@ -154,6 +156,7 @@ export function buildHierarchy(
 
   // 深さとグループを、根ごとの反復走査で決める。
   const order: number[] = [];
+  const groupRows: Record<HierarchyGroup, number> = { root: 0, orphan: 0, cycle: 0 };
   const walk = (top: number, group: HierarchyGroup) => {
     const stack = [top];
     nodes[top].depth = 0;
@@ -161,6 +164,7 @@ export function buildHierarchy(
     while (stack.length > 0) {
       const cur = stack.pop() as number;
       order.push(cur);
+      groupRows[group]++;
       for (const c of nodes[cur].children) {
         nodes[c].depth = nodes[cur].depth + 1;
         nodes[c].group = group;
@@ -184,7 +188,7 @@ export function buildHierarchy(
     if (inCycle[i]) cycleRowCount++;
     if (nodes[i].children.length > 0) expandable++;
   }
-  return { nodes, roots, orphans, cycles: cycleReps, cycleRowCount, expandable };
+  return { nodes, roots, orphans, cycles: cycleReps, cycleRowCount, groupRows, expandable };
 }
 
 /** 表示中の 1 行。 */
@@ -260,10 +264,24 @@ function sameName(a: string, b: string): boolean {
   return a.toLowerCase() === b.toLowerCase();
 }
 
-/** `schema.table` / 引用符つきの参照を、比較用のテーブル名へ寄せる。 */
-function bareTable(name: string): string {
-  const last = name.split(".").pop() ?? name;
-  return last.replace(/^[`"[]|[`"\]]$/g, "").toLowerCase();
+function unquote(part: string): string {
+  return part.replace(/^[`"[]|[`"\]]$/g, "").toLowerCase();
+}
+
+/** `schema.table` / 引用符つきの参照を、スキーマ (無ければ null) とテーブル名へ分ける。 */
+function parseTableRef(name: string): { schema: string | null; table: string } {
+  const parts = name.split(".");
+  const table = unquote(parts[parts.length - 1] ?? name);
+  return { schema: parts.length > 1 ? unquote(parts[parts.length - 2]) : null, table };
+}
+
+/** 参照先が自テーブルか。両方にスキーマがあれば (`table` 側が無ければ `database`) スキーマも比べる。 */
+function isSelfTable(ref: string, table: string, database: string | null | undefined): boolean {
+  const r = parseTableRef(ref);
+  const t = parseTableRef(table);
+  if (r.table !== t.table) return false;
+  const tSchema = t.schema ?? (database ? database.toLowerCase() : null);
+  return r.schema === null || tSchema === null || r.schema === tSchema;
 }
 
 /**
@@ -275,13 +293,13 @@ export function detectSelfReference(
   resultColumns: readonly Column[],
   columnMeta: readonly TableColumnInfo[] | null | undefined,
   table: string | null | undefined,
+  database?: string | null,
 ): HierarchyColumns | null {
   if (!table || !columnMeta) return null;
   const inResult = (name: string) => resultColumns.find((c) => sameName(c.name, name))?.name ?? null;
-  const self = bareTable(table);
   const pkCols = columnMeta.filter((m) => m.key === "PRI");
   for (const m of columnMeta) {
-    if (!m.referenced_table || bareTable(m.referenced_table) !== self) continue;
+    if (!m.referenced_table || !isSelfTable(m.referenced_table, table, database)) continue;
     const parentCol = inResult(m.name);
     if (!parentCol) continue;
     const idName = m.referenced_column ?? (pkCols.length === 1 ? pkCols[0].name : null);
@@ -295,15 +313,27 @@ const PARENT_COLUMN_RE = /^(parent(_?id)?|.*_parent_id|parent_.*_id|parentid)$/i
 
 /**
  * 自己参照 FK が分からない任意の結果で、列名から ID / 親 ID を推測する (`id` + `parent_id` など)。
- * 当てにならないときは null を返し、利用者に選んでもらう。
+ * ID 列は `id`、無ければ `<テーブル名>_id` (`table` が分かるときだけ。単数形も試す)。どちらも無ければ推測せず null を返し、
+ * 利用者に選んでもらう (無関係な `*_id` を ID と取り違えない)。
  */
-export function guessHierarchyColumns(resultColumns: readonly Column[]): HierarchyColumns | null {
+export function guessHierarchyColumns(
+  resultColumns: readonly Column[],
+  table?: string | null,
+): HierarchyColumns | null {
   const parent = resultColumns.find((c) => PARENT_COLUMN_RE.test(c.name));
   if (!parent) return null;
-  const id =
-    resultColumns.find((c) => c.name.toLowerCase() === "id") ??
-    resultColumns.find((c) => c.name.toLowerCase().endsWith("_id") && c.name !== parent.name);
-  return id && id.name !== parent.name ? { idCol: id.name, parentCol: parent.name } : null;
+  const wanted = ["id"];
+  if (table) {
+    const base = parseTableRef(table).table;
+    wanted.push(`${base}_id`);
+    if (base.endsWith("s")) wanted.push(`${base.slice(0, -1)}_id`);
+  }
+  let id: Column | undefined;
+  for (const w of wanted) {
+    id = resultColumns.find((c) => c.name.toLowerCase() === w && c.name !== parent.name);
+    if (id) break;
+  }
+  return id ? { idCol: id.name, parentCol: parent.name } : null;
 }
 
 /** 表示ラベルの既定列: 名前らしい文字列列 (`name` / `title` / `label`) を優先し、無ければ ID 列。 */
@@ -405,6 +435,8 @@ export function buildSubtreeSql(p: SubtreeSqlParams): string {
   const tbl = qualifiedTableName(p.driver, p.database, p.table);
   const rootLit = rowValueLiteral(p.driver, p.rootValue, { name: p.idCol, type_name: p.idType ?? "" });
   const d = q(SUBTREE_DEPTH_COLUMN);
+  // 注意: ORDER BY は再帰 CTE の全結果 (LIMIT 以内ではなく、深さ上限までの全子孫) を並べ替えてから LIMIT を適用する。
+  // 深さ上限が大きく子孫が非常に多い木では、サーバ側で全子孫を一度組み立てるため重くなりうる (深さ上限で抑える)。
   return [
     "WITH RECURSIVE subtree AS (",
     `  SELECT t.*, 0 AS ${d} FROM ${tbl} t WHERE t.${q(p.idCol)} = ${rootLit}`,

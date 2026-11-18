@@ -57,7 +57,7 @@ describe("ResultViewSwitch", () => {
   // 見えないため、実際のキー操作でフォーカスが動くことを固定する。
   it("moves focus with the arrow keys, Home and End", () => {
     renderWithProviders(<ResultViewSwitch value="grid" onChange={() => {}} />);
-    const [grid, pivot, , , json] = screen.getAllByRole("radio");
+    const [grid, pivot, , , last] = screen.getAllByRole("radio");
 
     grid.focus();
     fireEvent.keyDown(grid, { key: "ArrowRight" });
@@ -67,13 +67,13 @@ describe("ResultViewSwitch", () => {
     expect(document.activeElement).toBe(grid);
 
     fireEvent.keyDown(grid, { key: "End" });
-    expect(document.activeElement).toBe(json);
+    expect(document.activeElement).toBe(last);
 
-    fireEvent.keyDown(json, { key: "Home" });
+    fireEvent.keyDown(last, { key: "Home" });
     expect(document.activeElement).toBe(grid);
 
     // 端では巻き戻る (useRovingFocus の既定 wrap: true)。
     fireEvent.keyDown(grid, { key: "ArrowLeft" });
-    expect(document.activeElement).toBe(json);
+    expect(document.activeElement).toBe(last);
   });
 });

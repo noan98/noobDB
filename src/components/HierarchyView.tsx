@@ -58,6 +58,9 @@ interface Props {
   onRunLookup?: (sql: string) => Promise<QueryResult>;
 }
 
+/** 列の選択途中を持てる設定 (未選択の列は空文字)。 */
+type Draft = HierarchyConfig;
+
 type Entry =
   | { kind: "header"; group: HierarchyGroup; count: number }
   | ({ kind: "row" } & HierarchyVisibleRow);
@@ -86,24 +89,40 @@ export function HierarchyView({
   const cols = result.columns;
 
   const detected = useMemo(
-    () => detectSelfReference(cols, columnMeta, table) ?? guessHierarchyColumns(cols),
-    [cols, columnMeta, table],
+    () => detectSelfReference(cols, columnMeta, table, database) ?? guessHierarchyColumns(cols, table),
+    [cols, columnMeta, table, database],
   );
-  const [config, setConfig] = useState<HierarchyConfig | null>(() => {
+  const toDraft = (d: { idCol: string; parentCol: string } | null): Draft | null =>
+    d ? { ...d, labelCol: defaultLabelColumn(cols, d.idCol) } : null;
+  // 保存済みの設定があるか、利用者が列を選んだら、以後は自動判定の変化に追従しない。
+  const userSet = useRef(false);
+  const [config, setConfig] = useState<Draft | null>(() => {
     const stored = readStoredHierarchyConfig(persistKey, cols);
-    if (stored) return stored;
-    return detected ? { ...detected, labelCol: defaultLabelColumn(cols, detected.idCol) } : null;
+    if (stored) userSet.current = true;
+    return stored ?? toDraft(detected);
   });
-  const updateConfig = (patch: Partial<HierarchyConfig>) => {
-    const base: HierarchyConfig = config ?? {
-      idCol: cols[0]?.name ?? "",
-      parentCol: cols[1]?.name ?? cols[0]?.name ?? "",
-      labelCol: cols[0]?.name ?? "",
-    };
+  // メタデータ (論理リレーション等) が後から届いたときに、未操作なら自動判定へ追従する。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: detected の変化だけをトリガにする
+  useEffect(() => {
+    if (userSet.current) return;
+    const next = toDraft(detected);
+    setConfig((cur) =>
+      cur?.idCol === next?.idCol && cur?.parentCol === next?.parentCol && cur?.labelCol === next?.labelCol
+        ? cur
+        : next,
+    );
+  }, [detected]);
+  const updateConfig = (patch: Partial<Draft>) => {
+    const base: Draft = config ?? { idCol: "", parentCol: "", labelCol: "" };
     const next = { ...base, ...patch };
-    if (next.idCol === next.parentCol) return;
+    // 同じ列を ID と親 ID の両方には選べない。もう一方の欄と入れ替えて、無反応にしない。
+    if (patch.idCol !== undefined && patch.idCol === base.parentCol) next.parentCol = base.idCol;
+    if (patch.parentCol !== undefined && patch.parentCol === base.idCol) next.idCol = base.parentCol;
+    if (patch.idCol !== undefined && !next.labelCol) next.labelCol = patch.idCol;
+    userSet.current = true;
     setConfig(next);
-    writeStoredHierarchyConfig(persistKey, next);
+    // 両方そろうまでは木を作らず、保存もしない。
+    if (next.idCol && next.parentCol) writeStoredHierarchyConfig(persistKey, next);
     setExpanded(new Set());
     setSelected(null);
   };
@@ -136,11 +155,16 @@ export function HierarchyView({
 
   // サーバ版。MySQL 5.7 は再帰 CTE が無いので部分木取得を無効にする。
   const [version, setVersion] = useState<ServerVersion | null>(null);
+  // 呼び出し側は描画ごとに新しい関数を渡すので、ref 経由で呼び、版の確認は driver が決まったときの 1 回だけにする。
+  const lookupRef = useRef(onRunLookup);
+  lookupRef.current = onRunLookup;
+  const hasLookup = !!onRunLookup;
   useEffect(() => {
     const sql = serverVersionSql(driver);
-    if (driver !== "mysql" || !sql || !onRunLookup) return;
+    const lookup = lookupRef.current;
+    if (driver !== "mysql" || !sql || !hasLookup || !lookup) return;
     let alive = true;
-    onRunLookup(sql)
+    lookup(sql)
       .then((r) => {
         if (alive) setVersion(parseServerVersion(driver, String(r.rows[0]?.[0] ?? "")));
       })
@@ -148,7 +172,7 @@ export function HierarchyView({
     return () => {
       alive = false;
     };
-  }, [driver, onRunLookup]);
+  }, [driver, hasLookup]);
 
   const entries = useMemo(() => {
     if (!model) return { list: [] as Entry[], truncated: false };
@@ -170,7 +194,7 @@ export function HierarchyView({
         list.push({
           kind: "header",
           group: g.group,
-          count: g.group === "cycle" ? model.cycleRowCount : g.tops.length,
+          count: model.groupRows[g.group],
         });
       }
       const flat = flattenVisible(model, g.tops, expanded, remaining);
@@ -184,6 +208,9 @@ export function HierarchyView({
     () => entries.list.filter((e): e is Extract<Entry, { kind: "row" }> => e.kind === "row"),
     [entries],
   );
+
+  // 選択行が全折りたたみなどで隠れたら、先頭の行を Tab / 矢印キーの入口にする。
+  const selectedVisible = selected !== null && visibleRows.some((r) => r.row === selected);
 
   const toggle = useCallback(
     (row: number) => {
@@ -251,7 +278,9 @@ export function HierarchyView({
           ? t("hierarchySubtreeMasked")
           : selected === null
             ? t("hierarchySubtreeSelect")
-            : null;
+            : result.rows[selected]?.[idIdx] === null || result.rows[selected]?.[idIdx] === undefined
+              ? t("hierarchySubtreeNullId")
+              : null;
 
   const fetchSubtree = () => {
     if (subtreeBlockedReason || !config || !table || !onOpenQuery || selected === null) return;
@@ -444,8 +473,9 @@ export function HierarchyView({
                 inCycle={model.nodes[e.row].inCycle}
                 open={expanded.has(e.row)}
                 selected={selected === e.row}
-                focusable={selected === e.row || (selected === null && i === firstRowIndex(entries.list))}
+                focusable={selected === e.row || (!selectedVisible && i === firstRowIndex(entries.list))}
                 onSelect={() => setSelected(e.row)}
+                onFocusRow={() => setSelected(e.row)}
                 onToggle={() => toggle(e.row)}
               />
             ),
@@ -522,6 +552,7 @@ interface RowProps {
   selected: boolean;
   focusable: boolean;
   onSelect: () => void;
+  onFocusRow: () => void;
   onToggle: () => void;
 }
 
@@ -540,6 +571,7 @@ function HierarchyRow(p: RowProps) {
       bg={p.selected ? "app.active" : undefined}
       style={{ paddingLeft: `calc(var(--space-1-5) + ${level} * var(--space-4))` }}
       onClick={p.onSelect}
+      onFocus={p.onFocusRow}
       onDoubleClick={expandable ? p.onToggle : undefined}
     >
       {expandable ? (

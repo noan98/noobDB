@@ -76,6 +76,8 @@ describe("buildHierarchy", () => {
     expect(m.cycleRowCount).toBe(4);
     expect(m.nodes[4].inCycle).toBe(false);
     expect(m.nodes[4].group).toBe("cycle");
+    // 見出しの件数は尾を含むグループ全体の行数 (循環 4 行 + 尾 1 行)。
+    expect(m.groupRows).toEqual({ root: 1, orphan: 0, cycle: 5 });
     expect(m.roots).toEqual([5]);
     // 代表行は根として切り離され、全行がちょうど 1 回ずつ木に現れる。
     const all = new Set<number>();
@@ -189,6 +191,20 @@ describe("列の決定", () => {
     });
   });
 
+  it("referenced_table にスキーマが付くときはスキーマも比べる", () => {
+    const m = (ref: string) => [
+      meta("id", { key: "PRI" }),
+      meta("p", { referenced_table: ref, referenced_column: "id" }),
+    ];
+    const cs = [col("id"), col("p")];
+    expect(detectSelfReference(cs, m("other.cats"), "cats", "shop")).toBeNull();
+    expect(detectSelfReference(cs, m("shop.cats"), "cats", "shop")).toEqual({ idCol: "id", parentCol: "p" });
+    expect(detectSelfReference(cs, m("shop.cats"), "shop.cats")).toEqual({ idCol: "id", parentCol: "p" });
+    expect(detectSelfReference(cs, m("other.cats"), "shop.cats")).toBeNull();
+    // スキーマが片側に無く比べられないときは従来どおりテーブル名だけで判定する。
+    expect(detectSelfReference(cs, m("cats"), "cats", "shop")).toEqual({ idCol: "id", parentCol: "p" });
+  });
+
   it("referenced_column が無ければ PK を ID にし、結果に無い列は使わない", () => {
     const metas = [meta("id", { key: "PRI" }), meta("up", { referenced_table: "t" })];
     expect(detectSelfReference([col("id"), col("up")], metas, "t")).toEqual({ idCol: "id", parentCol: "up" });
@@ -199,6 +215,16 @@ describe("列の決定", () => {
     expect(guessHierarchyColumns(cols)).toEqual({ idCol: "id", parentCol: "parent_id" });
     expect(guessHierarchyColumns([col("a"), col("b")])).toBeNull();
     expect(guessHierarchyColumns([col("parent_id"), col("x")])).toBeNull();
+    // id が無いときは無関係な *_id を ID とみなさず、<テーブル名>_id (単数形も) だけを使う。
+    expect(guessHierarchyColumns([col("parent_id"), col("user_id")])).toBeNull();
+    expect(guessHierarchyColumns([col("parent_id"), col("user_id")], "users")).toEqual({
+      idCol: "user_id",
+      parentCol: "parent_id",
+    });
+    expect(guessHierarchyColumns([col("parent_id"), col("category_id")], "category")).toEqual({
+      idCol: "category_id",
+      parentCol: "parent_id",
+    });
   });
 
   it("ラベル列は名前らしい列を優先し、無ければ ID 列", () => {
@@ -236,6 +262,28 @@ describe("部分木の取得 SQL", () => {
     expect(pg).toContain("LIMIT 1000");
     const sl = buildSubtreeSql({ ...base, driver: "sqlite", database: "main" });
     expect(sl).toContain('FROM "categories" t');
+    expect(pg).toBe(
+      [
+        "WITH RECURSIVE subtree AS (",
+        '  SELECT t.*, 0 AS "__depth" FROM "public"."categories" t WHERE t."id" = 5',
+        "  UNION ALL",
+        '  SELECT c.*, subtree."__depth" + 1 FROM "public"."categories" c JOIN subtree ON c."parent_id" = subtree."id"',
+        '  WHERE subtree."__depth" < 10',
+        ")",
+        'SELECT * FROM subtree ORDER BY "__depth" LIMIT 1000',
+      ].join("\n"),
+    );
+    expect(sl).toBe(
+      [
+        "WITH RECURSIVE subtree AS (",
+        '  SELECT t.*, 0 AS "__depth" FROM "categories" t WHERE t."id" = 5',
+        "  UNION ALL",
+        '  SELECT c.*, subtree."__depth" + 1 FROM "categories" c JOIN subtree ON c."parent_id" = subtree."id"',
+        '  WHERE subtree."__depth" < 10',
+        ")",
+        'SELECT * FROM subtree ORDER BY "__depth" LIMIT 1000',
+      ].join("\n"),
+    );
   });
 
   it("文字列の根はリテラル化し、引用符・識別子をエスケープする", () => {

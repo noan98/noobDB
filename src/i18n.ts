@@ -8192,6 +8192,7 @@ const en = {
   hierarchySubtreeUnsupported: "Recursive queries need MySQL 8.0 or later (MariaDB 10.2 or later)",
   hierarchySubtreeMasked: "The ID column is masked",
   hierarchySubtreeSelect: "Select a node first",
+  hierarchySubtreeNullId: "The selected node has no ID (NULL)",
   hierarchyPickTitle: "Choose the ID and parent columns",
   hierarchyPickHint:
     "Pick a column holding each row's ID and a column holding its parent's ID to see the rows as a tree.",
@@ -17140,6 +17141,7 @@ const ja: Dict = {
   hierarchySubtreeUnsupported: "再帰クエリは MySQL 8.0 以降 (MariaDB は 10.2 以降) で使えます",
   hierarchySubtreeMasked: "ID 列がマスクされています",
   hierarchySubtreeSelect: "先にノードを選んでください",
+  hierarchySubtreeNullId: "選択したノードの ID が NULL です",
   hierarchyPickTitle: "ID 列と親 ID 列を選んでください",
   hierarchyPickHint: "各行の ID の列と、親の ID を持つ列を選ぶと、行を木として見られます。",
   hierarchyEmpty: "行がありません",
