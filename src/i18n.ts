@@ -677,6 +677,12 @@ const en = {
   settingsSqlLintEnabled: "Enable syntax check",
   settingsSqlLintEnabledHelp:
     "Flags misspelled keywords (SELEC, FRM, WHER), empty clauses (FROM WHERE), extra commas, GROUP / ORDER without BY, statements that end mid-clause, misordered clauses (e.g. WHERE after ORDER BY), unmatched brackets, and unterminated strings or comments, following the connected driver's dialect. Conservative by design: it prefers missing an error over a false positive.",
+  settingsInsertColumnHints: "Column names in INSERT values",
+  settingsInsertColumnHintsHelp:
+    "Shows the target column name in front of each value of INSERT ... VALUES so you can tell which column a value goes to (the table's column order is used when the column list is omitted). Display only; nothing is added to your SQL.",
+  settingsInsertColumnHintsCursor: "Cursor line only",
+  settingsInsertColumnHintsAlways: "Always",
+  settingsInsertColumnHintsOff: "Off",
   settingsIdentifierHoverEnabled: "Hover info for identifiers",
   settingsIdentifierHoverEnabledHelp:
     "Hover a table or column name in the editor to see its type and constraints, and underline the names that Ctrl/Cmd+click can jump to while the key is held. Ctrl/Cmd+click itself keeps working when this is off.",
@@ -702,7 +708,7 @@ const en = {
   editorScrollMarkerMore: "+{n} more nearby",
   settingsSqlSemanticLintEnabled: "Warn on unknown tables and columns",
   settingsSqlSemanticLintEnabledHelp:
-    "Underlines table and column names that don't exist in the connected schema, before you run. Aliases, CTEs, subqueries and functions are resolved, and anything it can't resolve is left alone. Works only while the syntax check is on, and needs the schema to be loaded. On SQLite only table names are checked.",
+    "Underlines table and column names that don't exist in the connected schema, before you run. Aliases, CTEs, subqueries and functions are resolved, and anything it can't resolve is left alone. Works only while the syntax check is on, and needs the schema to be loaded. On SQLite only table names are checked. It also warns when the number of values in an INSERT ... VALUES row doesn't match the column count.",
 
   settingsPreflightImpact: "Impact-row preflight",
   settingsPreflightImpactHelp:
@@ -1908,6 +1914,7 @@ const en = {
   editorLintIncomplete: "Statement ends unexpectedly — something is missing after this",
   editorLintUnknownTable: 'Table "{name}" was not found in the connected schema',
   editorLintUnknownColumn: 'Column "{name}" was not found in the tables of this query',
+  editorLintValueCount: "{values} values for {columns} columns",
 
   // Impact-row preflight badge (#737).
   editorPreflightImpact: "Affects ~{count} rows",
@@ -5081,6 +5088,19 @@ const en = {
   relatedRowsLoadMore: "Load more",
   relatedRowsCapReached: "Showing at most {count} rows. Open in the grid to see all of them.",
   relatedRowsOpen: "Open in grid",
+  fkPeekTitle: "Referenced row: {table}",
+  fkPeekLoading: "Loading…",
+  fkPeekNotFound: "The referenced row was not found",
+  fkPeekError: "Failed to load: {error}",
+  fkPeekBack: "Back",
+  fkPeekForward: "Forward",
+  fkPeekBreadcrumbAria: "Followed references",
+  fkPeekFollow: "Follow to {table}.{column}",
+  fkPeekMore: "+{count} more columns",
+  fkPeekOpenInGrid: "Open in grid",
+  fkPeekOpenInInspector: "Open in row inspector",
+  fkPeekClose: "Close",
+  fkPeekMultiple: "Multiple rows match. Showing the first one; open in the grid to check.",
   relatedRowsError: "Failed to load: {error}",
   relatedRowsTableAria: "Rows of {table} referencing this row",
   // コンテキストメニューの Undo/Redo (#815). ツールバーボタンの
@@ -9746,6 +9766,12 @@ const ja: Dict = {
   settingsSqlLintEnabled: "構文チェックを有効化",
   settingsSqlLintEnabledHelp:
     "キーワードのタイポ (SELEC / FRM / WHER など)・中身が空の句 (FROM WHERE など)・余分なカンマ・BY の抜けた GROUP / ORDER・途中で終わった文・句の順序ミス (ORDER BY の後の WHERE など)・括弧の不整合・未終端の文字列やコメントを、接続中ドライバの方言に沿って検出します。誤検出より見逃しを優先する保守的な判定です。",
+  settingsInsertColumnHints: "INSERT の値に列名を表示",
+  settingsInsertColumnHintsHelp:
+    "INSERT ... VALUES の各値の手前に、入る列の名前を薄く表示します (列リストを省略した文はテーブルの列順を使います)。表示だけで、SQL には何も追加されません。",
+  settingsInsertColumnHintsCursor: "カーソルのある行のみ",
+  settingsInsertColumnHintsAlways: "常に表示",
+  settingsInsertColumnHintsOff: "オフ",
   settingsIdentifierHoverEnabled: "識別子のホバー情報",
   settingsIdentifierHoverEnabledHelp:
     "エディタでテーブル名・列名にホバーすると型や制約を表示し、Ctrl/Cmd を押している間はクリックで移動できる識別子に下線を引きます。オフでも Ctrl/Cmd+クリックの移動は使えます。",
@@ -9771,7 +9797,7 @@ const ja: Dict = {
   editorScrollMarkerMore: "ほか {n} 件が近くにあります",
   settingsSqlSemanticLintEnabled: "存在しないテーブル・列を警告",
   settingsSqlSemanticLintEnabledHelp:
-    "接続中のスキーマに存在しないテーブル名・列名を、実行前に下線で警告します。エイリアス・CTE・サブクエリ・関数は解決し、解決できないものは警告しません。構文チェックがオンのときだけ働き、スキーマの取得後に有効になります。SQLite ではテーブル名だけを検査します。",
+    "接続中のスキーマに存在しないテーブル名・列名を、実行前に下線で警告します。エイリアス・CTE・サブクエリ・関数は解決し、解決できないものは警告しません。構文チェックがオンのときだけ働き、スキーマの取得後に有効になります。SQLite ではテーブル名だけを検査します。あわせて、INSERT ... VALUES の値の数が列数と合わない行も警告します。",
 
   settingsPreflightImpact: "影響行数プリフライト",
   settingsPreflightImpactHelp:
@@ -10969,6 +10995,7 @@ const ja: Dict = {
   editorLintIncomplete: "文が途中で終わっています — この後に続きが必要です",
   editorLintUnknownTable: 'テーブル "{name}" は接続中のスキーマに見つかりません',
   editorLintUnknownColumn: '列 "{name}" はこのクエリのテーブルに見つかりません',
+  editorLintValueCount: "{columns} 列に対して {values} 値",
 
   // 影響行数プリフライトのバッジ (#737)。
   editorPreflightImpact: "影響: 約 {count} 行",
@@ -14113,6 +14140,20 @@ const ja: Dict = {
   relatedRowsLoadMore: "さらに読み込む",
   relatedRowsCapReached: "最大 {count} 件まで表示しています。すべて見るにはグリッドで開いてください。",
   relatedRowsOpen: "グリッドで開く",
+  fkPeekTitle: "参照先の行: {table}",
+  fkPeekLoading: "読み込み中…",
+  fkPeekNotFound: "参照先の行が見つかりません",
+  fkPeekError: "取得に失敗しました: {error}",
+  fkPeekBack: "戻る",
+  fkPeekForward: "進む",
+  fkPeekBreadcrumbAria: "たどった参照先",
+  fkPeekFollow: "{table}.{column} へたどる",
+  fkPeekMore: "ほか {count} 列",
+  fkPeekOpenInGrid: "グリッドで開く",
+  fkPeekOpenInInspector: "行インスペクタで開く",
+  fkPeekClose: "閉じる",
+  fkPeekMultiple:
+    "複数の行が一致しています (グリッドで開いて確認してください)。先頭の 1 行を表示しています。",
   relatedRowsError: "読み込みに失敗しました: {error}",
   relatedRowsTableAria: "この行を参照している {table} の行",
   // コンテキストメニューの Undo/Redo (#815)。
