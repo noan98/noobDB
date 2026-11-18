@@ -84,3 +84,42 @@ describe("evaluateDdlGate (#2176)", () => {
     expect(evaluateDdlGate({ ...input, forceTypedConfirm: false, isProduction: true })).toBeNull();
   });
 });
+
+describe("evaluateDdlGate: セル単位の接続 (#2396)", () => {
+  // ノートブックは、セルが指す接続の設定でゲートを判定する (アクティブな接続の設定を使い回さない)。
+  const cases: { driver: string; sql: string }[] = [
+    { driver: "mysql", sql: "DROP TABLE orders" },
+    { driver: "postgres", sql: "DROP TABLE orders" },
+    { driver: "sqlite", sql: "DROP TABLE orders" },
+  ];
+  const quiet = { ...base, confirmDangerousQueries: false };
+
+  for (const { driver, sql } of cases) {
+    it(`${driver}: 本番の接続のセルは、検証用の接続 (確認なし) の設定にかかわらず型入力確認を求める`, () => {
+      const dev = evaluateDdlGate({ ...quiet, sql, driver });
+      const prod = evaluateDdlGate({ ...quiet, sql, driver, isProduction: true, confirmWrites: true });
+      expect(dev).toBeNull();
+      expect(prod?.isProduction).toBe(true);
+      expect(prod?.writeApproval).toBe(true);
+      expect(prod?.typedConfirmTarget).toBe("orders");
+    });
+
+    it(`${driver}: read_only の本番接続は書き込み承認を求めず (バックエンドが拒否する)、危険文の警告は出す`, () => {
+      const g = evaluateDdlGate({
+        ...quiet,
+        sql,
+        driver,
+        isProduction: true,
+        confirmWrites: true,
+        readOnly: true,
+      });
+      expect(g?.writeApproval).toBe(false);
+      expect(g?.findings.length).toBeGreaterThan(0);
+    });
+
+    it(`${driver}: 緊急モードはセルの接続のものを使う`, () => {
+      expect(evaluateDdlGate({ ...quiet, sql, driver, emergencyMode: true })?.writeApproval).toBe(true);
+      expect(evaluateDdlGate({ ...quiet, sql, driver, emergencyMode: false })).toBeNull();
+    });
+  }
+});

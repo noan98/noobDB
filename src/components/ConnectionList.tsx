@@ -409,6 +409,8 @@ interface Props {
    */
   onShowCreateTables?: (database: string, tables: string[]) => void;
   onCopyTablesDdl?: (database: string, tables: string[]) => void;
+  /** テーブル定義から TS / Go / Rust / Python の型定義を生成するモーダルを開く (#2411)。単一・複数選択どちらも。 */
+  onCopyTypeDefs?: (database: string, tables: string[]) => void;
   /** 選択したテーブル名だけをクリップボードへコピーする (#1541)。DB に触れないので read_only でも有効。 */
   onCopyTableNames?: (database: string, tables: string[], separator: TableNameSeparator) => void;
   onExportTables?: (database: string, tables: string[]) => void;
@@ -2151,6 +2153,7 @@ export const ConnectionList = memo(
       onChunkedDml,
       onShowCreateTables,
       onCopyTablesDdl,
+      onCopyTypeDefs,
       onCopyTableNames,
       onExportTables,
       onDumpTables,
@@ -3195,6 +3198,12 @@ export const ConnectionList = memo(
           title: ddlTitle,
         });
       }
+      if (onCopyTypeDefs) {
+        items.push({
+          label: t("batchMenuCopyTypeDefs", { count }),
+          onSelect: () => onCopyTypeDefs(db, selected),
+        });
+      }
       if (onCopyTableNames) {
         items.push(
           {
@@ -3326,6 +3335,9 @@ export const ConnectionList = memo(
           onSelect: () => onCopyTableDdl(db, tbl),
           title: ddlTitle,
         });
+      }
+      if (onCopyTypeDefs) {
+        items.push({ label: t("contextMenuCopyTypeDefs"), onSelect: () => onCopyTypeDefs(db, [tbl]) });
       }
       // 列データプロファイル (#974)。読み取りの集計だけなので read_only でも有効。
       if (onExploreColumns) {

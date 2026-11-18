@@ -165,6 +165,11 @@ fn base_id(stored: &str) -> &str {
 /// この ID のまま保存するので、「存在しない = 孤立」と見なしてはならない。
 const SANDBOX_ID_PREFIX: &str = "sandbox:";
 
+/// ローカル接続 (SQLite のファイルを直接開く) の合成プロファイル ID (`src/App.tsx` の
+/// `LOCAL_PROFILE_ID`)。サンドボックスと同じく `profiles.json` には書かれないが、プラン監視などは
+/// この ID のまま保存するので孤立扱いにしない。
+const LOCAL_PROFILE_ID: &str = "__local__";
+
 /// 保存されている ID (`ids`) のうち、起動時の掃除で消してよい孤立 ID を選ぶ純粋ロジック。
 /// 次のものは**残す**: 既知のプロファイル、既知プロファイルの派生接続 (`::db::`)、サンドボックスの
 /// 合成 ID (`sandbox:`)、既知 ID の接頭辞になっているだけの候補 (`|` を含む ID を最初の `|` で
@@ -173,6 +178,7 @@ fn select_orphans(ids: Vec<String>, known: &HashSet<String>) -> Vec<String> {
     ids.into_iter()
         .filter(|p| {
             !p.starts_with(SANDBOX_ID_PREFIX)
+                && base_id(p) != LOCAL_PROFILE_ID
                 && !known.contains(base_id(p))
                 && !known.iter().any(|k| {
                     k.strip_prefix(p.as_str())
@@ -474,6 +480,10 @@ mod tests {
             strs(&["gone", "gone::db::x", "abcd"])
         );
         assert!(select_orphans(strs(&["sandbox:x"]), &set(&[])).is_empty());
+        // ローカル接続の合成 ID (とその派生接続) も孤立扱いにしない。
+        assert!(
+            select_orphans(strs(&["__local__", "__local__::db::main"]), &set(&["abc"])).is_empty()
+        );
     }
 
     use std::sync::Mutex;

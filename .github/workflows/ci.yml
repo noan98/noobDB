@@ -64,6 +64,9 @@ jobs:
           filters: |
             workflow:
               - '.github/workflows/ci.yml'
+              # windowsJobParity (#2413) が読む Windows ジョブ。変更時もパリティを走らせる。
+              - '.github/workflows/release.yml'
+              - '.github/workflows/windows-db-smoke.yml'
             frontend:
               - 'src/**'
               - 'index.html'

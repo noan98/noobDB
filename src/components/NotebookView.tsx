@@ -17,6 +17,7 @@ import {
   moveCell,
   newMarkdownCell,
   newSqlCell,
+  resolveCellTarget,
   NOTEBOOK_FILE_EXTENSION,
   notebookFileName,
   parseNotebook,
@@ -32,6 +33,7 @@ import {
   checkNotebookLimits,
   MAX_SNAPSHOT_CELL_CHARS,
   type NotebookCell,
+  type NotebookCellTarget,
   type NotebookDoc,
   type NotebookSnapshot,
   type NotebookSqlCell,
@@ -58,13 +60,15 @@ import {
 import type { ChartConfig } from "./chartData";
 import type { MaskConfig } from "./columnMask";
 import { semanticColorToken } from "../semanticColors";
+import { redactErrorText } from "../sqlCredentials";
 import { Callout } from "./Callout";
 import { useConfirm } from "./ConfirmDialog";
 import { EmptyState } from "./EmptyState";
 import { Icon, ICON_SIZES } from "./Icon";
-import { ListboxSelect } from "./ListboxSelect";
+import { ListboxSelect, type ListboxSelectOption } from "./ListboxSelect";
 import { MarkdownView } from "./MarkdownView";
 import { ErrorNote } from "./modalForm";
+import { ProductionBadge } from "./ProfileBadge";
 import { ResultViewSwitch } from "./ResultViewSwitch";
 import { Spinner } from "./Spinner";
 import { useToast } from "./Toast";
@@ -88,6 +92,10 @@ const ChartView = lazy(() => import("./ChartView").then((m) => ({ default: m.Cha
 export interface NotebookViewProps {
   sessionId: string | null;
   profile: ConnectionProfile | null;
+  /** 保存済みのプロファイル (セル単位の接続の選択肢 / 保存された接続の存在確認, #2396)。 */
+  profiles: readonly ConnectionProfile[];
+  /** 開いている接続 (アクティブ + 背景)。現在と違う接続のセルはここにあるものだけ実行できる。 */
+  openConnections: readonly { sessionId: string; profile: ConnectionProfile }[];
   /** 補完用スキーマの取得 (ノートブックの実行先 DB で引く)。 */
   schemaForDatabase: (database: string | null | undefined) => TableSchema[] | null;
   emergencyMode: boolean;
@@ -287,6 +295,14 @@ function CellResult({ cell, onViewChange, onChartChange }: CellResultProps) {
   );
 }
 
+/** 実行開始時点に解決した、セルの実行先 (接続 + セッション)。 */
+interface CellPin {
+  /** 文書の既定 (= 現在の接続) で動くセルか。 */
+  isDefault: boolean;
+  profile: ConnectionProfile;
+  sessionId: string;
+}
+
 interface CellShellProps {
   cell: NotebookCell;
   index: number;
@@ -296,8 +312,15 @@ interface CellShellProps {
   runDisabled: string | null;
   driver: string | undefined;
   editing: boolean;
+  /** このセルが実際に実行される接続のセッション / プロファイル (セル単位の接続 #2396。未解決なら null)。 */
   sessionId: string | null;
   profile: ConnectionProfile | null;
+  /** セルの実行先の状態 (`current` = 文書の既定 = 現在の接続)。 */
+  targetKind: NotebookCellTarget["kind"];
+  connectionOptions: readonly ListboxSelectOption[];
+  /** 実行中は接続を変えさせない (確認済みの組とずれるため)。 */
+  connectionLocked: boolean;
+  onConnectionChange: (id: string, profileId: string) => void;
   databaseSchema: TableSchema[] | null;
   defaultDatabase: string | null;
   emergencyMode: boolean;
@@ -377,6 +400,27 @@ const CellShell = memo(function CellShell(p: CellShellProps) {
             <chakra.span textStyle="overline" color="app.textMuted">
               {label}
             </chakra.span>
+            {isSql && (
+              <>
+                <ListboxSelect
+                  ariaLabel={t("notebookCellConn")}
+                  disabled={p.connectionLocked}
+                  css={{ minWidth: "160px", maxWidth: "240px" }}
+                  value={cell.connection?.profileId ?? ""}
+                  options={
+                    cell.connection &&
+                    !p.connectionOptions.some((o) => o.value === cell.connection?.profileId)
+                      ? [
+                          ...p.connectionOptions,
+                          { value: cell.connection.profileId, label: cell.connection.name },
+                        ]
+                      : p.connectionOptions
+                  }
+                  onChange={(v) => p.onConnectionChange(cell.id, v)}
+                />
+                {p.targetKind !== "current" && p.profile?.is_production && <ProductionBadge />}
+              </>
+            )}
             {writes && (
               <Tooltip label={t("notebookWritesTip")}>
                 <chakra.span
@@ -433,10 +477,17 @@ const CellShell = memo(function CellShell(p: CellShellProps) {
                     {t("notebookRunFromShort")}
                   </Button>
                 </Tooltip>
-                <Tooltip label={t("notebookOpenInEditor")}>
+                <Tooltip
+                  label={
+                    p.targetKind !== "current"
+                      ? t("notebookOpenInEditorOtherConn")
+                      : t("notebookOpenInEditor")
+                  }
+                >
                   <Button
                     size="sm"
                     variant="ghost"
+                    disabled={p.targetKind !== "current"}
                     onClick={() => p.onOpenInEditor(cell.id)}
                     aria-label={t("notebookOpenInEditor")}
                   >
@@ -529,6 +580,13 @@ const CellShell = memo(function CellShell(p: CellShellProps) {
                       />
                     </Suspense>
                   </Flex>
+                  {(p.targetKind === "missing" || p.targetKind === "closed") && cell.connection && (
+                    <Callout tone="warning" role="status" data-testid="notebook-cell-conn-note">
+                      {t(p.targetKind === "missing" ? "notebookCellConnMissing" : "notebookCellConnNotOpen", {
+                        name: cell.connection.name,
+                      })}
+                    </Callout>
+                  )}
                   <CellResult cell={cell} onViewChange={p.onViewChange} onChartChange={p.onChartChange} />
                 </>
               ) : p.editing || cell.text.trim() === "" ? (
@@ -589,16 +647,49 @@ export function NotebookView(props: NotebookViewProps) {
   maskRef.current = mask;
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
+  // セル単位の接続の実行確認を済ませたプロファイル ID (文書の世代ごと)。
+  const confirmedConnRef = useRef<{ epoch: number; ids: Set<string> }>({ epoch: -1, ids: new Set() });
   const docRef = useRef(doc);
   docRef.current = doc;
   const profileRef = useRef(props.profile);
   profileRef.current = props.profile;
-  const driver = props.profile?.driver;
+  const profilesRef = useRef(props.profiles);
+  profilesRef.current = props.profiles;
+  const openConnectionsRef = useRef(props.openConnections);
+  openConnectionsRef.current = props.openConnections;
   // 補完用の DB。ノートブックの実行先 (空なら接続の既定 DB)。
   const completionDb = doc.database ?? props.profile?.database ?? null;
   const databaseSchema = props.schemaForDatabase(completionDb);
   const busy = runningId !== null;
-  const runDisabled = !props.sessionId ? t("notebookNeedsConnection") : null;
+
+  /** セルの実行先 (セル単位の接続 #2396)。最新の props を ref から読む (実行直前の判定用)。 */
+  const targetOf = useCallback(
+    (cell: NotebookSqlCell): NotebookCellTarget =>
+      resolveCellTarget(
+        cell.connection,
+        profileRef.current?.id ?? null,
+        profilesRef.current,
+        openConnectionsRef.current,
+      ),
+    [],
+  );
+  /** セルを実行できない理由 (できるなら null)。 */
+  const blockReason = (target: NotebookCellTarget): string | null => {
+    if (target.kind === "current") return props.sessionId ? null : t("notebookNeedsConnection");
+    if (target.kind === "missing") return t("notebookCellConnMissing", { name: target.ref.name });
+    if (target.kind === "closed") return t("notebookCellConnNotOpen", { name: target.ref.name });
+    return null;
+  };
+  const sqlCells = doc.cells.filter((c): c is NotebookSqlCell => c.kind === "sql");
+  // 「すべて実行」: どのセルも実行先が無い (未接続で、開いている別接続を指すセルも無い) ときだけ無効にする。
+  const runDisabled = sqlCells.some((c) => blockReason(targetOf(c)) === null)
+    ? null
+    : t("notebookNeedsConnection");
+  const connectionOptions = useMemo<ListboxSelectOption[]>(() => {
+    const opts: ListboxSelectOption[] = [{ value: "", label: t("notebookCellConnDefault") }];
+    for (const p of props.profiles) opts.push({ value: p.id, label: p.name, searchText: p.name });
+    return opts;
+  }, [props.profiles, t]);
 
   const patchCell = useCallback(
     (id: string, patch: Parameters<typeof updateCell>[2]) =>
@@ -606,16 +697,23 @@ export function NotebookView(props: NotebookViewProps) {
     [],
   );
 
-  /** 1 セルを実行してスナップショットを書き戻す。続けてよいなら true。 */
+  /**
+   * 1 セルを実行してスナップショットを書き戻す。続けてよいなら true。
+   * 実行先は `pin` (実行開始時点に解決した接続 + セッション) に固定し、省略しない (実行中にアクティブ接続が
+   * 切り替わっても別の接続で流さない)。
+   */
   const runOne = useCallback(
-    async (cell: NotebookSqlCell): Promise<boolean> => {
+    async (cell: NotebookSqlCell, pin: CellPin): Promise<boolean> => {
       setRunningId(cell.id);
       const started = Date.now();
+      // 別の接続で流すセルには、文書の実行先 DB (既定の接続の DB 名) を持ち込まない。接続の既定 DB へ寄せる。
+      const driverOfCell = pin.profile.driver;
       try {
         const limit = clampSnapshotRowLimit(docRef.current.snapshotRowLimit);
         const out = await props.onRunSql(cell.sql, {
           rowCap: limit,
-          database: docRef.current.database,
+          database: pin.isDefault ? docRef.current.database : null,
+          connection: { profileId: pin.profile.id, sessionId: pin.sessionId, name: pin.profile.name },
           onStart: (id) => {
             streamRef.current = id;
           },
@@ -627,7 +725,9 @@ export function NotebookView(props: NotebookViewProps) {
         return true;
       } catch (e) {
         if (e instanceof NotebookRunError && e.cancelled) return false;
-        const message = e instanceof Error ? e.message : String(e);
+        const raw = e instanceof Error ? e.message : String(e);
+        // エラー文は SQL の断片を引用する。資格情報リテラル (`IDENTIFIED BY '…'` など) は、ファイルへ残す前に伏せる (#2174)。
+        const message = redactErrorText(raw, cell.sql, driverOfCell);
         patchCell(cell.id, { snapshot: buildErrorSnapshot(message, Date.now() - started) });
         return false;
       } finally {
@@ -642,8 +742,8 @@ export function NotebookView(props: NotebookViewProps) {
    * 保存時の接続と現在の接続が違うときは、実行前に確認する (特に現在が本番のとき)。承認したらファイルの接続を
    * 現在の接続へ付け替える (黙って書き換えない)。接続がまだ無い文書は黙って現在の接続を記録する。
    */
-  const confirmConnection = async (): Promise<boolean> => {
-    const profile = profileRef.current;
+  const confirmConnection = async (profile: ConnectionProfile | null): Promise<boolean> => {
+    // `profile` は既定の接続で動くセルがあるときの、実行開始時点の現在の接続 (無ければ付け替えは起きない)。
     const saved = docRef.current.connection;
     if (!profile) return true;
     if (!saved) {
@@ -664,25 +764,87 @@ export function NotebookView(props: NotebookViewProps) {
     return ok;
   };
 
+  /**
+   * セルが現在の接続と違う接続を指しているときの確認 (#2396)。ファイルに保存された接続 ID は他人が書き換えうるので、
+   * この文書を開いてから初めてその接続で実行するときは、接続名 (本番なら警告つき) を見せて承認を取る。
+   * 承認は文書ごと (新規 / 読み込みで入れ替わるまで) 覚える。危険クエリ・本番 confirm_writes の確認は、
+   * そのセルの接続の設定で実行時に別途かかる (`onRunSql`)。
+   */
+  const confirmCellConnections = async (pins: readonly CellPin[]): Promise<boolean> => {
+    const epoch = getNotebookState().epoch;
+    if (confirmedConnRef.current.epoch !== epoch) confirmedConnRef.current = { epoch, ids: new Set() };
+    const pending = new Map<string, { name: string; production: boolean }>();
+    for (const pin of pins) {
+      if (pin.isDefault || confirmedConnRef.current.ids.has(pin.profile.id)) continue;
+      pending.set(pin.profile.id, { name: pin.profile.name, production: pin.profile.is_production });
+    }
+    if (pending.size === 0) return true;
+    const names = [...pending.values()]
+      .map((v) => t("notebookCellConnName", { name: v.name }))
+      .join(t("notebookCellConnNameSep"));
+    const production = [...pending.values()].some((v) => v.production);
+    const ok = await confirm({
+      title: t("notebookCellConnTitle"),
+      message: t(production ? "notebookCellConnMessageProd" : "notebookCellConnMessage", {
+        names,
+        current: profileRef.current?.name ?? "-",
+      }),
+      confirmLabel: t("notebookCellConnConfirm"),
+      tone: production ? "danger" : undefined,
+    });
+    if (ok) for (const id of pending.keys()) confirmedConnRef.current.ids.add(id);
+    return ok;
+  };
+
   // biome-ignore lint/correctness/useExhaustiveDependencies: confirmConnection は profileRef / docRef から最新を読む
   const runCells = useCallback(
     async (cells: NotebookSqlCell[], all: boolean) => {
       // 未接続でも文書の編集はできるが、実行はしない (ボタンも無効)。
-      if (busy || cells.length === 0 || !props.sessionId) return;
-      if (!(await confirmConnection())) return;
+      if (busy || cells.length === 0) return;
+      // 実行先が無いセル (現在の接続が無い / 別接続が開いていない・見つからない) があれば、1 つも流さずに止める
+      // (途中までの実行で、後続が前のセルの結果を欠いたまま残るのを避ける)。
+      // あわせて、実行先を「このときの接続 + セッション」に固定する (確認も実行もこの組で行う)。
+      const pins = new Map<string, CellPin>();
+      for (const c of cells) {
+        const target = targetOf(c);
+        const reason = blockReason(target);
+        if (reason) {
+          toast.error(reason);
+          return;
+        }
+        if (target.kind === "open") {
+          pins.set(c.id, { isDefault: false, profile: target.profile, sessionId: target.sessionId });
+        } else if (target.kind === "current") {
+          const profile = profileRef.current;
+          if (!profile || !props.sessionId) {
+            toast.error(t("notebookNeedsConnection"));
+            return;
+          }
+          pins.set(c.id, { isDefault: true, profile, sessionId: props.sessionId });
+        }
+      }
+      const pinList = [...pins.values()];
+      if (!(await confirmConnection(pinList.find((p) => p.isDefault)?.profile ?? null))) return;
+      if (!(await confirmCellConnections(pinList))) return;
       cancelRef.current = false;
       setRunAll(all);
       for (const c of cells) {
         if (cancelRef.current) break;
         // 実行直前の最新の SQL を使う (編集直後の実行でも取りこぼさない)。
         const latest = docRef.current.cells.find((x) => x.id === c.id);
-        if (!latest || latest.kind !== "sql") continue;
+        const pin = pins.get(c.id);
+        if (!latest || latest.kind !== "sql" || !pin) continue;
+        // 確認した後にセルの接続が変えられていたら、確認なしでは流さず止める。
+        if ((latest.connection?.profileId ?? null) !== (c.connection?.profileId ?? null)) {
+          toast.error(t("notebookCellConnChanged"));
+          break;
+        }
         // 失敗・取りやめ・中止のセルで止める (後続は前のセルの結果を前提にしがち)。
-        if (!(await runOne(latest))) break;
+        if (!(await runOne(latest, pin))) break;
       }
       setRunAll(false);
     },
-    [busy, runOne, props.sessionId],
+    [busy, runOne, props.sessionId, toast],
   );
 
   const onRunCell = useCallback(
@@ -726,6 +888,21 @@ export function NotebookView(props: NotebookViewProps) {
       return next;
     });
   }, []);
+  const onConnectionChange = useCallback(
+    (id: string, profileId: string) => {
+      if (!profileId) {
+        patchCell(id, { connection: null });
+        return;
+      }
+      const p = profilesRef.current.find((x) => x.id === profileId);
+      const prev = docRef.current.cells.find((x) => x.id === id);
+      const name =
+        p?.name ??
+        (prev?.kind === "sql" && prev.connection?.profileId === profileId ? prev.connection.name : profileId);
+      patchCell(id, { connection: { profileId, name } });
+    },
+    [patchCell],
+  );
   const onViewChange = useCallback(
     (id: string, view: "table" | "chart") => patchCell(id, { view }),
     [patchCell],
@@ -737,7 +914,8 @@ export function NotebookView(props: NotebookViewProps) {
   const onOpenInEditor = useCallback(
     (id: string) => {
       const c = docRef.current.cells.find((x) => x.id === id);
-      if (c?.kind === "sql") {
+      // クエリタブはアクティブな接続でしか作れない。別の接続を指すセルは黙って別の接続へ移さず、開かない (ボタンも無効)。
+      if (c?.kind === "sql" && targetOf(c).kind === "current") {
         props.onOpenInEditor(
           c.sql,
           docRef.current.title || translate("notebookTitle"),
@@ -745,7 +923,7 @@ export function NotebookView(props: NotebookViewProps) {
         );
       }
     },
-    [props.onOpenInEditor],
+    [props.onOpenInEditor, targetOf],
   );
   const onAddAfter = useCallback(
     (afterId: string | null, kind: "markdown" | "sql") => {
@@ -1042,36 +1220,52 @@ export function NotebookView(props: NotebookViewProps) {
               style={{ display: "flex", flexDirection: "column", listStyle: "none", margin: 0, padding: 0 }}
             >
               <AnimatePresence initial={false}>
-                {doc.cells.map((cell, i) => (
-                  <CellShell
-                    key={cell.id}
-                    cell={cell}
-                    index={i}
-                    count={doc.cells.length}
-                    still={still}
-                    running={runningId === cell.id}
-                    runDisabled={runDisabled}
-                    driver={driver}
-                    editing={editingIds.has(cell.id)}
-                    sessionId={props.sessionId}
-                    profile={props.profile}
-                    databaseSchema={databaseSchema}
-                    defaultDatabase={completionDb}
-                    emergencyMode={props.emergencyMode}
-                    onRun={onRunCell}
-                    onRunFrom={onRunFrom}
-                    onMove={onMove}
-                    onRemove={onRemove}
-                    onToggleCollapse={onToggleCollapse}
-                    onSql={onSql}
-                    onMarkdown={onMarkdown}
-                    onEditing={onEditing}
-                    onViewChange={onViewChange}
-                    onChartChange={onChartChange}
-                    onOpenInEditor={onOpenInEditor}
-                    onAddAfter={onAddAfter}
-                  />
-                ))}
+                {doc.cells.map((cell, i) => {
+                  const target = cell.kind === "sql" ? targetOf(cell) : ({ kind: "current" } as const);
+                  const own = target.kind === "open";
+                  const cellProfile =
+                    target.kind === "open" || target.kind === "closed"
+                      ? target.profile
+                      : target.kind === "current"
+                        ? props.profile
+                        : null;
+                  return (
+                    <CellShell
+                      key={cell.id}
+                      cell={cell}
+                      index={i}
+                      count={doc.cells.length}
+                      still={still}
+                      running={runningId === cell.id}
+                      runDisabled={cell.kind === "sql" ? blockReason(target) : null}
+                      driver={cellProfile?.driver}
+                      editing={editingIds.has(cell.id)}
+                      sessionId={own ? target.sessionId : target.kind === "current" ? props.sessionId : null}
+                      profile={cellProfile}
+                      targetKind={target.kind}
+                      connectionOptions={connectionOptions}
+                      connectionLocked={busy}
+                      onConnectionChange={onConnectionChange}
+                      databaseSchema={target.kind === "current" ? databaseSchema : null}
+                      defaultDatabase={
+                        target.kind === "current" ? completionDb : (cellProfile?.database ?? null)
+                      }
+                      emergencyMode={own ? false : props.emergencyMode}
+                      onRun={onRunCell}
+                      onRunFrom={onRunFrom}
+                      onMove={onMove}
+                      onRemove={onRemove}
+                      onToggleCollapse={onToggleCollapse}
+                      onSql={onSql}
+                      onMarkdown={onMarkdown}
+                      onEditing={onEditing}
+                      onViewChange={onViewChange}
+                      onChartChange={onChartChange}
+                      onOpenInEditor={onOpenInEditor}
+                      onAddAfter={onAddAfter}
+                    />
+                  );
+                })}
               </AnimatePresence>
             </Reorder.Group>
           )}

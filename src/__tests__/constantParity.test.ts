@@ -3,6 +3,18 @@ import aiRs from "../../src-tauri/src/commands/ai.rs?raw";
 import cellBlobRs from "../../src-tauri/src/commands/cell_blob.rs?raw";
 import connectionRs from "../../src-tauri/src/commands/connection.rs?raw";
 import diffRs from "../../src-tauri/src/commands/diff.rs?raw";
+import exportRs from "../../src-tauri/src/commands/export.rs?raw";
+import resultStoreRs from "../../src-tauri/src/db/result_store.rs?raw";
+import rowMergeRs from "../../src-tauri/src/db/row_merge.rs?raw";
+import resultRs from "../../src-tauri/src/commands/result.rs?raw";
+import scriptRs from "../../src-tauri/src/commands/script.rs?raw";
+import localRs from "../../src-tauri/src/commands/local.rs?raw";
+import advisorRs from "../../src-tauri/src/db/advisor.rs?raw";
+import broadcastDiffRs from "../../src-tauri/src/db/broadcast_diff.rs?raw";
+import pgListenRs from "../../src-tauri/src/db/pg_listen.rs?raw";
+import sqliteRs from "../../src-tauri/src/db/sqlite.rs?raw";
+import profileStoreRs from "../../src-tauri/src/profiles/store.rs?raw";
+import maintenanceRs from "../../src-tauri/src/tasks/maintenance.rs?raw";
 import cloneRowsRs from "../../src-tauri/src/db/clone_rows.rs?raw";
 import maskingRs from "../../src-tauri/src/db/masking.rs?raw";
 import sandboxRs from "../../src-tauri/src/db/sandbox.rs?raw";
@@ -12,6 +24,19 @@ import tasksRs from "../../src-tauri/src/tasks/mod.rs?raw";
 import timelapseRs from "../../src-tauri/src/timelapse/mod.rs?raw";
 import conversationTs from "../ai/conversation.ts?raw";
 import schemaDocTs from "../ai/schemaDoc.ts?raw";
+import cellEditTs from "../components/cellEdit.ts?raw";
+import resultHandleTs from "../components/resultHandle.ts?raw";
+import rowMergeTs from "../components/rowMerge.ts?raw";
+import advisorTs from "../components/advisor.ts?raw";
+import duplicateKeysTs from "../components/duplicateKeys.ts?raw";
+import localQueryTs from "../components/localQuery.ts?raw";
+import pgListenTs from "../components/pgListen.ts?raw";
+import sqliteAttachTs from "../components/sqliteAttach.ts?raw";
+import taskMaintenanceTs from "../components/taskMaintenance.ts?raw";
+import broadcastCompareTs from "../broadcastCompare.ts?raw";
+import openDatabaseTs from "../openDatabase.ts?raw";
+import scriptRunTs from "../scriptRun.ts?raw";
+import taskFormatTs from "../taskFormat.ts?raw";
 import blobIoTs from "../components/blobIo.ts?raw";
 import cloneRowsTs from "../components/cloneRows.ts?raw";
 import exportMaskingTs from "../components/exportMasking.ts?raw";
@@ -40,6 +65,20 @@ const SCHEMA_DOC_TS = src("ai/schemaDoc.ts", schemaDocTs);
 const CONVERSATION_TS = src("ai/conversation.ts", conversationTs);
 const BLOB_TS = src("components/blobIo.ts", blobIoTs);
 const MASKING_TS = src("components/exportMasking.ts", exportMaskingTs);
+const ADVISOR_TS = src("components/advisor.ts", advisorTs);
+const TASK_MAINTENANCE_TS = src("components/taskMaintenance.ts", taskMaintenanceTs);
+const DUPLICATE_KEYS_TS = src("components/duplicateKeys.ts", duplicateKeysTs);
+const PG_LISTEN_TS = src("components/pgListen.ts", pgListenTs);
+const TASK_FORMAT_TS = src("taskFormat.ts", taskFormatTs);
+const OPEN_DATABASE_TS = src("openDatabase.ts", openDatabaseTs);
+const SCRIPT_RUN_TS = src("scriptRun.ts", scriptRunTs);
+const BROADCAST_COMPARE_TS = src("broadcastCompare.ts", broadcastCompareTs);
+const LOCAL_QUERY_TS = src("components/localQuery.ts", localQueryTs);
+const CELL_EDIT_TS = src("components/cellEdit.ts", cellEditTs);
+const EXPORT_RS = src("commands/export.rs", exportRs);
+const RESULT_HANDLE_TS = src("components/resultHandle.ts", resultHandleTs);
+const ROW_MERGE_TS = src("components/rowMerge.ts", rowMergeTs);
+const SQLITE_ATTACH_TS = src("components/sqliteAttach.ts", sqliteAttachTs);
 
 const SUBSET_RS = src("db/subset.rs", subsetRs);
 const SANDBOX_RS = src("db/sandbox.rs", sandboxRs);
@@ -51,11 +90,63 @@ const AI_RS = src("commands/ai.rs", aiRs);
 const BACKUP_RS = src("profiles/backup.rs", backupRs);
 const BLOB_RS = src("commands/cell_blob.rs", cellBlobRs);
 const MASKING_RS = src("db/masking.rs", maskingRs);
+const ADVISOR_RS = src("db/advisor.rs", advisorRs);
+const TASK_MAINTENANCE_RS = src("tasks/maintenance.rs", maintenanceRs);
+const RESULT_RS = src("commands/result.rs", resultRs);
+const PG_LISTEN_RS = src("db/pg_listen.rs", pgListenRs);
+const PROFILE_STORE_RS = src("profiles/store.rs", profileStoreRs);
+const SCRIPT_RS = src("commands/script.rs", scriptRs);
+const BROADCAST_DIFF_RS = src("db/broadcast_diff.rs", broadcastDiffRs);
+const LOCAL_RS = src("commands/local.rs", localRs);
+const RESULT_STORE_RS = src("db/result_store.rs", resultStoreRs);
+const ROW_MERGE_RS = src("db/row_merge.rs", rowMergeRs);
+const SQLITE_RS = src("db/sqlite.rs", sqliteRs);
 const CLONE_ROWS_TS = src("components/cloneRows.ts", cloneRowsTs);
 const CLONE_ROWS_RS = src("db/clone_rows.rs", cloneRowsRs);
 
 /** 対応表: [TS の定数名, Rust の定数名]。名前が違うものもあるので明示する。 */
 const PAIRS: { ts: Src; rs: Src; names: [string, string][] }[] = [
+  // #2412: コメントだけで揃えていた定数 (Rust 側だけの変更も検出する)。
+  {
+    ts: ADVISOR_TS,
+    rs: ADVISOR_RS,
+    names: [
+      ["SEQUENCE_METER_WARN_PERCENT", "SEQUENCE_WARN_PERCENT"],
+      ["SEQUENCE_METER_DANGER_PERCENT", "SEQUENCE_ERROR_PERCENT"],
+    ],
+  },
+  { ts: TASK_MAINTENANCE_TS, rs: TASK_MAINTENANCE_RS, names: [["MAX_MAINTENANCE_TARGETS", "MAX_TARGETS"]] },
+  {
+    ts: DUPLICATE_KEYS_TS,
+    rs: RESULT_RS,
+    names: [
+      ["DUPLICATE_INDEX_LIMIT", "DUPLICATE_INDEX_LIMIT"],
+      ["DUPLICATE_TOP_MAX", "DUPLICATE_TOP_MAX"],
+    ],
+  },
+  {
+    ts: PG_LISTEN_TS,
+    rs: PG_LISTEN_RS,
+    names: [
+      ["PG_LISTEN_MAX_CHANNELS", "MAX_CHANNELS"],
+      ["PG_LISTEN_MAX_CHANNEL_BYTES", "MAX_CHANNEL_BYTES"],
+    ],
+  },
+  { ts: TASK_FORMAT_TS, rs: TASKS_RS, names: [["ALL_WEEKDAYS_MASK", "ALL_WEEKDAYS"]] },
+  // 区切りが片側だけ変わると、派生プロファイルから元の ID (keyring の秘密の参照先) を引けなくなる。
+  { ts: OPEN_DATABASE_TS, rs: PROFILE_STORE_RS, names: [["DB_VARIANT_SEP", "DB_VARIANT_SEP"]] },
+  // Rust 側だけ変わると、ファイル変更後の再解析を促す判定 (isAnalysisStaleError) が効かなくなる。
+  { ts: SCRIPT_RUN_TS, rs: SCRIPT_RS, names: [["FILE_CHANGED_MARKER", "FILE_CHANGED_MARKER"]] },
+  {
+    ts: BROADCAST_COMPARE_TS,
+    rs: BROADCAST_DIFF_RS,
+    names: [["MAX_BROADCAST_COMPARE_ROWS", "MAX_BROADCAST_COMPARE_ROWS"]],
+  },
+  { ts: LOCAL_QUERY_TS, rs: LOCAL_RS, names: [["MAX_LOCAL_TABLE_ROWS", "MAX_LOCAL_TABLE_ROWS"]] },
+  { ts: CELL_EDIT_TS, rs: EXPORT_RS, names: [["FALLBACK_INSERT_TABLE", "DEFAULT_SQL_TABLE"]] },
+  { ts: RESULT_HANDLE_TS, rs: RESULT_STORE_RS, names: [["RESULT_GONE_MARKER", "RESULT_GONE"]] },
+  { ts: ROW_MERGE_TS, rs: ROW_MERGE_RS, names: [["ROW_MERGE_MAX_ROWS", "MAX_MERGE_ROWS"]] },
+  { ts: SQLITE_ATTACH_TS, rs: SQLITE_RS, names: [["MAX_ATTACHED", "SQLITE_MAX_ATTACHED"]] },
   { ts: CLONE_ROWS_TS, rs: CLONE_ROWS_RS, names: [["CLONE_MAX_ROWS", "MAX_CLONE_ROWS"]] },
   {
     ts: SUBSET_TS,
@@ -130,7 +221,10 @@ function evalConstExpr(raw: string): number | string {
   const str = /^b?"((?:[^"\\]|\\.)*)"$/.exec(expr);
   if (str) return str[1];
   // 許可する文字を絞ってから評価する (ソースは自リポジトリのものだが、念のため)。
-  const cleaned = expr.replace(/(\d)_(?=\d)/g, "$1").replace(/(?<=\d)(u8|u16|u32|u64|usize|i32|i64)\b/g, "");
+  const cleaned = expr
+    .replace(/\b0b([01_]+)/g, (_, bits: string) => String(Number.parseInt(bits.replace(/_/g, ""), 2)))
+    .replace(/(\d)_(?=\d)/g, "$1")
+    .replace(/(?<=\d)(u8|u16|u32|u64|usize|i32|i64)\b/g, "");
   if (!/^[\d\s+\-*()<]+$/.test(cleaned)) throw new Error(`評価できない式: ${raw}`);
   const v = new Function(`return (${cleaned});`)();
   if (typeof v !== "number" || !Number.isSafeInteger(v)) throw new Error(`数値にならない式: ${raw}`);
@@ -169,6 +263,7 @@ describe("Rust ⇔ TS 定数パリティ (#2301): 抽出ヘルパ", () => {
     expect(evalConstExpr("1024 * 1024 // 1 GiB")).toBe(1048576);
     expect(evalConstExpr('"***"')).toBe("***");
     expect(evalConstExpr("5_000u64")).toBe(5000);
+    expect(evalConstExpr("0b111_1111")).toBe(127);
   });
 
   it("定数の宣言形 (pub / pub(crate) / 型注釈の有無) を拾う", () => {
@@ -195,8 +290,21 @@ describe("Rust ⇔ TS 定数パリティ (#2301): 対応表", () => {
 // 対応表に無い「バックエンドと揃える」定数の追加を検出する。コメントを grep し、マーカーのコメント行から
 // 次の空行までに宣言された `const NAME` を集めて、各 NAME が対応表 (PAIRS) の TS 名か、定数単位の
 // EXEMPT にあることを確かめる (すでに対応表にあるファイルへ後から足した定数も検出できる)。
-const COMMENT_MARKER =
-  /(?:バックエンド|Rust)[^\n]*と(?:揃える|同じ値)|mirroring the backend (?:clamp|limit|bounds)/i;
+// 判定は「連続するコメント行を 1 ブロック」にまとめた文字列に対して行う (定数名と「バックエンド」が別の
+// 行にあっても検出するため)。
+const COMMENT_MARKERS: RegExp[] = [
+  /(?:バックエンド|Rust|backend)[\s\S]*?と(?:揃える|同じ値)/i,
+  /mirroring the backend (?:clamp|limit|bounds)/i,
+  // 「バックエンド / Rust / backend」と大文字の定数名 (`NAME`) を同じブロックで言及している。
+  /(?:バックエンド|Rust|[Bb]ackend)[\s\S]*?`[A-Za-z][A-Za-z0-9]*_[A-Za-z0-9_]+`/,
+  // `src-tauri/.../local.rs::NAME` 形式、「`....rs` の `NAME`」形式。
+  /\.rs`?::[A-Z][A-Z0-9]*_[A-Z0-9_]+/,
+  /\.rs` の `[A-Z][A-Z0-9]*_[A-Z0-9_]+`/,
+];
+
+function isMarkerComment(block: string): boolean {
+  return COMMENT_MARKERS.some((re) => re.test(block));
+}
 
 /** 対応表の外にある定数 ("ファイルパス:定数名" → 理由)。固定の仕組みが別にあるものだけ。 */
 const EXEMPT: Record<string, string> = {
@@ -206,6 +314,21 @@ const EXEMPT: Record<string, string> = {
     "新規タスクの UI 既定値で、Rust には対応する既定の定数が無い (Rust の既定は 0 = 無効)。上限は対応表で固定",
   "settings.ts:MIN_TIMELAPSE_MAX_GENERATIONS":
     "Rust は timelapse::clamp_max_generations で clamp(1, ..) とリテラルで書いていて定数が無い",
+  "components/pgListen.ts:PG_LISTEN_PREVIEW_CHARS":
+    "一覧の表示用の省略幅で UI だけの値。Rust に対応する定数は無い",
+  "components/sqliteAttach.ts:MAX_ATTACH_ALIAS_LENGTH":
+    "Rust は is_valid_attach_alias 内のリテラル (64) で定数が無い。境界は sqliteAttachVectors.json で固定。上限数 MAX_ATTACHED は対応表で固定",
+  "dangerousSql.ts:ALTER_DROP_NON_COLUMN":
+    "集合の一致は共有ゴールデンベクタ dangerousSqlVectors.json (Rust は db/script_analysis.rs の alter_drop_kind) で固定する",
+  "dangerousSql.ts:SCHEMA_MUTATING_KEYWORDS":
+    "集合の一致は共有ゴールデンベクタ (schemaMutatingVectors.json) で固定する",
+  "dangerousSql.ts:LOCKING_CLAUSES":
+    "ロック句の語彙は共有ゴールデンベクタ autoLimitVectors.json (Rust は db/mod.rs の LOCKING_CLAUSES / has_locking_clause) で固定する",
+  "dangerousSql.ts:LOCKING_TABLE_HINTS":
+    "ロックを強めるテーブルヒント (UPDLOCK / HOLDLOCK 等の全 7 語) は共有ゴールデンベクタ readOnlySqlVectors.json (Rust は db/mod.rs の LOCKING_TABLE_HINTS) で固定する",
+  "dangerousSql.ts:READ_ONLY_PREFIXES_ALL_DRIVERS":
+    "読み取り専用判定の語彙は共有ゴールデンベクタ readOnlySqlVectors.json (Rust は db/mod.rs の is_read_only_sql_masked) で固定する",
+  "taskFormat.ts:WORKDAYS_MASK": "Rust に対応する定数は無い (表示用の平日判定)。全曜日マスクは対応表で固定",
 };
 
 const sources = import.meta.glob(["../**/*.ts", "../**/*.tsx", "!../__tests__/**", "!../**/*.test.*"], {
@@ -214,19 +337,29 @@ const sources = import.meta.glob(["../**/*.ts", "../**/*.tsx", "!../__tests__/**
   eager: true,
 }) as Record<string, string>;
 
-/** マーカーのコメント行から次の空行までに宣言された const 名を "ファイル:NAME" で集める。 */
+/** マーカーのコメントブロックの直後 (次の空行まで) に宣言された const 名を "ファイル:NAME" で集める。 */
 function markedConsts(files: Record<string, string>): string[] {
   const out: string[] = [];
+  const isComment = (l: string) => /^\s*(?:\/\/|\/\*|\*)/.test(l);
   for (const [path, text] of Object.entries(files)) {
     const file = path.replace(/^\.\.\//, "");
     const lines = text.split("\n");
-    lines.forEach((line, i) => {
-      if (!(/^\s*(?:\/\/|\/?\*)/.test(line) && COMMENT_MARKER.test(line))) return;
-      for (let j = i + 1; j < lines.length && lines[j].trim() !== ""; j++) {
-        const m = /^(?:export\s+)?const\s+([A-Z][A-Z0-9_]*)\b/.exec(lines[j]);
-        if (m) out.push(`${file}:${m[1]}`);
+    let i = 0;
+    while (i < lines.length) {
+      if (!isComment(lines[i])) {
+        i++;
+        continue;
       }
-    });
+      let end = i;
+      while (end < lines.length && isComment(lines[end])) end++;
+      if (isMarkerComment(lines.slice(i, end).join("\n"))) {
+        for (let j = end; j < lines.length && lines[j].trim() !== ""; j++) {
+          const m = /^(?:export\s+)?const\s+([A-Z][A-Z0-9_]*)\b/.exec(lines[j]);
+          if (m) out.push(`${file}:${m[1]}`);
+        }
+      }
+      i = end;
+    }
   }
   return [...new Set(out)];
 }
@@ -239,6 +372,11 @@ describe("Rust ⇔ TS 定数パリティ (#2301): コメントの網羅チェッ
     expect(marked).toContain("components/subsetExtract.ts:SUBSET_MAX_ROOT_LIMIT");
     expect(marked).toContain("components/TaskManager.tsx:MAX_PAUSE_AFTER_FAILURES");
     expect(marked).toContain("settings.ts:MAX_TIMELAPSE_MAX_GENERATIONS");
+    // 定数名とバックエンドが別行 / `.rs::NAME` 形式 / 英語の backend (#2412)。
+    expect(marked).toContain("scriptRun.ts:FILE_CHANGED_MARKER");
+    expect(marked).toContain("components/localQuery.ts:MAX_LOCAL_TABLE_ROWS");
+    expect(marked).toContain("openDatabase.ts:DB_VARIANT_SEP");
+    expect(marked).toContain("components/resultHandle.ts:RESULT_GONE_MARKER");
   });
 
   it("「バックエンドと揃える」コメント直下の定数は対応表か EXEMPT にある", () => {
