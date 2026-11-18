@@ -162,7 +162,8 @@ export function TypeDefModal({ sessionId, driver, database, tables, profileId, o
         comment: ready?.comments.get(name) ?? null,
         columns: (ready?.columns.get(name) ?? []).map((c) => ({
           name: c.name,
-          data_type: pgArrays.get(name)?.get(c.name) ?? c.data_type,
+          // 配列列だけ実際の型名で上書きする (ENUM 列まで上書きすると USER-DEFINED が消えて enumValues が使われなくなる)。
+          data_type: c.data_type === "ARRAY" ? (pgArrays.get(name)?.get(c.name) ?? c.data_type) : c.data_type,
           nullable: c.nullable,
           comment: c.comment ?? null,
           enumValues: pgEnums.get(name)?.get(c.name) ?? null,

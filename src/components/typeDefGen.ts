@@ -321,6 +321,25 @@ const PYTHON_KEYWORDS = new Set([
   "yield",
 ]);
 
+/**
+ * 生成コードの型注釈が参照する組み込み型・import 名。NULL 許容 / alias 付きの列は名前に値 (`None` / `Field(...)`) が
+ * 束縛されるため、同名のフィールドがあると注釈がその値を指して壊れる (`str: Optional[str] = None` が NoneType になる)。
+ */
+const PYTHON_SHADOWED_NAMES = new Set([
+  "str",
+  "int",
+  "float",
+  "bool",
+  "bytes",
+  "list",
+  "Any",
+  "Literal",
+  "Optional",
+  "Field",
+  "BaseModel",
+  "dataclass",
+]);
+
 const RUST_KEYWORDS = new Set([
   "as",
   "break",
@@ -409,7 +428,7 @@ function fieldIdent(orig: string, lang: TypeDefLang, naming: TypeDefNaming, used
     lossy = true;
   }
   if (lang === "python" || lang === "pythonPydantic") {
-    if (PYTHON_KEYWORDS.has(name)) {
+    if (PYTHON_KEYWORDS.has(name) || PYTHON_SHADOWED_NAMES.has(name)) {
       name = `${name}_`;
       lossy = true;
     }
