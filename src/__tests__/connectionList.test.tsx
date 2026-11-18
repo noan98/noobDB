@@ -517,6 +517,34 @@ describe("Database Explorer の階層 (#1112)", () => {
     expect(onPickTable).toHaveBeenCalledWith("db1", "users");
   });
 
+  it("論理リレーションの外部キー行は先頭にアイコンの目印とアクセシブルな名前が付き、宣言 FK には付かない (#2400)", async () => {
+    vi.mocked(api.describeTable).mockResolvedValueOnce([
+      col("id", { key: "PRI" }),
+      col("user_id", { referenced_table: "users", referenced_column: "id", logical: true }),
+      col("org_id", { referenced_table: "orgs", referenced_column: "id" }),
+    ]);
+    await openDb({});
+    await screen.findByRole("treeitem", { name: "tbl1" });
+    fireEvent.click(screen.getByRole("button", { name: t("treeToggleColumnsAria", { table: "tbl1" }) }));
+
+    const logicalRow = await screen.findByRole("treeitem", {
+      name: `user_id → users.id (${t("logicalRelationBadge")})`,
+    });
+    expect(logicalRow).toHaveAttribute("data-logical", "true");
+    // ホバーのツールチップが届かない支援技術にも説明を渡す。
+    expect(logicalRow).toHaveAttribute("aria-description", t("logicalRelationTip"));
+    // 行の先頭 (ラベルより前) に、名前つきの目印アイコンがある。
+    const badge = within(logicalRow).getByRole("img", { name: t("logicalRelationBadge") });
+    const label = within(logicalRow).getByText("user_id", { exact: false });
+    expect(badge.compareDocumentPosition(label) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // 末尾の文字 (省略されうる) には「(論理)」を置かない。
+    expect(logicalRow.textContent).not.toContain(`(${t("logicalRelationBadge")})`);
+
+    const declaredRow = await screen.findByRole("treeitem", { name: "org_id → orgs.id" });
+    expect(declaredRow).not.toHaveAttribute("data-logical");
+    expect(within(declaredRow).queryByRole("img")).toBeNull();
+  });
+
   describe("列のコンテキストメニューとダブルクリック (#1352)", () => {
     async function openColumnRow(props: Partial<Parameters<typeof ConnectionList>[0]>) {
       vi.mocked(api.describeTable).mockResolvedValueOnce([col("id", { key: "PRI" })]);

@@ -46,6 +46,7 @@ import {
   IconLayoutBoardSplit,
   IconLetterCase,
   IconLink,
+  IconLinkOff,
   IconList,
   IconLock,
   IconMathFunction,
@@ -253,6 +254,7 @@ export type IconName =
   | "join-left"
   | "fk-parent"
   | "fk-child"
+  | "link-logical"
   | "notebook"
   | "grip"
   | "chevron-up"
@@ -358,6 +360,8 @@ const GLYPHS: Record<Exclude<IconName, BrandIconName | VennIconName>, TablerIcon
   explain: IconGitBranch,
   key: IconKey,
   link: IconLink,
+  // 論理リレーション (仮想 FK, #2400): DB に制約が無い「切れたリンク」。宣言 FK の link と対にする。
+  "link-logical": IconLinkOff,
   refresh: IconRefresh,
   // スニペット: 保存した SQL = しおり。
   snippet: IconBookmark,
