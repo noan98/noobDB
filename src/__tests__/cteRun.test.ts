@@ -88,10 +88,7 @@ describe("buildCteRun", () => {
     expect(sqlOf(src, "postgres", 50)).toContain(
       "SEARCH DEPTH FIRST BY id SET ord CYCLE id SET is_cycle USING path\nSELECT",
     );
-    const later = run(
-      src.split("|").join("").replace("SELECT * FROM u", "SELECT * FROM |u"),
-      "postgres",
-    );
+    const later = run(src.split("|").join("").replace("SELECT * FROM u", "SELECT * FROM |u"), "postgres");
     expect(later).toBeDefined();
     expect(
       run(
