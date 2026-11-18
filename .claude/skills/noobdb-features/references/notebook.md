@@ -47,3 +47,6 @@ SQL セルの結果をスナップショットとして `.noobnb` (JSON) に保�
   セルが接続を明示しているときだけ「結果を得た接続と違う」も古い扱い (既定のセルは接続の切り替えで全部が古くならないよう比べない)。
   UI: セルに `StaleNotice` (警告 Callout + 再実行 + `diffSqlLines` の行単位差分、結果は淡色化)、ヘッダに古いセル数。
   書き出しは古いセルがあれば確認を出し、Markdown / HTML の本文にも注記する (`NotebookExportText.stale`)。
+  比較は `maskLiterals` (安全網と同じ字句規則。ドライバは `snapshotFreshness` / 書き出しの `driverOf` に渡す。不明は undefined = 保守的)
+  でリテラル・コメントの外の空白だけを潰す。行コメントの終端の改行・コメント内の `;` は区別する。
+  **データベース (`snapshot.database`) は比較しない** (表示用の記録。DB の切り替えだけでは古い扱いにしない設計)。

@@ -12,7 +12,7 @@
  */
 import type { CellValue, Column, ConnectionProfile } from "./api/tauri";
 import { MASK_PLACEHOLDER, resolveMaskedColumns, type MaskConfig } from "./components/columnMask";
-import { isReadOnlySql } from "./dangerousSql";
+import { isReadOnlySql, maskLiterals } from "./dangerousSql";
 import type { ChartConfig } from "./components/chartData";
 import { sanitizeChartConfig } from "./components/chartData";
 
@@ -371,71 +371,59 @@ export function buildErrorSnapshot(
 // ── 古い結果の判定 (#2420) ───────────────────────────────────────
 
 /**
- * SQL を比較用に正規化する。文字列リテラル / 引用符つき識別子 / コメントの外の連続する空白を 1 つにし、
- * 前後の空白と末尾のセミコロン (と直後の空白) を落とす。リテラルの中の空白は意味があるのでそのまま残す。
- * 大文字小文字は区別する (リテラルや照合順序で意味が変わりうるため、キーワードの大小だけでは同一扱いにしない)。
+ * SQL を比較用に正規化する。`maskLiterals` (安全網と同じ字句規則: ドル引用・ドライバ別のバックスラッシュ・
+ * `#` コメント・MySQL のバージョンコメント・SQLite の `[識別子]` に対応) で「文字列リテラル / 識別子 / コメントの中」を判定し、
+ * その**外**の連続する空白を 1 つにする。前後の空白と、トップレベルの末尾セミコロンも落とす
+ * (コメントの中の `;` や、コメントの後ろの `;` は落とさない)。
+ * リテラル・コメントの中身 (空白・改行を含む) と、行コメントを終わらせる改行はそのまま残す
+ * (`-- c\nFROM t` と `-- c FROM t` は別の SQL)。大文字小文字は区別する。
+ * `driver` が分からなければ undefined (MySQL 方言を含めて保守的に読む)。
  */
-export function normalizeSqlForCompare(sql: string): string {
+export function normalizeSqlForCompare(sql: string, driver?: string): string {
+  // 空白・タブを全部タブにしてからマスクする: 外側の空白はタブのまま残り、リテラル / コメントの中は空白に潰れるので区別できる。
+  const probe = sql.replace(/[ \t]/g, "\t");
+  const masked = maskLiterals(probe, driver);
   let out = "";
-  let i = 0;
-  const n = sql.length;
-  let pendingSpace = false;
-  const flushSpace = () => {
-    if (pendingSpace && out.length > 0) out += " ";
-    pendingSpace = false;
+  // out の各文字が「リテラル / コメントの外」か (末尾の落とし判定に使う)。
+  const outside: boolean[] = [];
+  let pending = false;
+  const push = (ch: string, isOutside: boolean) => {
+    out += ch;
+    outside.push(isOutside);
   };
-  while (i < n) {
+  for (let i = 0; i < sql.length; i++) {
     const ch = sql[i];
-    const next = sql[i + 1];
-    if (/\s/.test(ch)) {
-      pendingSpace = true;
-      i += 1;
-      continue;
-    }
-    flushSpace();
-    if (ch === "'" || ch === '"' || ch === "`") {
-      // 同じ引用符の連続 ('' など) はエスケープとして続ける。バックスラッシュも次の 1 文字を飛ばす。
-      let j = i + 1;
-      while (j < n) {
-        if (sql[j] === "\\" && ch !== "`") {
-          j += 2;
-          continue;
-        }
-        if (sql[j] === ch) {
-          if (sql[j + 1] === ch) {
-            j += 2;
-            continue;
-          }
-          break;
-        }
-        j += 1;
-      }
-      out += sql.slice(i, Math.min(j + 1, n));
-      i = j + 1;
-    } else if (ch === "-" && next === "-") {
-      const end = sql.indexOf("\n", i);
-      const stop = end < 0 ? n : end;
-      out += sql.slice(i, stop);
-      i = stop;
-      // 行コメントは改行で終わるので、次のトークンとの間には必ず区切りを入れる。
-      pendingSpace = true;
-    } else if (ch === "/" && next === "*") {
-      const end = sql.indexOf("*/", i + 2);
-      const stop = end < 0 ? n : end + 2;
-      out += sql.slice(i, stop);
-      i = stop;
+    const isSpace = ch === " " || ch === "\t";
+    const isNewline = ch === "\n" || ch === "\r";
+    if (isSpace) {
+      if (masked[i] === " ") push(ch, false);
+      else pending = true;
+    } else if (isNewline) {
+      // 直前がマスクされた文字 (コメント / リテラルの中身) なら、行コメントの終端か複数行リテラルの一部。残す。
+      if (i > 0 && masked[i - 1] === " ") {
+        pending = false;
+        push(ch, false);
+      } else pending = true;
     } else {
-      out += ch;
-      i += 1;
+      if (pending && out.length > 0 && !out.endsWith("\n")) push(" ", true);
+      pending = false;
+      push(ch, masked[i] === probe[i]);
     }
   }
-  // 末尾のセミコロン (空白をはさんだ連続も) を落とす。
-  return out.replace(/(?:\s*;)+\s*$/, "").trimEnd();
+  // 末尾: 外側の空白・セミコロン、コメントを終わらせた後の改行を落とす。
+  let end = out.length;
+  while (end > 0) {
+    const c = out[end - 1];
+    if (/\s/.test(c) && (outside[end - 1] || c === "\n" || c === "\r")) end -= 1;
+    else if (c === ";" && outside[end - 1]) end -= 1;
+    else break;
+  }
+  return out.slice(0, end);
 }
 
 /** 2 つの SQL が (空白・末尾セミコロンの違いを除いて) 同じか。 */
-export function sameSql(a: string, b: string): boolean {
-  return normalizeSqlForCompare(a) === normalizeSqlForCompare(b);
+export function sameSql(a: string, b: string, driver?: string): boolean {
+  return normalizeSqlForCompare(a, driver) === normalizeSqlForCompare(b, driver);
 }
 
 /** 結果が古いと判断した理由。 */
@@ -457,12 +445,12 @@ export type SnapshotFreshness =
   | { kind: "fresh" }
   | { kind: "stale"; reasons: StaleReason[] };
 
-export function snapshotFreshness(cell: NotebookSqlCell): SnapshotFreshness {
+export function snapshotFreshness(cell: NotebookSqlCell, driver?: string): SnapshotFreshness {
   const s = cell.snapshot;
   if (!s) return { kind: "none" };
   if (s.sql === null) return { kind: "unknown" };
   const reasons: StaleReason[] = [];
-  if (!sameSql(cell.sql, s.sql)) reasons.push("sql");
+  if (!sameSql(cell.sql, s.sql, driver)) reasons.push("sql");
   if (cell.connection && s.connection && cell.connection.profileId !== s.connection.profileId) {
     reasons.push("connection");
   }
@@ -471,12 +459,7 @@ export function snapshotFreshness(cell: NotebookSqlCell): SnapshotFreshness {
 
 /** 行単位の差分 (`-` 削除 / `+` 追加 / 空白 2 つは共通)。長すぎる入力は null (差分を出さない)。 */
 export function diffSqlLines(before: string, after: string, maxLines = 1000): string | null {
-  const norm = (t: string) =>
-    t
-      .replace(/\r\n?/g, "\n")
-      .replace(/(?:\s*;)+\s*$/, "")
-      .trimEnd()
-      .split("\n");
+  const norm = (t: string) => t.replace(/\r\n?/g, "\n").trimEnd().split("\n");
   const a = norm(before);
   const b = norm(after);
   if (a.length > maxLines || b.length > maxLines) return null;
@@ -508,9 +491,14 @@ export function diffSqlLines(before: string, after: string, maxLines = 1000): st
 }
 
 /** 古い結果を持つ SQL セルの数。 */
-export function countStaleCells(cells: readonly NotebookCell[]): number {
+export function countStaleCells(
+  cells: readonly NotebookCell[],
+  driverOf?: (cell: NotebookSqlCell) => string | undefined,
+): number {
   let n = 0;
-  for (const c of cells) if (c.kind === "sql" && snapshotFreshness(c).kind === "stale") n += 1;
+  for (const c of cells) {
+    if (c.kind === "sql" && snapshotFreshness(c, driverOf?.(c)).kind === "stale") n += 1;
+  }
   return n;
 }
 

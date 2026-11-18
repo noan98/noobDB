@@ -213,6 +213,8 @@ function SnapshotTable({ snapshot }: { snapshot: NotebookSnapshot }) {
 
 interface CellResultProps {
   cell: NotebookSqlCell;
+  /** セルの実行先ドライバ (SQL の比較の字句規則。不明なら undefined)。 */
+  driver: string | undefined;
   /** 再実行 (古い結果の目印のボタン)。実行できないときは理由 (`rerunDisabled`)。 */
   onRerun: (id: string) => void;
   rerunDisabled: string | null;
@@ -252,7 +254,7 @@ function StaleNotice({
         <Flex align="center" gap="2" flexWrap="wrap">
           <chakra.strong data-testid="notebook-stale-badge">{badgeText}</chakra.strong>
           <chakra.span>{t("notebookStaleHint")}</chakra.span>
-          <Tooltip label={rerunDisabled ?? t("notebookStaleRerun")}>
+          <Tooltip label={rerunDisabled}>
             <Button
               size="sm"
               variant="secondary"
@@ -277,17 +279,32 @@ function StaleNotice({
           )}
         </Flex>
         {showDiff && sqlChanged && executed !== null && (
-          <SqlPreview maxH="200px" sql={diff ?? executed} data-testid="notebook-stale-diff" />
+          <Flex direction="column" gap="1">
+            {diff === null && (
+              <chakra.span color="app.textMuted" textStyle="caption">
+                {t("notebookStaleDiffTooLong")}
+              </chakra.span>
+            )}
+            <SqlPreview maxH="200px" sql={diff ?? executed} data-testid="notebook-stale-diff" />
+          </Flex>
         )}
       </Flex>
     </Callout>
   );
 }
 
-function CellResult({ cell, onRerun, rerunDisabled, running, onViewChange, onChartChange }: CellResultProps) {
+function CellResult({
+  cell,
+  driver,
+  onRerun,
+  rerunDisabled,
+  running,
+  onViewChange,
+  onChartChange,
+}: CellResultProps) {
   const t = useT();
   const s = cell.snapshot;
-  const freshness = snapshotFreshness(cell);
+  const freshness = snapshotFreshness(cell, driver);
   if (!s) {
     return (
       <chakra.div color="app.textMuted" textStyle="caption">
@@ -699,6 +716,7 @@ const CellShell = memo(function CellShell(p: CellShellProps) {
                   )}
                   <CellResult
                     cell={cell}
+                    driver={p.profile?.driver}
                     onRerun={p.onRun}
                     rerunDisabled={p.runDisabled}
                     running={p.running}
@@ -790,6 +808,12 @@ export function NotebookView(props: NotebookViewProps) {
       ),
     [],
   );
+  /** セルの実行先ドライバ (古い結果の判定で SQL の字句規則を合わせる)。解決できなければ undefined。 */
+  const driverOfCell = (cell: NotebookSqlCell): string | undefined => {
+    const target = targetOf(cell);
+    if (target.kind === "open" || target.kind === "closed") return target.profile.driver;
+    return target.kind === "current" ? (props.profile?.driver ?? undefined) : undefined;
+  };
   /** セルを実行できない理由 (できるなら null)。 */
   const blockReason = (target: NotebookCellTarget): string | null => {
     if (target.kind === "current") return props.sessionId ? null : t("notebookNeedsConnection");
@@ -1184,7 +1208,7 @@ export function NotebookView(props: NotebookViewProps) {
       // 書き出しもファイル保存と同じく、取得後に変えたマスク設定を反映する。
       const forExport: NotebookDoc = parseOrSame(d, maskRef.current);
       // 古い結果 (SQL を変えた後に再実行していないセル) があれば、書き出す前に確認する。書き出し本文にも注記する。
-      const staleCount = countStaleCells(forExport.cells);
+      const staleCount = countStaleCells(forExport.cells, driverOfCell);
       if (
         staleCount > 0 &&
         !(await confirm({
@@ -1205,8 +1229,8 @@ export function NotebookView(props: NotebookViewProps) {
       if (typeof picked !== "string" || !picked) return;
       const body =
         kind === "md"
-          ? notebookToMarkdown(forExport, exportText())
-          : notebookToHtml(forExport, exportText(), getLocale());
+          ? notebookToMarkdown(forExport, exportText(), new Date(), driverOfCell)
+          : notebookToHtml(forExport, exportText(), getLocale(), new Date(), driverOfCell);
       await api.writeTextFile(picked, body);
       toast.success(t("notebookExported", { path: picked }));
     } catch (e) {
@@ -1222,7 +1246,7 @@ export function NotebookView(props: NotebookViewProps) {
   };
 
   const sqlCount = doc.cells.filter((c) => c.kind === "sql").length;
-  const staleCount = countStaleCells(doc.cells);
+  const staleCount = countStaleCells(doc.cells, driverOfCell);
   const mismatch =
     doc.connection && props.profile && doc.connection.profileId !== props.profile.id ? doc.connection : null;
   const ids = doc.cells.map((c) => c.id);

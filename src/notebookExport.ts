@@ -18,6 +18,9 @@ import {
 } from "./notebook";
 import type { CellValue } from "./api/tauri";
 
+/** セルの実行先ドライバ (SQL の比較の字句規則に使う)。分からなければ undefined。 */
+export type DriverOf = (cell: Extract<NotebookCell, { kind: "sql" }>) => string | undefined;
+
 export interface NotebookExportText {
   /** 文書のタイトルが空のときの見出し。 */
   untitled: string;
@@ -75,6 +78,7 @@ export function notebookToMarkdown(
   doc: NotebookDoc,
   text: NotebookExportText,
   now: Date = new Date(),
+  driverOf?: DriverOf,
 ): string {
   const parts: string[] = [];
   parts.push(`# ${doc.title.trim() || text.untitled}`);
@@ -94,7 +98,7 @@ export function notebookToMarkdown(
       continue;
     }
     const lines = [`_${text.snapshotMeta(s, formatSnapshotTime(s.executedAt))}_`];
-    const fresh = snapshotFreshness(cell);
+    const fresh = snapshotFreshness(cell, driverOf?.(cell));
     if (fresh.kind === "stale") lines.push(`> **${text.stale(fresh.reasons).replace(/\s*\r?\n\s*/g, " ")}**`);
     if (s.error) {
       // 改行や記号で構造が崩れないよう、1 行に畳んだ引用にする。
@@ -132,11 +136,15 @@ td.null { color: GrayText; font-style: italic; }
 .error { font-weight: 600; border-left: 0.2rem solid GrayText; padding-left: 0.6rem; }
 `;
 
-function snapshotToHtml(cell: Extract<NotebookCell, { kind: "sql" }>, text: NotebookExportText): string {
+function snapshotToHtml(
+  cell: Extract<NotebookCell, { kind: "sql" }>,
+  text: NotebookExportText,
+  driverOf?: DriverOf,
+): string {
   const s = cell.snapshot;
   if (!s) return `<p class="note">${escapeHtml(text.notRun)}</p>`;
   const out = [`<p class="meta">${escapeHtml(text.snapshotMeta(s, formatSnapshotTime(s.executedAt)))}</p>`];
-  const fresh = snapshotFreshness(cell);
+  const fresh = snapshotFreshness(cell, driverOf?.(cell));
   if (fresh.kind === "stale") out.push(`<p class="stale">${escapeHtml(text.stale(fresh.reasons))}</p>`);
   if (s.error) {
     out.push(`<p class="error">${escapeHtml(text.error(s.error))}</p>`);
@@ -178,6 +186,7 @@ export function notebookToHtml(
   text: NotebookExportText,
   lang: string,
   now: Date = new Date(),
+  driverOf?: DriverOf,
 ): string {
   const title = doc.title.trim() || text.untitled;
   const meta = [text.exportedAt(formatSnapshotTime(now.toISOString()))];
@@ -191,7 +200,7 @@ export function notebookToHtml(
       if (cell.text.trim()) body.push(`<section>\n${markdownToHtml(parseMarkdown(cell.text))}\n</section>`);
     } else {
       body.push(
-        `<section>\n<pre><code>${escapeHtml(cell.sql.trimEnd())}</code></pre>\n${snapshotToHtml(cell, text)}\n</section>`,
+        `<section>\n<pre><code>${escapeHtml(cell.sql.trimEnd())}</code></pre>\n${snapshotToHtml(cell, text, driverOf)}\n</section>`,
       );
     }
   }

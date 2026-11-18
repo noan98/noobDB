@@ -162,6 +162,21 @@ describe("NotebookView (#2380)", () => {
     expect(mocks.writeTextFile).not.toHaveBeenCalled();
   });
 
+  it("書き出し確認で「このまま書き出す」を押すと、古い結果の注記つきで書き出す (#2420)", async () => {
+    seed(newSqlCell("SELECT 2"));
+    setup();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: new RegExp(t("notebookRunAll")) }));
+    });
+    await screen.findByTestId("notebook-snapshot-meta");
+    fireEvent.change(screen.getByLabelText("sql-editor"), { target: { value: "SELECT 3" } });
+    mocks.save.mockResolvedValue("/tmp/out.md");
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(t("notebookExportMd")) }));
+    fireEvent.click(await screen.findByRole("button", { name: t("notebookExportStaleConfirm") }));
+    await waitFor(() => expect(mocks.writeTextFile).toHaveBeenCalledTimes(1));
+    expect(mocks.writeTextFile.mock.calls[0][1]).toContain(t("notebookExportStaleNote"));
+  });
+
   it("確認を取りやめたら (null) 結果は残さず、後続も実行しない", async () => {
     seed(newSqlCell("DELETE FROM t"), newSqlCell("SELECT 2"));
     const onRunSql = vi.fn().mockResolvedValue(null);

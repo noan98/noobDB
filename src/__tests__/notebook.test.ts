@@ -430,6 +430,38 @@ describe("スナップショットと実行した SQL の結び付け (#2420)", 
     expect(sameSql("SELECT 1 -- a", "SELECT 1 -- b")).toBe(false);
   });
 
+  it("行コメントを終わらせる改行は意味があるので、潰して同一扱いにしない (-- と MySQL の #)", () => {
+    expect(sameSql("SELECT 1 -- c\nFROM t", "SELECT 1 -- c FROM t")).toBe(false);
+    expect(sameSql("SELECT 1 -- c\nFROM t", "SELECT 1 -- c\nFROM  t")).toBe(true);
+    expect(sameSql("SELECT 1 # c\nFROM t", "SELECT 1 # c FROM t", "mysql")).toBe(false);
+    expect(sameSql("SELECT 1 # c\nFROM t", "SELECT 1 # c FROM t")).toBe(false); // ドライバ不明は MySQL としても読む
+    // PostgreSQL / SQLite の # は行コメントではない (演算子) ので改行は普通の空白
+    expect(sameSql("SELECT 1 #\n2", "SELECT 1 # 2", "postgres")).toBe(true);
+  });
+
+  it("PostgreSQL のドル引用の中の空白は区別する", () => {
+    expect(sameSql("SELECT $$a  b$$", "SELECT $$a b$$", "postgres")).toBe(false);
+    expect(sameSql("SELECT $t$a  b$t$", "SELECT $t$a b$t$", "postgres")).toBe(false);
+    expect(sameSql("SELECT  $$a b$$ ;", "SELECT $$a b$$", "postgres")).toBe(true);
+  });
+
+  it("バックスラッシュはドライバ別 (PostgreSQL / SQLite では 'a\\' で文字列が閉じる)", () => {
+    // PG: 'a\\' は閉じているので、続く空白は外側 (collapse される)。MySQL ではエスケープで閉じない。
+    expect(sameSql("SELECT 'a\\'  FROM t", "SELECT 'a\\' FROM t", "postgres")).toBe(true);
+    expect(sameSql("SELECT 'a\\'  b'", "SELECT 'a\\' b'", "mysql")).toBe(false);
+  });
+
+  it("コメントの中の ; を末尾セミコロンとして削らない", () => {
+    expect(sameSql("SELECT 1 -- a;", "SELECT 1 -- a")).toBe(false);
+    expect(sameSql("SELECT 1 /* x; */", "SELECT 1 /* x */")).toBe(false);
+    expect(sameSql("SELECT 1; -- a", "SELECT 1 -- a")).toBe(false);
+  });
+
+  it("SQLite の [識別子] の中の空白は区別する", () => {
+    expect(sameSql("SELECT [a  b] FROM t", "SELECT [a b] FROM t", "sqlite")).toBe(false);
+    expect(sameSql("SELECT [a b]  FROM t", "SELECT [a b] FROM t", "sqlite")).toBe(true);
+  });
+
   it("同じ SQL なら fresh、意味のある変更なら stale (SQL)", () => {
     expect(snapshotFreshness(cellWith("SELECT 1;", "SELECT 1"))).toEqual({ kind: "fresh" });
     expect(snapshotFreshness(cellWith("SELECT 2", "SELECT 1"))).toEqual({ kind: "stale", reasons: ["sql"] });
@@ -456,6 +488,13 @@ describe("スナップショットと実行した SQL の結び付け (#2420)", 
     expect(snapshotFreshness(c)).toEqual({ kind: "fresh" });
   });
 
+  it("既定のセルに後から接続を指定すると、結果を得た接続と違えば stale (接続)", () => {
+    const c = cellWith("SELECT 1", "SELECT 1"); // 実行は p1 (既定のセルで流した)
+    expect(snapshotFreshness(c)).toEqual({ kind: "fresh" });
+    c.connection = { profileId: "p9", name: "other" };
+    expect(snapshotFreshness(c)).toEqual({ kind: "stale", reasons: ["connection"] });
+  });
+
   it("古い結果のあるセルを数える", () => {
     expect(
       countStaleCells([
@@ -471,7 +510,7 @@ describe("スナップショットと実行した SQL の結び付け (#2420)", 
     expect(diffSqlLines("SELECT 1\nFROM t\nWHERE a = 1", "SELECT 1\nFROM t\nWHERE a = 2")).toBe(
       "  SELECT 1\n  FROM t\n- WHERE a = 1\n+ WHERE a = 2",
     );
-    expect(diffSqlLines("a", "a;")).toBe("  a");
+    expect(diffSqlLines("a", "a;")).toBe("- a\n+ a;");
     expect(diffSqlLines("a\n".repeat(5), "b", 3)).toBeNull();
   });
 
