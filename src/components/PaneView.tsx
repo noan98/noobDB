@@ -31,6 +31,7 @@ import { ResultPaneSkeleton } from "./ResultPaneSkeleton";
 import { showsResultSkeletonFallback } from "./resultSkeleton";
 import { Spinner } from "./Spinner";
 import type { QueryEditorHandle } from "./QueryEditor";
+import type { CteRunBlock } from "../cteRun";
 import type { PreflightResult } from "./usePreflight";
 import type { ResultGridHandle } from "./ResultGrid";
 import { ResultExplainContext, type ResultViewKind } from "./ResultViewSwitch";
@@ -89,6 +90,7 @@ const ExplainViewer = lazy(() => import("./ExplainViewer").then((m) => ({ defaul
 const PaginationBar = lazy(() => import("./PaginationBar").then((m) => ({ default: m.PaginationBar })));
 const ChartView = lazy(() => import("./ChartView").then((m) => ({ default: m.ChartView })));
 const PivotView = lazy(() => import("./PivotView").then((m) => ({ default: m.PivotView })));
+const HierarchyView = lazy(() => import("./HierarchyView").then((m) => ({ default: m.HierarchyView })));
 const ResultJsonView = lazy(() => import("./ResultJsonView").then((m) => ({ default: m.ResultJsonView })));
 const BatchResultsView = lazy(() =>
   import("./BatchResultsView").then((m) => ({ default: m.BatchResultsView })),
@@ -246,7 +248,12 @@ export interface PaneActions {
   addInsertRowsForTab: (tabId: string, rows: PendingInsertRow[]) => void;
   toggleSqlEditForTab: (tabId: string) => void;
   requestInsertRowForTab: (tabId: string) => void;
-  resolveParamsThen: (tab: Tab, sql: string, mode: "run" | "runNewTab" | "preview" | "explain") => void;
+  resolveParamsThen: (
+    tab: Tab,
+    sql: string,
+    mode: "run" | "runNewTab" | "preview" | "explain",
+    runOpts?: { newTab?: boolean; title?: string },
+  ) => void;
   runBatchInTab: (tabId: string, sql: string, stopOnError: boolean, tabOverride?: Tab) => unknown;
   runExplainInTab: (tabId: string, sql: string, analyze: boolean) => unknown;
   /** 統計の手当て (ANALYZE / 拡張統計 / ヒストグラム) の SQL を、確認ゲートを通して順に流す (#2327)。 */
@@ -299,6 +306,12 @@ export interface PaneEnv {
   readOnly: boolean;
   emergencyMode: boolean;
   broadcastAvailable: boolean;
+  /** 接続先が WITH (CTE) を解釈できない (MySQL 5.x など)。「この CTE までを実行」を無効にする (#2409)。 */
+  cteRunUnsupported: boolean;
+  /** 再帰 CTE の単体実行で末尾に付ける LIMIT の行数 (#2409)。 */
+  cteRunLimit: number;
+  /** 「この CTE までを実行」を組み立てられない理由をトーストで伝える (#2409)。 */
+  reportCteBlocked: (reason: CteRunBlock | "unsupported") => void;
   queryHistory: string[];
   /** エディタの補完候補に出すスニペット (現在の接続のスコープで絞り込み済み、#1489)。 */
   completionSnippets: Snippet[];
@@ -357,6 +370,9 @@ export const PaneView = memo(
       readOnly,
       emergencyMode,
       broadcastAvailable,
+      cteRunUnsupported,
+      cteRunLimit,
+      reportCteBlocked,
       queryHistory,
       completionSnippets,
       editorBindings,
@@ -612,9 +628,11 @@ export const PaneView = memo(
               ? "pivot"
               : tab.showJson && tab.result && !tab.streaming
                 ? "json"
-                : tab.preview
-                  ? "preview"
-                  : "grid";
+                : tab.showHierarchy && tab.result && !tab.streaming
+                  ? "hierarchy"
+                  : tab.preview
+                    ? "preview"
+                    : "grid";
     // 結果ツールバーの「EXPLAIN」(#1113)。直前に実行した SQL の実行計画を専用の
     // EXPLAIN タブで開く。keep-alive で保持するグリッドの中にも同じ Provider を置く (#1309)。
     const explainCtxValue =
@@ -763,6 +781,19 @@ export const PaneView = memo(
                                 actions.resolveParamsThen(tab, sql, "runNewTab"),
                               )
                         }
+                        onRunCte={
+                          tab.kind === "explain"
+                            ? undefined
+                            : gridStable.fn(`${tab.id}:ed:runCte`, (req: { sql: string; title: string }) =>
+                                actions.resolveParamsThen(tab, req.sql, "runNewTab", {
+                                  newTab: true,
+                                  title: req.title,
+                                }),
+                              )
+                        }
+                        onCteRunBlocked={reportCteBlocked}
+                        cteRunUnsupported={cteRunUnsupported}
+                        cteRunLimit={cteRunLimit}
                         runNewTabCombo={shortcutBindings.runNewTab}
                         onPreview={
                           tab.kind === "explain"
@@ -1049,6 +1080,21 @@ export const PaneView = memo(
                                   database={tab.database ?? selectedProfile?.database ?? null}
                                   table={tab.table ?? null}
                                   onChangeView={(v) => actions.setResultView(tab.id, v)}
+                                />
+                              ) : tab.showHierarchy && tab.result && !tab.streaming ? (
+                                <HierarchyView
+                                  key={tab.id}
+                                  result={tab.result}
+                                  sourceSql={tab.lastExecutedSql}
+                                  driver={selectedProfile?.driver ?? "mysql"}
+                                  database={tab.database ?? selectedProfile?.database ?? null}
+                                  table={tab.table ?? null}
+                                  columnMeta={tab.tableColumns}
+                                  onChangeView={(v) => actions.setResultView(tab.id, v)}
+                                  onOpenQuery={sessionId ? (sql) => actions.openAndRunQuery(sql) : undefined}
+                                  onRunLookup={
+                                    sessionId ? (sql) => api.runQuery(sessionId, sql, null) : undefined
+                                  }
                                 />
                               ) : tab.showPivot && tab.result && !tab.streaming ? (
                                 <PivotView

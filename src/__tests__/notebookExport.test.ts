@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildSnapshot, createEmptyNotebook, newMarkdownCell, newSqlCell } from "../notebook";
+import { buildChartFigure, formatTicks } from "../notebookChartSvg";
 import { notebookToHtml, notebookToMarkdown, type NotebookExportText } from "../notebookExport";
 
 const text: NotebookExportText = {
@@ -14,6 +15,13 @@ const text: NotebookExportText = {
   connection: (n) => `接続: ${n}`,
   autoLimit: (n) => `自動 LIMIT ${n}`,
   valuesTruncated: (n) => `${n} 文字で切り詰め`,
+  stale: (r) => `古い結果: ${r.join("+")}`,
+  cellLabel: (n) => `セル ${n}`,
+  toc: "目次",
+  chartTable: "表で表示",
+  chartMore: (n) => `ほか ${n} 件`,
+  chartAria: "チャート",
+  chartNotExported: "チャート (書き出し非対応) — 表で表示",
 };
 
 function build() {
@@ -104,5 +112,254 @@ describe("書き出し (#2380)", () => {
     const plain = notebookToHtml(build(), text, "ja", new Date("2026-01-02T03:04:05Z"));
     expect(plain).not.toContain("自動 LIMIT");
     expect(plain).not.toContain("文字で切り詰め");
+  });
+});
+
+describe("古い結果の注記 (#2420)", () => {
+  function withStale(executed: string, current: string) {
+    const d = createEmptyNotebook(null);
+    const c = newSqlCell(current);
+    c.snapshot = buildSnapshot(
+      {
+        columns: [{ name: "n", type_name: "int" }],
+        rows: [[1]],
+        totalRows: 1,
+        rowsAffected: 0,
+        hasColumns: true,
+        elapsedMs: 1,
+      },
+      10,
+      { enabled: false, patterns: [] },
+      new Date("2026-01-02T03:04:05Z"),
+      { sql: executed, connection: null, database: null },
+    );
+    d.cells = [c];
+    return d;
+  }
+
+  it("SQL を変えた後の結果は Markdown / HTML の両方で古いと読み取れる", () => {
+    const d = withStale("SELECT 1", "SELECT 2");
+    expect(notebookToMarkdown(d, text)).toContain("古い結果: sql");
+    expect(notebookToHtml(d, text, "ja")).toContain('<p class="stale">古い結果: sql</p>');
+  });
+
+  it("同じ SQL (空白・末尾セミコロンの違いだけ) や実行時の SQL が不明な結果には注記しない", () => {
+    expect(notebookToMarkdown(withStale("SELECT 1", "SELECT 1;"), text)).not.toContain("古い結果");
+    expect(notebookToHtml(build(), text, "ja")).not.toContain("古い結果");
+  });
+});
+
+describe("レポート仕上げ (#2421)", () => {
+  const NOW = new Date("2026-01-02T03:04:05Z");
+  function chartDoc(
+    type: "bar" | "pie" | "line" | "area" | "stackedBar" | "scatter" | "histogram" | "combo",
+  ) {
+    const d = createEmptyNotebook(null);
+    const c = newSqlCell("SELECT name, total, cnt FROM t");
+    c.snapshot = buildSnapshot(
+      {
+        columns: [
+          { name: "<name>", type_name: "text" },
+          { name: "total", type_name: "int" },
+          { name: "cnt", type_name: "int" },
+        ],
+        rows: [
+          ["<script>x</script>", 10, 1],
+          ["b", 20, 2],
+          ["c", null, 3],
+        ],
+        totalRows: 3,
+        rowsAffected: 0,
+        hasColumns: true,
+        elapsedMs: 7,
+      },
+      10,
+      { enabled: false, patterns: [] },
+      NOW,
+    );
+    c.view = "chart";
+    c.chart = {
+      type,
+      xCol: type === "scatter" || type === "histogram" ? 1 : 0,
+      yCols: type === "combo" ? [1, 2] : [type === "scatter" ? 2 : 1],
+      aggregation: "none",
+    };
+    d.cells = [newMarkdownCell("# 概要\n\n## 集計 <b>"), c];
+    return d;
+  }
+
+  it.each(["bar", "pie", "line", "area", "stackedBar", "scatter", "histogram", "combo"] as const)(
+    "チャートセル (%s) はインライン SVG になり、表が <details> で併記される",
+    (type) => {
+      const html = notebookToHtml(chartDoc(type), text, "ja", NOW);
+      expect(html).toContain("<svg");
+      expect(html).toContain("<details><summary>表で表示</summary>");
+      expect(html).not.toMatch(
+        /<(link|script|img|iframe|object|embed|image|use|foreignObject)\b|@import|url\(|https?:\/\//i,
+      );
+      expect(html).not.toContain("<script>");
+    },
+  );
+
+  it("SVG 内のラベル・系列名はエスケープされ、ライト/ダーク両方の色を持つ", () => {
+    const html = notebookToHtml(chartDoc("bar"), text, "ja", NOW);
+    const svg = html.slice(html.indexOf("<figure"), html.indexOf("</figure>"));
+    expect(svg).toContain("&lt;script&gt;x");
+    expect(svg).not.toContain("<script");
+    expect(svg).toContain("@media (prefers-color-scheme: dark)");
+    const fig = buildChartFigure(
+      [
+        { name: '"><svg onload=1>', type_name: "text" },
+        { name: "v", type_name: "int" },
+      ],
+      [['"><svg onload=1>', 1]],
+      { type: "pie", xCol: 0, yCols: [1], aggregation: "none" },
+      "chX",
+      '"><b>',
+    );
+    expect(fig?.html).not.toContain("<svg onload");
+    expect(fig?.html).not.toContain('"><b>');
+  });
+
+  it("描けないチャート (系列なし) は null で、表だけになる", () => {
+    expect(
+      buildChartFigure(
+        [{ name: "a", type_name: "text" }],
+        [],
+        { type: "bar", xCol: 0, yCols: [], aggregation: "none" },
+        "ch1",
+        "x",
+      ),
+    ).toBeNull();
+  });
+
+  it("SQL はトークンごとに色分けされ、ライト/ダーク両方の配色変数を持つ", () => {
+    const html = notebookToHtml(chartDoc("bar"), text, "ja", NOW, () => "postgres");
+    expect(html).toContain('<span class="t-keyword">SELECT</span>');
+    expect(html).toContain("--syn-keyword:");
+    expect(html).toMatch(/prefers-color-scheme: dark\)\{:root\{--syn-keyword/);
+  });
+
+  it("数値列は右寄せ、NULL はバッジ、目次は Markdown の見出しから作る", () => {
+    const html = notebookToHtml(chartDoc("bar"), text, "ja", NOW);
+    expect(html).toContain('<th class="num">total</th>');
+    expect(html).toContain('<span class="nullbadge">NULL</span>');
+    expect(html).toContain('<nav class="toc">');
+    expect(html).toContain('<h1 id="nb-h-1">');
+    expect(html).toContain('<a href="#nb-h-2">集計 &lt;b&gt;</a>');
+    expect(html).toContain("セル 1");
+    expect(html).toContain("@media print");
+    expect(html).toContain("position: sticky");
+  });
+
+  it("Markdown 書き出しのチャートセルは表で出し、非対応と明記する", () => {
+    const md = notebookToMarkdown(chartDoc("bar"), text, NOW);
+    expect(md).toContain("チャート (書き出し非対応) — 表で表示");
+    expect(md).toContain("| <name>");
+    expect(notebookToMarkdown(build(), text, NOW)).not.toContain("書き出し非対応");
+  });
+
+  it.each([
+    ["pie", '<path class="f0 slice"'],
+    ["line", "<polyline"],
+    ["scatter", "<circle"],
+    ["area", "<polygon"],
+    ["bar", "<rect"],
+  ] as const)("%s は図形要素を持ち、NaN / undefined を出さない", (type, shape) => {
+    const html = notebookToHtml(chartDoc(type), text, "ja", NOW);
+    const fig = html.slice(html.indexOf("<figure"), html.indexOf("</figure>"));
+    expect(fig).toContain(shape);
+    expect(fig).not.toMatch(/NaN|undefined|Infinity/);
+  });
+
+  it("combo の右軸の目盛りは viewBox 内 (右余白に収まる位置) に置く", () => {
+    const html = notebookToHtml(chartDoc("combo"), text, "ja", NOW);
+    const fig = html.slice(html.indexOf("<figure"), html.indexOf("</figure>"));
+    const xs = [...fig.matchAll(/<text class="tick" x="([\d.]+)"[^>]*text-anchor="start"/g)].map((m) =>
+      Number(m[1]),
+    );
+    expect(xs.length).toBeGreaterThan(0);
+    // viewBox 幅 640 のうち、始点から右端まで 30px 以上残る (2 文字以上のラベルが切れない)。
+    for (const x of xs) expect(640 - x).toBeGreaterThanOrEqual(30);
+  });
+
+  it("円の凡例が 20 件を超えたら「ほか N 件」を付ける。負値は 0 に丸めて描く", () => {
+    const rows = Array.from({ length: 25 }, (_, i) => [`k${i}`, i - 3] as [string, number]);
+    const fig = buildChartFigure(
+      [
+        { name: "k", type_name: "text" },
+        { name: "v", type_name: "int" },
+      ],
+      rows,
+      { type: "pie", xCol: 0, yCols: [1], aggregation: "none", palette: "blue" },
+      "chP",
+      "x",
+      (n) => `ほか ${n} 件`,
+    );
+    expect(fig?.html).toContain("ほか 5 件");
+    expect(fig?.html).not.toMatch(/NaN|undefined/);
+  });
+
+  it("行数上限で切り詰めたスナップショットは、図の前にも注記する", () => {
+    const d = chartDoc("bar");
+    const c = d.cells[1] as { snapshot: { truncated: boolean; totalRows: number } };
+    c.snapshot.truncated = true;
+    c.snapshot.totalRows = 99;
+    const html = notebookToHtml(d, text, "ja", NOW);
+    const note = html.indexOf("先頭 3 / 全 99");
+    expect(note).toBeGreaterThan(0);
+    expect(note).toBeLessThan(html.indexOf("<figure"));
+    expect(html.split("先頭 3 / 全 99")).toHaveLength(2);
+  });
+});
+
+describe("ノートブックの HTML チャートの目盛りと配色", () => {
+  it("値が大きく幅が狭い目盛りも隣どうしが同じ文字列にならない", () => {
+    const edges = Array.from({ length: 11 }, (_, i) => 1000000 + i / 10);
+    const labels = formatTicks(edges);
+    expect(new Set(labels).size).toBe(11);
+    expect(labels[0]).toBe("1000000");
+    expect(labels[1]).toBe("1000000.1");
+  });
+
+  it("短い表記で区別できるときは従来どおり省略表記にする", () => {
+    expect(formatTicks([0, 20000, 40000])).toEqual(["0", "20k", "40k"]);
+  });
+
+  it("ヒストグラムの横軸も狭い幅の区間を区別して書く", () => {
+    const fig = buildChartFigure(
+      [{ name: "v", type_name: "float" }],
+      [[1000000], [1000000.5], [1000001]],
+      { type: "histogram", xCol: 0, yCols: [], aggregation: "none", bins: 10 },
+      "chH",
+      "x",
+    );
+    const ticks = [
+      ...(fig?.html ?? "").matchAll(/<text class="tick"[^>]*text-anchor="middle">([^<]*)</g),
+    ].map((m) => m[1]);
+    expect(ticks.length).toBeGreaterThan(1);
+    expect(new Set(ticks).size).toBe(ticks.length);
+  });
+
+  it("複合グラフで線に最後以外の列を選んでも、色は凡例と同じ元の系列順で付ける", () => {
+    const fig = buildChartFigure(
+      [
+        { name: "k", type_name: "text" },
+        { name: "revenue", type_name: "int" },
+        { name: "profit", type_name: "int" },
+      ],
+      [
+        ["a", 10, 3],
+        ["b", 20, 5],
+      ],
+      { type: "combo", xCol: 0, yCols: [1, 2], aggregation: "none", comboLineCol: 1 },
+      "chC",
+      "x",
+    );
+    const html = fig?.html ?? "";
+    // revenue (元の 0 番) が線、profit (元の 1 番) が棒。
+    expect(html).toContain('<polyline class="k0 line"');
+    expect(html).toMatch(/<rect class="f1"/);
+    expect(html).not.toMatch(/<rect class="f0"/);
   });
 });

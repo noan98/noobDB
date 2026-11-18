@@ -209,6 +209,9 @@ FK 制約を張らない運用の DB 向けに、子.列 → 親.列 の関係�
 - `list_logical_relations`
 - `save_logical_relations` (複合キー可。既存と同じものは無視。1 件でも不正なら全件保存しない)
 - `delete_logical_relation`
+- `export_logical_relations` (書き出し用 JSON 文字列 `{ version, relations }`。`profile_id`・登録時刻・接続情報は含めない。#2423)
+- `parse_logical_relations_import` (取り込みファイルの寛容パース。保存しない。件数 5000 / 4 MiB 上限。#2423)
+- `replace_logical_relations` (取り込みの「上書き」。この接続先の一覧を置き換える。「追加」は `save_logical_relations`)
 
 ## スキーマ・テーブルオープンの集約 (`commands/schema.rs` / `schema_tree.rs` / `table_open.rs`、#1263)
 

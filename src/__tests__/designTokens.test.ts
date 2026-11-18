@@ -220,7 +220,8 @@ describe("design tokens: 等幅数字 (#1072)", () => {
     const offenders = findViolations(
       /fontVariantNumeric|font-variant-numeric/,
       () => true,
-      (path) => path !== "../theme.ts",
+      // notebookExport.ts は UI ではなく単体で開く HTML 書き出しの CSS 文字列 (#2421)。Chakra のトークンは使えない。
+      (path) => path !== "../theme.ts" && path !== "../notebookExport.ts",
     );
     expect(
       offenders,
@@ -879,6 +880,8 @@ describe("共通コンポーネントの迂回", () => {
     // <svg fill="currentColor"> 描画) であり、迂回ではなく単一ソース側。
     // ER 図ローディング骨格のノード間接続線: アイコンではなく図を描く SVG (#1834)。
     "../components/Skeleton.tsx",
+    // ノートブック HTML 書き出しに埋め込むチャートの SVG 文字列生成 (#2421)。アイコンではなく図で、DOM を使わない純関数。
+    "../notebookChartSvg.ts",
     "../components/Icon.tsx",
     // ロック待機グラフの矢印: アイコンではなく、ノード間の待ち関係を描く図 (#2237)。
     "../components/BlockingGraph.tsx",
@@ -898,6 +901,8 @@ describe("共通コンポーネントの迂回", () => {
     "../components/ChartView.tsx",
     // 実行計画の時間配分アイシクル図 (#2407): 計画から算出した矩形を描くデータの図。
     "../components/ExplainIcicleView.tsx",
+    // テーブルサイズのツリーマップ (#2408): 配置計算した矩形を描くデータの図。
+    "../components/TableTreemapView.tsx",
     "../components/ServerMetricsPanel.tsx",
     // 空間データの形状プレビュー (#2379): 座標から算出したパス・目盛りを描くデータの図。
     "../components/SpatialPreview.tsx",

@@ -244,3 +244,127 @@ export function suggestLogicalRelations(
   }
   return out;
 }
+
+/** 取り込み候補が接続先に適用できない理由。 */
+export type ImportBlockReason =
+  | { kind: "missingTable"; table: string }
+  | { kind: "missingColumn"; table: string; column: string }
+  | { kind: "duplicateColumn"; table: string; column: string };
+
+/** 取り込みファイルの関係を、接続先のスキーマ・登録済みの一覧と照合した結果 (#2423)。 */
+export interface ImportClassification {
+  /** 接続先に新しく登録できるもの (大文字小文字だけ違う名前は接続先の表記へ直してある)。 */
+  addable: LogicalRelationInput[];
+  /**
+   * すでに登録済みの同じ関係。表・列が今の接続先に無くても、登録済みなら (消えても関係を保持する
+   * 設計のため) ここに入る。上書きでもこれは残る。
+   */
+  existing: LogicalRelationInput[];
+  /** 接続先に存在しない表・列を参照していて適用できないもの (未登録のもの)。 */
+  blocked: { relation: LogicalRelationInput; reason: ImportBlockReason }[];
+  /** 上書きで削除される登録済みの件数 (登録済みのうちファイルに無いもの)。 */
+  removedCount: number;
+}
+
+type Schema = ReadonlyMap<string, ReadonlySet<string>>;
+
+/** 完全一致を優先し、無ければ (大文字小文字を無視するときに限り) 一意に定まる表記を返す。 */
+function resolveName(name: string, names: Iterable<string>, fold: boolean): string | null {
+  const all = [...names];
+  if (all.includes(name)) return name;
+  if (!fold) return null;
+  const lower = name.toLowerCase();
+  const hits = all.filter((n) => n.toLowerCase() === lower);
+  return hits.length === 1 ? (hits[0] ?? null) : null;
+}
+
+/** 配列内で 2 回目に現れた最初の要素 (重複が無ければ null)。 */
+function firstDuplicate(names: readonly string[]): string | null {
+  const seen = new Set<string>();
+  for (const n of names) {
+    if (seen.has(n)) return n;
+    seen.add(n);
+  }
+  return null;
+}
+
+/** 接続先の表記へ解決した関係か、最初の適用できない理由を返す。 */
+function resolveRelation(
+  r: LogicalRelationInput,
+  schema: Schema,
+  fold: boolean,
+): { relation: LogicalRelationInput } | { reason: ImportBlockReason } {
+  const child = resolveName(r.table, schema.keys(), fold);
+  if (child === null) return { reason: { kind: "missingTable", table: r.table } };
+  const parent = resolveName(r.referenced_table, schema.keys(), fold);
+  if (parent === null) return { reason: { kind: "missingTable", table: r.referenced_table } };
+  const childCols = schema.get(child) ?? new Set<string>();
+  const parentCols = schema.get(parent) ?? new Set<string>();
+  const columns: string[] = [];
+  for (const c of r.columns) {
+    const hit = resolveName(c, childCols, fold);
+    if (hit === null) return { reason: { kind: "missingColumn", table: child, column: c } };
+    columns.push(hit);
+  }
+  const referencedColumns: string[] = [];
+  for (const c of r.referenced_columns) {
+    const hit = resolveName(c, parentCols, fold);
+    if (hit === null) return { reason: { kind: "missingColumn", table: parent, column: c } };
+    referencedColumns.push(hit);
+  }
+  // 大文字小文字を無視した読み替えで別の列が同じ列に潰れると、Rust の validate が重複として拒否し
+  // 一括取り込みごと失敗する。その関係だけを適用できない扱いにする。
+  const dupChild = firstDuplicate(columns);
+  if (dupChild !== null) return { reason: { kind: "duplicateColumn", table: child, column: dupChild } };
+  const dupParent = firstDuplicate(referencedColumns);
+  if (dupParent !== null) return { reason: { kind: "duplicateColumn", table: parent, column: dupParent } };
+  return {
+    relation: { table: child, columns, referenced_table: parent, referenced_columns: referencedColumns },
+  };
+}
+
+/**
+ * 取り込む関係を「追加できる / 登録済み / 適用できない (存在しない表・列)」に分ける。純関数。
+ * 登録済みと同じ関係は、接続先に表・列が無くても `existing` にする。`caseInsensitive` (MySQL / SQLite) の
+ * ときは、完全一致が無い名前に限り、大文字小文字を無視して一意に定まる接続先の表記へ読み替える
+ * (複数候補があるものは適用できない扱いのまま)。PostgreSQL は完全一致のみ。
+ */
+export function classifyImport(
+  incoming: readonly LogicalRelationInput[],
+  tables: readonly SuggestTable[],
+  registered: readonly LogicalRelationInput[],
+  caseInsensitive = false,
+): ImportClassification {
+  const schema: Schema = new Map(tables.map((tb) => [tb.name, new Set(tb.columns.map((c) => c.name))]));
+  const have = new Set(registered.map(relationKey));
+  const out: ImportClassification = { addable: [], existing: [], blocked: [], removedCount: 0 };
+  const kept = new Set<string>();
+  const seenAdd = new Set<string>();
+  for (const r of incoming) {
+    const key = relationKey(r);
+    if (have.has(key)) {
+      if (!kept.has(key)) {
+        kept.add(key);
+        out.existing.push(r);
+      }
+      continue;
+    }
+    const res = resolveRelation(r, schema, caseInsensitive);
+    if ("reason" in res) {
+      out.blocked.push({ relation: r, reason: res.reason });
+      continue;
+    }
+    const k = relationKey(res.relation);
+    if (have.has(k)) {
+      if (!kept.has(k)) {
+        kept.add(k);
+        out.existing.push(res.relation);
+      }
+    } else if (!seenAdd.has(k)) {
+      seenAdd.add(k);
+      out.addable.push(res.relation);
+    }
+  }
+  out.removedCount = have.size - kept.size;
+  return out;
+}

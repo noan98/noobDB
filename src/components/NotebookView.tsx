@@ -12,7 +12,9 @@ import {
   buildSnapshot,
   cellHasWrites,
   clampSnapshotRowLimit,
+  countStaleCells,
   createEmptyNotebook,
+  diffSqlLines,
   insertCellAfter,
   moveCell,
   newMarkdownCell,
@@ -24,6 +26,7 @@ import {
   removeCell,
   reorderCellsByIds,
   serializeNotebook,
+  snapshotFreshness,
   SNAPSHOT_ROW_LIMIT_CHOICES,
   sqlCellsToRun,
   updateCell,
@@ -70,6 +73,7 @@ import { MarkdownView } from "./MarkdownView";
 import { ErrorNote } from "./modalForm";
 import { ProductionBadge } from "./ProfileBadge";
 import { ResultViewSwitch } from "./ResultViewSwitch";
+import { SqlPreview } from "./SqlPreview";
 import { Spinner } from "./Spinner";
 import { useToast } from "./Toast";
 import { Tooltip } from "./Tooltip";
@@ -129,6 +133,18 @@ function exportText(): NotebookExportText {
     valuesTruncated: (chars) => translate("notebookValuesTruncated", { chars }),
     exportedAt: (time) => translate("notebookExportedAt", { time }),
     connection: (name) => translate("notebookConnectionLine", { name }),
+    cellLabel: (n) => translate("notebookCellLabel", { n }),
+    toc: translate("notebookExportToc"),
+    chartMore: (n) => translate("notebookExportChartMore", { n }),
+    chartTable: translate("notebookExportChartTable"),
+    chartAria: translate("notebookExportChartAria"),
+    chartNotExported: translate("notebookExportChartNotExported"),
+    stale: (reasons) =>
+      reasons.length > 1
+        ? translate("notebookExportStaleNoteBoth")
+        : reasons[0] === "connection"
+          ? translate("notebookExportStaleNoteConn")
+          : translate("notebookExportStaleNote"),
   };
 }
 
@@ -203,13 +219,98 @@ function SnapshotTable({ snapshot }: { snapshot: NotebookSnapshot }) {
 
 interface CellResultProps {
   cell: NotebookSqlCell;
+  /** セルの実行先ドライバ (SQL の比較の字句規則。不明なら undefined)。 */
+  driver: string | undefined;
+  /** 再実行 (古い結果の目印のボタン)。実行できないときは理由 (`rerunDisabled`)。 */
+  onRerun: (id: string) => void;
+  rerunDisabled: string | null;
+  running: boolean;
   onViewChange: (id: string, view: "table" | "chart") => void;
   onChartChange: (id: string, chart: ChartConfig) => void;
 }
 
-function CellResult({ cell, onViewChange, onChartChange }: CellResultProps) {
+/** SQL / 接続を変えた後の「古い結果」の目印 (#2420)。ワンクリックの再実行と、実行時の SQL との差分表示を持つ。 */
+function StaleNotice({
+  cell,
+  reasons,
+  onRerun,
+  rerunDisabled,
+  running,
+}: {
+  cell: NotebookSqlCell;
+  reasons: readonly ("sql" | "connection")[];
+  onRerun: (id: string) => void;
+  rerunDisabled: string | null;
+  running: boolean;
+}) {
+  const t = useT();
+  const [showDiff, setShowDiff] = useState(false);
+  const executed = cell.snapshot?.sql ?? null;
+  const sqlChanged = reasons.includes("sql");
+  const diff = showDiff && sqlChanged && executed !== null ? diffSqlLines(executed, cell.sql) : null;
+  const badgeText =
+    reasons.length > 1
+      ? t("notebookStaleBadgeBoth")
+      : sqlChanged
+        ? t("notebookStaleBadge")
+        : t("notebookStaleBadgeConn");
+  return (
+    <Callout tone="warning" role="status" data-testid="notebook-stale">
+      <Flex direction="column" gap="2">
+        <Flex align="center" gap="2" flexWrap="wrap">
+          <chakra.strong data-testid="notebook-stale-badge">{badgeText}</chakra.strong>
+          <chakra.span>{t("notebookStaleHint")}</chakra.span>
+          <Tooltip label={rerunDisabled}>
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={!!rerunDisabled || running}
+              onClick={() => onRerun(cell.id)}
+              data-testid="notebook-stale-rerun"
+            >
+              <Icon name="play" size={ICON_SIZES.sm} />
+              {t("notebookStaleRerun")}
+            </Button>
+          </Tooltip>
+          {sqlChanged && executed !== null && (
+            <Button
+              size="sm"
+              variant="ghost"
+              aria-expanded={showDiff}
+              onClick={() => setShowDiff((v) => !v)}
+              data-testid="notebook-stale-diff-toggle"
+            >
+              {showDiff ? t("notebookStaleHideDiff") : t("notebookStaleShowDiff")}
+            </Button>
+          )}
+        </Flex>
+        {showDiff && sqlChanged && executed !== null && (
+          <Flex direction="column" gap="1">
+            {diff === null && (
+              <chakra.span color="app.textMuted" textStyle="caption">
+                {t("notebookStaleDiffTooLong")}
+              </chakra.span>
+            )}
+            <SqlPreview maxH="200px" sql={diff ?? executed} data-testid="notebook-stale-diff" />
+          </Flex>
+        )}
+      </Flex>
+    </Callout>
+  );
+}
+
+function CellResult({
+  cell,
+  driver,
+  onRerun,
+  rerunDisabled,
+  running,
+  onViewChange,
+  onChartChange,
+}: CellResultProps) {
   const t = useT();
   const s = cell.snapshot;
+  const freshness = snapshotFreshness(cell, driver);
   if (!s) {
     return (
       <chakra.div color="app.textMuted" textStyle="caption">
@@ -224,11 +325,29 @@ function CellResult({ cell, onViewChange, onChartChange }: CellResultProps) {
         rows: s.hasColumns ? s.totalRows : s.rowsAffected,
         ms: s.elapsedMs,
       })}
+      {s.connection &&
+        ` / ${
+          s.database
+            ? t("notebookRanOnDb", { name: s.connection.name, database: s.database })
+            : t("notebookRanOn", { name: s.connection.name })
+        }`}
     </chakra.div>
   );
+  const stale =
+    freshness.kind === "stale" ? (
+      <StaleNotice
+        cell={cell}
+        reasons={freshness.reasons}
+        onRerun={onRerun}
+        rerunDisabled={rerunDisabled}
+        running={running}
+      />
+    ) : null;
+  const dim = stale ? 0.55 : 1;
   if (s.error) {
     return (
       <Flex direction="column" gap="2">
+        {stale}
         {meta}
         <ErrorNote role="alert">{t("notebookError", { error: s.error })}</ErrorNote>
       </Flex>
@@ -237,13 +356,17 @@ function CellResult({ cell, onViewChange, onChartChange }: CellResultProps) {
   if (!s.hasColumns) {
     return (
       <Flex direction="column" gap="2">
+        {stale}
         {meta}
-        <chakra.div fontSize="md">{t("notebookAffected", { rows: s.rowsAffected })}</chakra.div>
+        <chakra.div fontSize="md" opacity={dim}>
+          {t("notebookAffected", { rows: s.rowsAffected })}
+        </chakra.div>
       </Flex>
     );
   }
   return (
     <Flex direction="column" gap="2">
+      {stale}
       <Flex align="center" gap="3" flexWrap="wrap">
         {cell.view === "table" && (
           <ResultViewSwitch
@@ -275,7 +398,15 @@ function CellResult({ cell, onViewChange, onChartChange }: CellResultProps) {
         </chakra.div>
       )}
       {cell.view === "chart" ? (
-        <Box h="360px" border="1px solid" borderColor="app.border" borderRadius="md" overflow="hidden">
+        <Box
+          h="360px"
+          border="1px solid"
+          borderColor="app.border"
+          borderRadius="md"
+          overflow="hidden"
+          opacity={dim}
+          data-stale={stale ? "true" : undefined}
+        >
           <Suspense fallback={<Spinner size={16} />}>
             <ChartView
               // 結果が入れ替わったら設定の復元からやり直す。
@@ -289,7 +420,9 @@ function CellResult({ cell, onViewChange, onChartChange }: CellResultProps) {
           </Suspense>
         </Box>
       ) : (
-        <SnapshotTable snapshot={s} />
+        <chakra.div opacity={dim} data-stale={stale ? "true" : undefined}>
+          <SnapshotTable snapshot={s} />
+        </chakra.div>
       )}
     </Flex>
   );
@@ -587,7 +720,15 @@ const CellShell = memo(function CellShell(p: CellShellProps) {
                       })}
                     </Callout>
                   )}
-                  <CellResult cell={cell} onViewChange={p.onViewChange} onChartChange={p.onChartChange} />
+                  <CellResult
+                    cell={cell}
+                    driver={p.profile?.driver}
+                    onRerun={p.onRun}
+                    rerunDisabled={p.runDisabled}
+                    running={p.running}
+                    onViewChange={p.onViewChange}
+                    onChartChange={p.onChartChange}
+                  />
                 </>
               ) : p.editing || cell.text.trim() === "" ? (
                 <Textarea
@@ -673,6 +814,12 @@ export function NotebookView(props: NotebookViewProps) {
       ),
     [],
   );
+  /** セルの実行先ドライバ (古い結果の判定で SQL の字句規則を合わせる)。解決できなければ undefined。 */
+  const driverOfCell = (cell: NotebookSqlCell): string | undefined => {
+    const target = targetOf(cell);
+    if (target.kind === "open" || target.kind === "closed") return target.profile.driver;
+    return target.kind === "current" ? (props.profile?.driver ?? undefined) : undefined;
+  };
   /** セルを実行できない理由 (できるなら null)。 */
   const blockReason = (target: NotebookCellTarget): string | null => {
     if (target.kind === "current") return props.sessionId ? null : t("notebookNeedsConnection");
@@ -708,11 +855,13 @@ export function NotebookView(props: NotebookViewProps) {
       const started = Date.now();
       // 別の接続で流すセルには、文書の実行先 DB (既定の接続の DB 名) を持ち込まない。接続の既定 DB へ寄せる。
       const driverOfCell = pin.profile.driver;
+      // 実行先 DB は実行開始時に 1 度だけ取り出す (実行中に DB 欄が編集されても、実行と記録は同じ値)。
+      const runDatabase = pin.isDefault ? docRef.current.database : null;
       try {
         const limit = clampSnapshotRowLimit(docRef.current.snapshotRowLimit);
         const out = await props.onRunSql(cell.sql, {
           rowCap: limit,
-          database: pin.isDefault ? docRef.current.database : null,
+          database: runDatabase,
           connection: { profileId: pin.profile.id, sessionId: pin.sessionId, name: pin.profile.name },
           onStart: (id) => {
             streamRef.current = id;
@@ -720,7 +869,12 @@ export function NotebookView(props: NotebookViewProps) {
           isCancelled: () => cancelRef.current,
         });
         if (out === null) return false;
-        const snapshot = buildSnapshot({ ...out, error: null }, limit, maskRef.current);
+        const source = {
+          sql: cell.sql,
+          connection: { profileId: pin.profile.id, name: pin.profile.name },
+          database: runDatabase,
+        };
+        const snapshot = buildSnapshot({ ...out, error: null }, limit, maskRef.current, new Date(), source);
         patchCell(cell.id, { snapshot });
         return true;
       } catch (e) {
@@ -728,7 +882,13 @@ export function NotebookView(props: NotebookViewProps) {
         const raw = e instanceof Error ? e.message : String(e);
         // エラー文は SQL の断片を引用する。資格情報リテラル (`IDENTIFIED BY '…'` など) は、ファイルへ残す前に伏せる (#2174)。
         const message = redactErrorText(raw, cell.sql, driverOfCell);
-        patchCell(cell.id, { snapshot: buildErrorSnapshot(message, Date.now() - started) });
+        patchCell(cell.id, {
+          snapshot: buildErrorSnapshot(message, Date.now() - started, new Date(), {
+            sql: cell.sql,
+            connection: { profileId: pin.profile.id, name: pin.profile.name },
+            database: runDatabase,
+          }),
+        });
         return false;
       } finally {
         streamRef.current = null;
@@ -1055,6 +1215,18 @@ export function NotebookView(props: NotebookViewProps) {
       const d: NotebookDoc = { ...docRef.current, connection: connectionRef() };
       // 書き出しもファイル保存と同じく、取得後に変えたマスク設定を反映する。
       const forExport: NotebookDoc = parseOrSame(d, maskRef.current);
+      // 古い結果 (SQL を変えた後に再実行していないセル) があれば、書き出す前に確認する。書き出し本文にも注記する。
+      const staleCount = countStaleCells(forExport.cells, driverOfCell);
+      if (
+        staleCount > 0 &&
+        !(await confirm({
+          title: t("notebookExportStaleTitle"),
+          message: t("notebookExportStaleMessage", { count: staleCount }),
+          confirmLabel: t("notebookExportStaleConfirm"),
+        }))
+      ) {
+        return;
+      }
       const picked = await saveFileDialog({
         defaultPath: notebookFileName(d.title, kind),
         title: kind === "md" ? t("notebookExportMd") : t("notebookExportHtml"),
@@ -1065,8 +1237,8 @@ export function NotebookView(props: NotebookViewProps) {
       if (typeof picked !== "string" || !picked) return;
       const body =
         kind === "md"
-          ? notebookToMarkdown(forExport, exportText())
-          : notebookToHtml(forExport, exportText(), getLocale());
+          ? notebookToMarkdown(forExport, exportText(), new Date(), driverOfCell)
+          : notebookToHtml(forExport, exportText(), getLocale(), new Date(), driverOfCell);
       await api.writeTextFile(picked, body);
       toast.success(t("notebookExported", { path: picked }));
     } catch (e) {
@@ -1082,6 +1254,7 @@ export function NotebookView(props: NotebookViewProps) {
   };
 
   const sqlCount = doc.cells.filter((c) => c.kind === "sql").length;
+  const staleCount = countStaleCells(doc.cells, driverOfCell);
   const mismatch =
     doc.connection && props.profile && doc.connection.profileId !== props.profile.id ? doc.connection : null;
   const ids = doc.cells.map((c) => c.id);
@@ -1127,6 +1300,13 @@ export function NotebookView(props: NotebookViewProps) {
           </chakra.span>
         )}
         <chakra.span flex="1" />
+        {staleCount > 0 && (
+          <Tooltip label={t("notebookStaleCountTip")}>
+            <chakra.span color="app.textWarning" textStyle="caption" data-testid="notebook-stale-count">
+              {t("notebookStaleCount", { count: staleCount })}
+            </chakra.span>
+          </Tooltip>
+        )}
         {busy ? (
           <Tooltip label={props.transactionActive ? t("notebookStopInTransaction") : t("notebookStop")}>
             <Button size="sm" variant="secondary" onClick={stop}>

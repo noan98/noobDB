@@ -83,7 +83,7 @@ function setup(over: Partial<React.ComponentProps<typeof NotebookView>> = {}) {
   // アクティブ接続の切り替えなど、props を差し替えて描画し直す。
   const rerender = (next: Partial<React.ComponentProps<typeof NotebookView>>) =>
     view.rerender(<NotebookView {...props} {...next} />);
-  return { props, onRunSql, rerender };
+  return { props, onRunSql, rerender, unmount: view.unmount };
 }
 
 function seed(...cells: ReturnType<typeof newSqlCell | typeof newMarkdownCell>[]) {
@@ -113,6 +113,95 @@ describe("NotebookView (#2380)", () => {
     expect(screen.getAllByText(t("notebookTruncated", { shown: 1, total: 500 }))).toHaveLength(2);
     // マスキング既定 (email 列) は伏せ字で保持される
     expect(getNotebookState().doc.cells[1]).toMatchObject({ snapshot: { maskedColumns: ["email"] } });
+  });
+
+  it("実行後に SQL を編集すると「古い結果」の目印が出て、再実行で消える (#2420)", async () => {
+    seed(newSqlCell("SELECT 1"));
+    const { onRunSql, props } = setup();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: new RegExp(t("notebookRunAll")) }));
+    });
+    await screen.findByTestId("notebook-snapshot-meta");
+    expect(screen.queryByTestId("notebook-stale")).toBeNull();
+    // 実行時の SQL と接続が結果に残る
+    expect(getNotebookState().doc.cells[0]).toMatchObject({
+      snapshot: { sql: "SELECT 1", connection: { profileId: props.profile?.id } },
+    });
+    // 空白だけの変更は古い扱いにならない
+    fireEvent.change(screen.getByLabelText("sql-editor"), { target: { value: "SELECT 1;  " } });
+    expect(screen.queryByTestId("notebook-stale")).toBeNull();
+    fireEvent.change(screen.getByLabelText("sql-editor"), { target: { value: "SELECT 2" } });
+    expect((await screen.findByTestId("notebook-stale-badge")).textContent).toBe(t("notebookStaleBadge"));
+    expect(screen.getByTestId("notebook-stale-count").textContent).toBe(
+      t("notebookStaleCount", { count: 1 }),
+    );
+    fireEvent.click(screen.getByTestId("notebook-stale-diff-toggle"));
+    expect(screen.getByTestId("notebook-stale-diff").textContent).toBe("- SELECT 1\n+ SELECT 2");
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("notebook-stale-rerun"));
+    });
+    await waitFor(() => expect(onRunSql).toHaveBeenCalledTimes(2));
+    expect(onRunSql.mock.calls[1][0]).toBe("SELECT 2");
+    await waitFor(() => expect(screen.queryByTestId("notebook-stale")).toBeNull());
+  });
+
+  it("古い結果があるノートブックの書き出しは確認を出し、取りやめれば書き出さない (#2420)", async () => {
+    const c = newSqlCell("SELECT 2");
+    seed(c);
+    setup();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: new RegExp(t("notebookRunAll")) }));
+    });
+    await screen.findByTestId("notebook-snapshot-meta");
+    fireEvent.change(screen.getByLabelText("sql-editor"), { target: { value: "SELECT 3" } });
+    mocks.save.mockResolvedValue("/tmp/out.md");
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(t("notebookExportMd")) }));
+    await screen.findByText(t("notebookExportStaleTitle"));
+    fireEvent.click(screen.getAllByRole("button", { name: t("confirmDefaultCancel") }).at(-1) as HTMLElement);
+    await waitFor(() => expect(screen.queryByText(t("notebookExportStaleTitle"))).toBeNull());
+    expect(mocks.writeTextFile).not.toHaveBeenCalled();
+  });
+
+  it("既定接続の実行中に DB 欄が編集されても、記録される DB は実行開始時の値 (成功・エラーとも)", async () => {
+    for (const fail of [false, true]) {
+      seed(newSqlCell("SELECT 1"));
+      updateNotebook((d) => ({ ...d, database: "before" }));
+      let release: (v: unknown) => void = () => {};
+      const onRunSql = vi.fn().mockImplementation(
+        () =>
+          new Promise((resolve, reject) => {
+            release = () => (fail ? reject(new NotebookRunError("boom", false, false, false)) : resolve(OUT));
+          }),
+      );
+      const { unmount } = setup({ onRunSql });
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: new RegExp(t("notebookRunAll")) }));
+      });
+      await waitFor(() => expect(onRunSql).toHaveBeenCalled());
+      expect(onRunSql.mock.calls[0][1]).toMatchObject({ database: "before" });
+      act(() => updateNotebook((d) => ({ ...d, database: "after" })));
+      await act(async () => release(null));
+      await waitFor(() => {
+        const c = getNotebookState().doc.cells[0];
+        expect(c.kind === "sql" && c.snapshot?.database).toBe("before");
+      });
+      unmount();
+    }
+  });
+
+  it("書き出し確認で「このまま書き出す」を押すと、古い結果の注記つきで書き出す (#2420)", async () => {
+    seed(newSqlCell("SELECT 2"));
+    setup();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: new RegExp(t("notebookRunAll")) }));
+    });
+    await screen.findByTestId("notebook-snapshot-meta");
+    fireEvent.change(screen.getByLabelText("sql-editor"), { target: { value: "SELECT 3" } });
+    mocks.save.mockResolvedValue("/tmp/out.md");
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(t("notebookExportMd")) }));
+    fireEvent.click(await screen.findByRole("button", { name: t("notebookExportStaleConfirm") }));
+    await waitFor(() => expect(mocks.writeTextFile).toHaveBeenCalledTimes(1));
+    expect(mocks.writeTextFile.mock.calls[0][1]).toContain(t("notebookExportStaleNote"));
   });
 
   it("確認を取りやめたら (null) 結果は残さず、後続も実行しない", async () => {

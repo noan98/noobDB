@@ -22,6 +22,11 @@ export interface SegmentedOption<T extends string> {
   icon?: IconName;
   /** 任意の 1 行説明。ホバー / フォーカスのツールチップで出す。 */
   tooltip?: string;
+  /**
+   * アイコンだけで描く (`icon` が必須)。`label` は `aria-label` とツールチップに回る。セグメントが多く
+   * 狭い幅でツールバーからはみ出すとき、末尾の補助的な選択肢を畳むために使う。
+   */
+  iconOnly?: boolean;
 }
 
 interface Props<T extends string> {
@@ -101,6 +106,7 @@ export function Segmented<T extends string>({ value, options, onChange, ariaLabe
             type="button"
             role="radio"
             aria-checked={active}
+            aria-label={opt.iconOnly ? opt.label : undefined}
             tabIndex={active ? 0 : -1}
             onClick={() => {
               if (!active) onChange(opt.value);
@@ -144,12 +150,13 @@ export function Segmented<T extends string>({ value, options, onChange, ariaLabe
             )}
             <chakra.span position="relative" zIndex={1} display="inline-flex" alignItems="center" gap="1">
               {opt.icon && <Icon name={opt.icon} size={ICON_SIZES.sm} />}
-              {opt.label}
+              {opt.iconOnly ? null : opt.label}
             </chakra.span>
           </chakra.button>
         );
-        return opt.tooltip ? (
-          <Tooltip key={opt.value} label={opt.tooltip}>
+        const tip = opt.tooltip ?? (opt.iconOnly ? opt.label : undefined);
+        return tip ? (
+          <Tooltip key={opt.value} label={tip}>
             {button}
           </Tooltip>
         ) : (

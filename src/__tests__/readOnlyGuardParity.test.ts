@@ -604,6 +604,9 @@ safe(
   "list_logical_relations",
   "save_logical_relations",
   "delete_logical_relation",
+  "export_logical_relations",
+  "parse_logical_relations_import",
+  "replace_logical_relations",
   "export_flight_plan_sql",
   "list_local_tables",
   // 診断 / 統計 / 監視

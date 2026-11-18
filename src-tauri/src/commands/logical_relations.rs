@@ -7,7 +7,9 @@ use tauri::State;
 
 use crate::commands::assertions::blocking_store;
 use crate::error::{AppError, Result};
-use crate::logical_relations::{self, LogicalRelation, LogicalRelationInput};
+use crate::logical_relations::{
+    self, LogicalRelation, LogicalRelationInput, LogicalRelationsImportParse,
+};
 use crate::state::AppState;
 
 async fn profile_id_of(state: &State<'_, AppState>, session_id: &str) -> Result<Option<String>> {
@@ -60,4 +62,48 @@ pub async fn delete_logical_relation(
     let profile_id = profile_id_of(&state, &session_id).await?;
     blocking_store(move || logical_relations::remove(profile_id.as_deref(), &database, &relation))
         .await
+}
+
+/// この接続先の論理リレーションを書き出し用の JSON 文字列にする (#2423)。`profile_id`・接続情報・
+/// 登録時刻は含めない。呼び出し側が保存ダイアログで選んだパスへ `write_text_file` で書く。
+#[tauri::command]
+pub async fn export_logical_relations(
+    session_id: String,
+    database: String,
+    state: State<'_, AppState>,
+) -> Result<String> {
+    let profile_id = profile_id_of(&state, &session_id).await?;
+    blocking_store(move || {
+        let list = logical_relations::list(profile_id.as_deref(), &database)?;
+        logical_relations::export_json(&list)
+    })
+    .await
+}
+
+/// 書き出しファイルの中身を寛容に読む (#2423)。保存はしない (プレビュー用)。壊れた JSON・
+/// サイズ / 件数の超過はエラー、解釈できない要素は読み飛ばして `rejected` に返す。
+#[tauri::command]
+pub async fn parse_logical_relations_import(json: String) -> Result<LogicalRelationsImportParse> {
+    logical_relations::parse_import(&json)
+}
+
+/// この接続先の論理リレーションを渡した内容で置き換える (取り込みの「上書き」、#2423)。
+/// 追加だけで済む取り込みは `save_logical_relations` を使う。置き換え後の一覧を返す。
+#[tauri::command]
+pub async fn replace_logical_relations(
+    session_id: String,
+    database: String,
+    relations: Vec<LogicalRelationInput>,
+    state: State<'_, AppState>,
+) -> Result<Vec<LogicalRelation>> {
+    let profile_id = profile_id_of(&state, &session_id).await?;
+    if profile_id.is_none() {
+        return Err(AppError::InvalidInput(
+            "logical relations require a saved connection profile".to_string(),
+        ));
+    }
+    blocking_store(move || {
+        logical_relations::replace_all(profile_id.as_deref(), &database, &relations)
+    })
+    .await
 }
