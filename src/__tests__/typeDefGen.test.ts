@@ -209,7 +209,8 @@ describe("識別子の変換", () => {
     expect(p).toContain('class_: int = Field(alias="class")');
     expect(p).toContain("model_config = ConfigDict(populate_by_name=True)");
     expect(p).toContain("from pydantic import BaseModel, ConfigDict, Field");
-  });  it("Python: 組み込み型と同名の列は末尾 _ にして注釈を壊さない", () => {
+  });
+  it("Python: 組み込み型と同名の列は末尾 _ にして注釈を壊さない", () => {
     const p = generateTypeDefs(
       [{ name: "t", columns: [{ name: "str", data_type: "text", nullable: true }] }],
       { driver: "postgres", lang: "pythonPydantic", naming: "snake" },
