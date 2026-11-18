@@ -16,7 +16,15 @@ describe("ResultViewSwitch", () => {
 
     expect(screen.getByRole("radiogroup", { name: t("resultViewSwitchAria") })).toBeTruthy();
     const radios = screen.getAllByRole("radio");
+    // JSON / 階層はアイコンだけで描き (幅を食わない)、名前は aria-label で持つ。
     expect(radios.map((r) => r.textContent)).toEqual([
+      t("gridViewLabel"),
+      t("pivotShow"),
+      t("chartShow"),
+      "",
+      "",
+    ]);
+    expect(radios.map((r) => r.getAttribute("aria-label") ?? r.textContent)).toEqual([
       t("gridViewLabel"),
       t("pivotShow"),
       t("chartShow"),

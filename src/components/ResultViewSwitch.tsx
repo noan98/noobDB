@@ -74,6 +74,9 @@ export function ResultViewSwitch({ value, onChange, views }: Props) {
     value: v.kind,
     label: t(v.labelKey),
     icon: v.icon,
+    // 4・5 つ目の「JSON」「階層」はアイコンだけにして、ツールバーの幅を食わない (ラベルはツールチップ / aria-label)。
+    // 5 つとも文字付きだと、800px 幅の結果ペインで右端のボタンがはみ出す。
+    iconOnly: v.kind === "json" || v.kind === "hierarchy",
   }));
 
   const segmented = (

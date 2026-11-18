@@ -419,14 +419,33 @@ export interface SubtreeSqlParams {
   maxDepth?: number;
   /** 返す行数の上限 (自動 LIMIT)。 */
   limit?: number;
+  /**
+   * 元テーブルの列名。深さの追加列がこれらと衝突しない名前を選ぶのに使う (`t.*` が同名の列を先に持ち込むと、
+   * `subtree.<深さ>` が元の列を指して深さ上限が効かない)。分かる範囲 (列メタデータ + 結果の列) を渡す。
+   */
+  tableColumns?: readonly string[];
 }
 
-/** 深さを入れる追加列名。テーブルの列と衝突しにくい名前にする。 */
-export const SUBTREE_DEPTH_COLUMN = "__depth";
+/** 深さを入れる追加列名の既定。元テーブルが同名の列を持つときは `pickFreeName` で別名にする。 */
+const SUBTREE_DEPTH_COLUMN = "__depth";
+/** 再帰 CTE の既定名。元テーブル (修飾なしで解決されうる) と衝突するときは別名にする。 */
+const SUBTREE_CTE_NAME = "subtree";
+
+/** `base` が `taken` (大文字小文字を区別しない) と衝突するとき、`base_1` `base_2` … から空いている名前を返す。 */
+export function pickFreeName(base: string, taken: Iterable<string>): string {
+  const used = new Set<string>();
+  for (const n of taken) used.add(n.toLowerCase());
+  if (!used.has(base.toLowerCase())) return base;
+  for (let i = 1; ; i++) {
+    const cand = `${base}_${i}`;
+    if (!used.has(cand.toLowerCase())) return cand;
+  }
+}
 
 /**
  * 根の ID から子孫をたどる再帰 CTE。深さ上限 (`maxDepth`) で循環していても必ず止まり、末尾の LIMIT で行数も抑える。
- * 結果は元のテーブルの列 + 深さ (`__depth`)。
+ * 結果は元のテーブルの列 + 深さ (既定 `__depth`、元テーブルの列と衝突するときは別名)。CTE 名 (既定 `subtree`) も、
+ * 元テーブルや別名 (`t` / `c`) と衝突しない名前を選ぶ。
  */
 export function buildSubtreeSql(p: SubtreeSqlParams): string {
   const q = (s: string) => quoteIdentFor(p.driver, s);
@@ -434,16 +453,17 @@ export function buildSubtreeSql(p: SubtreeSqlParams): string {
   const limit = Math.max(1, Math.trunc(p.limit ?? HIERARCHY_SUBTREE_DEFAULT_LIMIT));
   const tbl = qualifiedTableName(p.driver, p.database, p.table);
   const rootLit = rowValueLiteral(p.driver, p.rootValue, { name: p.idCol, type_name: p.idType ?? "" });
-  const d = q(SUBTREE_DEPTH_COLUMN);
+  const d = q(pickFreeName(SUBTREE_DEPTH_COLUMN, p.tableColumns ?? []));
+  const cte = q(pickFreeName(SUBTREE_CTE_NAME, [p.table, "t", "c"]));
   // 注意: ORDER BY は再帰 CTE の全結果 (LIMIT 以内ではなく、深さ上限までの全子孫) を並べ替えてから LIMIT を適用する。
   // 深さ上限が大きく子孫が非常に多い木では、サーバ側で全子孫を一度組み立てるため重くなりうる (深さ上限で抑える)。
   return [
-    "WITH RECURSIVE subtree AS (",
+    `WITH RECURSIVE ${cte} AS (`,
     `  SELECT t.*, 0 AS ${d} FROM ${tbl} t WHERE t.${q(p.idCol)} = ${rootLit}`,
     "  UNION ALL",
-    `  SELECT c.*, subtree.${d} + 1 FROM ${tbl} c JOIN subtree ON c.${q(p.parentCol)} = subtree.${q(p.idCol)}`,
-    `  WHERE subtree.${d} < ${depth}`,
+    `  SELECT c.*, ${cte}.${d} + 1 FROM ${tbl} c JOIN ${cte} ON c.${q(p.parentCol)} = ${cte}.${q(p.idCol)}`,
+    `  WHERE ${cte}.${d} < ${depth}`,
     ")",
-    `SELECT * FROM subtree ORDER BY ${d} LIMIT ${limit}`,
+    `SELECT * FROM ${cte} ORDER BY ${d} LIMIT ${limit}`,
   ].join("\n");
 }

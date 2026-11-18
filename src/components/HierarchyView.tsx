@@ -294,6 +294,7 @@ export function HierarchyView({
       rootValue: result.rows[selected][idIdx],
       idType: idCol?.type_name,
       maxDepth: clampSubtreeDepth(Number(depthText)),
+      tableColumns: [...cols.map((c) => c.name), ...(columnMeta ?? []).map((m) => m.name)],
       limit: autoLimitEnabled ? autoLimitCount : HIERARCHY_SUBTREE_DEFAULT_LIMIT,
     });
     onOpenQuery(sql);

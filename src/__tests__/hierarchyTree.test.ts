@@ -3,6 +3,7 @@ import type { CellValue, Column, TableColumnInfo } from "../api/tauri";
 import {
   buildHierarchy,
   buildSubtreeSql,
+  pickFreeName,
   clampSubtreeDepth,
   defaultLabelColumn,
   detectSelfReference,
@@ -252,10 +253,10 @@ describe("部分木の取得 SQL", () => {
 
   it("3 方言でクオートし、深さ上限と LIMIT を持つ", () => {
     const my = buildSubtreeSql({ ...base, driver: "mysql", database: "shop", maxDepth: 4, limit: 200 });
-    expect(my).toContain("WITH RECURSIVE subtree AS (");
+    expect(my).toContain("WITH RECURSIVE `subtree` AS (");
     expect(my).toContain("FROM `shop`.`categories` t WHERE t.`id` = 5");
-    expect(my).toContain("ON c.`parent_id` = subtree.`id`");
-    expect(my).toContain("WHERE subtree.`__depth` < 4");
+    expect(my).toContain("ON c.`parent_id` = `subtree`.`id`");
+    expect(my).toContain("WHERE `subtree`.`__depth` < 4");
     expect(my.trimEnd().endsWith("ORDER BY `__depth` LIMIT 200")).toBe(true);
     const pg = buildSubtreeSql({ ...base, driver: "postgres", database: "public" });
     expect(pg).toContain('FROM "public"."categories" t WHERE t."id" = 5');
@@ -264,26 +265,52 @@ describe("部分木の取得 SQL", () => {
     expect(sl).toContain('FROM "categories" t');
     expect(pg).toBe(
       [
-        "WITH RECURSIVE subtree AS (",
+        'WITH RECURSIVE "subtree" AS (',
         '  SELECT t.*, 0 AS "__depth" FROM "public"."categories" t WHERE t."id" = 5',
         "  UNION ALL",
-        '  SELECT c.*, subtree."__depth" + 1 FROM "public"."categories" c JOIN subtree ON c."parent_id" = subtree."id"',
-        '  WHERE subtree."__depth" < 10',
+        '  SELECT c.*, "subtree"."__depth" + 1 FROM "public"."categories" c JOIN "subtree" ON c."parent_id" = "subtree"."id"',
+        '  WHERE "subtree"."__depth" < 10',
         ")",
-        'SELECT * FROM subtree ORDER BY "__depth" LIMIT 1000',
+        'SELECT * FROM "subtree" ORDER BY "__depth" LIMIT 1000',
       ].join("\n"),
     );
     expect(sl).toBe(
       [
-        "WITH RECURSIVE subtree AS (",
+        'WITH RECURSIVE "subtree" AS (',
         '  SELECT t.*, 0 AS "__depth" FROM "categories" t WHERE t."id" = 5',
         "  UNION ALL",
-        '  SELECT c.*, subtree."__depth" + 1 FROM "categories" c JOIN subtree ON c."parent_id" = subtree."id"',
-        '  WHERE subtree."__depth" < 10',
+        '  SELECT c.*, "subtree"."__depth" + 1 FROM "categories" c JOIN "subtree" ON c."parent_id" = "subtree"."id"',
+        '  WHERE "subtree"."__depth" < 10',
         ")",
-        'SELECT * FROM subtree ORDER BY "__depth" LIMIT 1000',
+        'SELECT * FROM "subtree" ORDER BY "__depth" LIMIT 1000',
       ].join("\n"),
     );
+  });
+
+  it("名前の衝突を避ける (大文字小文字を区別せず、連番で空きを探す)", () => {
+    expect(pickFreeName("subtree", ["a"])).toBe("subtree");
+    expect(pickFreeName("subtree", ["Subtree"])).toBe("subtree_1");
+    expect(pickFreeName("__depth", ["__depth", "__DEPTH_1"])).toBe("__depth_2");
+  });
+
+  it("元テーブルに __depth 列があれば、深さの列名を別名にして一貫して参照する", () => {
+    const sql = buildSubtreeSql({ ...base, driver: "sqlite", tableColumns: ["id", "parent_id", "__depth"] });
+    expect(sql).toContain('0 AS "__depth_1"');
+    expect(sql).toContain('"subtree"."__depth_1" + 1');
+    expect(sql).toContain('WHERE "subtree"."__depth_1" < 10');
+    expect(sql).toContain('ORDER BY "__depth_1"');
+    expect(sql).not.toMatch(/"subtree"\."__depth"/);
+  });
+
+  it("元テーブルが subtree という名前でも、CTE 名を別名にして実テーブルと混同しない", () => {
+    const sql = buildSubtreeSql({ ...base, table: "subtree", driver: "sqlite", database: "main" });
+    expect(sql).toContain('WITH RECURSIVE "subtree_1" AS (');
+    expect(sql).toContain('FROM "subtree" t WHERE');
+    expect(sql).toContain('FROM "subtree" c JOIN "subtree_1" ON c."parent_id" = "subtree_1"."id"');
+    expect(sql).toContain('FROM "subtree_1" ORDER BY');
+    // MySQL でも同様 (テーブル名は大文字小文字違いでも衝突扱い)。
+    const my = buildSubtreeSql({ ...base, table: "Subtree", driver: "mysql" });
+    expect(my).toContain("WITH RECURSIVE `subtree_1` AS (");
   });
 
   it("文字列の根はリテラル化し、引用符・識別子をエスケープする", () => {
