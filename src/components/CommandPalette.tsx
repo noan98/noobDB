@@ -28,7 +28,7 @@ import {
   type ScoredItem,
 } from "./commandPaletteSearch";
 import { scrollFollowIntoView } from "./scrollFollow";
-import { PREVIEW_ACTION_ATTR, PreviewPane } from "./CommandPalettePreview";
+import { PREVIEW_ACTION_ATTR, PreviewPane } from "./CommandPalettePreviewPane";
 import type { PreviewActionKind } from "./commandPalettePreview";
 import {
   PREVIEW_DEBOUNCE_MS,
