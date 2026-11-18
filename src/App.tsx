@@ -304,6 +304,7 @@ import {
   savepointName,
 } from "./savepoints";
 import { isMruRecordable, singleLine, type CommandItem } from "./components/commandPaletteSearch";
+import { indexHistoryMeta, type HistoryMeta, type PreviewAction } from "./components/commandPalettePreview";
 
 // Heavy or rarely-immediately-needed views are code-split so the initial
 // bundle the WebView parses and mounts on launch stays small. CodeMirror
@@ -7719,6 +7720,78 @@ export default function App() {
     [activeTab, sessionId, activeEditor, addTab],
   );
 
+  // コマンドパレットのプレビュー (#2425) のアクション用。SQL を新しいクエリタブで開く / そのまま実行する。
+  // 実行はスニペット実行 (`handleRunSnippet`) と同じく `resolveParamsThen` → `runInTabWithGate` を通し、
+  // 危険クエリ確認・読み取り専用ガード・本番書き込み承認・自動 LIMIT をそのまま効かせる。
+  const handleOpenSqlInNewTab = useCallback(
+    (sql: string, title?: string) => {
+      if (!sessionId) return;
+      addTab({
+        ...makeQueryTab(),
+        sql,
+        lastExecutedSql: sql,
+        ...(title ? { title, titleManual: true } : {}),
+      });
+    },
+    [sessionId, addTab],
+  );
+  const handleRunSqlInNewTab = useCallback(
+    (sql: string, title?: string) => {
+      if (!sessionId) return;
+      const tab: Tab = {
+        ...makeQueryTab(),
+        sql,
+        lastExecutedSql: sql,
+        title: title ?? deriveResultTabTitle(sql),
+        titleManual: !!title,
+      };
+      addTab(tab);
+      resolveParamsThen(tab, sql, "run", { newTab: false });
+    },
+    [sessionId, addTab, resolveParamsThen],
+  );
+
+  // プレビューの「テーブル詳細」(型・PK/FK・行数推定)。1 テーブル分のカタログ参照 (読み取りのみ) で、
+  // 本文クエリは打たない。デバウンス・取り消し・キャッシュは `useCommandPreviewDetail` 側。
+  const loadPaletteTableDetail = useCallback(
+    async (database: string, table: string) => {
+      if (!sessionId) throw new Error("no session");
+      const [columns, rowEstimate] = await Promise.all([
+        api.describeTable(sessionId, database, table),
+        api.tableRowEstimate(sessionId, database, table).catch(() => null),
+      ]);
+      return { columns, rowEstimate };
+    },
+    [sessionId],
+  );
+
+  // プレビュー (#2425) の履歴の実行メタ (時刻・所要時間・件数・成否)。ローカルの履歴ストアを読むだけ
+  // (サーバへは問い合わせない)。パレットを開いたときに 1 回だけ読み、SQL 全文で候補と結び付ける。
+  const [paletteHistoryMeta, setPaletteHistoryMeta] = useState<Map<string, HistoryMeta>>(
+    () => new Map<string, HistoryMeta>(),
+  );
+  const paletteProfileId = selectedProfile?.id ?? null;
+  useEffect(() => {
+    if (!showCommandPalette || !sessionId || !paletteProfileId) {
+      setPaletteHistoryMeta(new Map<string, HistoryMeta>());
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const params = { profileId: paletteProfileId, limit: QUERY_HISTORY_LIMIT };
+        const [entries, sqls] = await Promise.all([api.listHistory(params), api.listHistorySql(params)]);
+        if (!cancelled) setPaletteHistoryMeta(indexHistoryMeta(entries, sqls));
+      } catch {
+        // 実行メタが取れなくても SQL 本文のプレビューは出せる。
+        if (!cancelled) setPaletteHistoryMeta(new Map<string, HistoryMeta>());
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [showCommandPalette, sessionId, paletteProfileId]);
+
   // AI の修正 SQL 案 (#692) を、失敗したタブのエディタへ反映する。実行はしない。
   // 表示中ならエディタ (CodeMirror) へ dispatch して undo 履歴に載せ、裏のタブなら
   // `tab.sql` を書き換える。失敗した SQL が本文中でちょうど 1 箇所見つかればその範囲だけ、
@@ -13608,6 +13681,19 @@ export default function App() {
         keywords: `${profile.driver} ${profile.host} ${profile.database ?? ""} ${profile.group ?? ""}`,
         icon: "link",
         badges,
+        // プレビュー (#2425)。ホスト・ドライバ・バッジだけ。ユーザ名・パスワードなどの秘密は渡さない。
+        preview: {
+          kind: "connection",
+          name: profile.name,
+          driver: profile.driver,
+          host: isSqlite ? null : profile.host,
+          port: isSqlite ? null : profile.port,
+          database: isSqlite ? (profile.file_path ?? null) : (profile.database ?? null),
+          group: profile.group ?? null,
+          isProduction: profile.is_production,
+          readOnly: profile.read_only,
+          connected: !!sessionId && selectedProfile?.id === profile.id,
+        },
         run: () => void handleConnect(profile),
       });
     }
@@ -13626,6 +13712,12 @@ export default function App() {
             sublabel: database,
             keywords: `${database} ${table.columns.join(" ")}`,
             icon: "table",
+            // プレビュー (#2425)。列名はスキーマキャッシュのもの。型・PK/FK・行数推定はパレット側で遅延取得する。
+            preview: { kind: "table", database, table: table.name, columns: table.columns },
+            previewActions: [
+              { kind: "insert", run: () => void handleInsertTableSelect(database, table.name, true) },
+              { kind: "open", run: () => handleRunTableSelect(database, table.name) },
+            ],
             run: () => handleRunTableSelect(database, table.name),
           });
         }
@@ -13636,6 +13728,30 @@ export default function App() {
     // (#877) の候補も並べる。id を分けて 2 候補を独立に検索・実行できるようにする
     // (挿入だけ試したいケースを妨げない)。
     for (const snippet of snippets) {
+      // プレビュー (#2425)。挿入用・実行用の 2 候補で同じ中身とアクションを共有する。
+      const needsConnection = sessionId ? undefined : t("cmdkNeedsConnection");
+      const scopeProfileId = snippet.scope.kind === "profile" ? snippet.scope.profile_id : null;
+      const snippetPreview = {
+        kind: "snippet" as const,
+        name: snippet.name,
+        sql: snippet.sql,
+        folder: snippet.folder,
+        tags: snippet.tags,
+        scope: snippet.scope,
+        scopeProfileName: scopeProfileId
+          ? (visibleProfiles.find((p) => p.id === scopeProfileId)?.name ?? null)
+          : null,
+        driver: snippet.driver ?? selectedProfile?.driver ?? null,
+      };
+      const snippetActions: PreviewAction[] = [
+        { kind: "insert", run: () => handleInsertSnippet(snippet), disabledReason: needsConnection },
+        {
+          kind: "open",
+          run: () => handleOpenSqlInNewTab(snippetPlainText(snippet.sql), snippet.name),
+          disabledReason: needsConnection,
+        },
+        { kind: "run", run: () => handleRunSnippet(snippet), disabledReason: needsConnection },
+      ];
       items.push({
         id: `snippet:${snippet.id}`,
         group: "snippets",
@@ -13643,6 +13759,8 @@ export default function App() {
         sublabel: snippet.folder ?? undefined,
         keywords: `${snippet.tags.join(" ")} ${snippet.sql}`,
         icon: "snippet",
+        preview: snippetPreview,
+        previewActions: snippetActions,
         run: () => handleInsertSnippet(snippet),
       });
       if (sessionId) {
@@ -13653,12 +13771,15 @@ export default function App() {
           sublabel: snippet.folder ?? undefined,
           keywords: `${snippet.tags.join(" ")} ${snippet.sql} run execute 実行`,
           icon: "query",
+          preview: snippetPreview,
+          previewActions: snippetActions,
           run: () => handleRunSnippet(snippet),
         });
       }
     }
 
     // 直近のクエリ履歴 (最新優先、件数を抑える)。
+    const historyNeedsConnection = sessionId ? undefined : t("cmdkNeedsConnection");
     for (const [i, sql] of queryHistory.slice(0, 40).entries()) {
       items.push({
         id: `history:${i}`,
@@ -13668,6 +13789,19 @@ export default function App() {
         keywords: sql.slice(0, 300),
         keywordsContainsOnly: true,
         icon: "clock",
+        // プレビュー (#2425)。全文は伏せ字化済みの履歴 SQL。実行メタはローカルの履歴ストアから。
+        preview: {
+          kind: "history",
+          sql,
+          meta: paletteHistoryMeta.get(sql) ?? null,
+          connectionName: selectedProfile?.name ?? null,
+          driver: selectedProfile?.driver ?? null,
+        },
+        previewActions: [
+          { kind: "insert", run: () => handleRestoreHistory(sql), disabledReason: historyNeedsConnection },
+          { kind: "open", run: () => handleOpenSqlInNewTab(sql), disabledReason: historyNeedsConnection },
+          { kind: "run", run: () => handleRunSqlInNewTab(sql), disabledReason: historyNeedsConnection },
+        ],
         run: () => handleRestoreHistory(sql),
       });
     }
@@ -13701,6 +13835,10 @@ export default function App() {
     handleInsertSnippet,
     handleRunSnippet,
     handleRestoreHistory,
+    handleInsertTableSelect,
+    handleOpenSqlInNewTab,
+    handleRunSqlInNewTab,
+    paletteHistoryMeta,
     openFullView,
     toggleTheme,
     pinnedResults.length,
@@ -17076,6 +17214,7 @@ export default function App() {
               items={commandItems}
               mruIds={settings.commandPaletteMru}
               onSelectItem={handleCommandPaletteSelect}
+              loadTableDetail={sessionId ? loadPaletteTableDetail : undefined}
               onClose={() => setShowCommandPalette(false)}
             />
           )}

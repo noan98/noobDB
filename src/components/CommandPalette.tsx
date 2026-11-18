@@ -28,6 +28,14 @@ import {
   type ScoredItem,
 } from "./commandPaletteSearch";
 import { scrollFollowIntoView } from "./scrollFollow";
+import { PREVIEW_ACTION_ATTR, PreviewPane } from "./CommandPalettePreview";
+import type { PreviewActionKind } from "./commandPalettePreview";
+import {
+  PREVIEW_DEBOUNCE_MS,
+  useCommandPreviewDetail,
+  useDebouncedValue,
+  type TableDetailLoader,
+} from "./useCommandPreviewDetail";
 
 // motion 用 props は Chakra のスタイルプロップ名 (`transition`) と衝突したり、
 // スタイルプロップ以外は既定で無視されたりするため、必要なものだけ明示的に転送する
@@ -66,9 +74,20 @@ interface CommandPaletteProps {
   mruIds?: string[];
   /** MRU (#845): 候補を実行した (Enter / クリック) 直後に呼ばれる。呼び出し側が MRU を更新する。 */
   onSelectItem?: (item: CommandItem) => void;
+  /**
+   * プレビュー (#2425) のテーブル詳細 (型・PK/FK・行数推定) を 1 テーブル分取得する。
+   * 省略するとスキーマキャッシュの列名だけを出し、サーバへは何も問い合わせない。
+   */
+  loadTableDetail?: TableDetailLoader;
 }
 
-export function CommandPalette({ items, onClose, mruIds = [], onSelectItem }: CommandPaletteProps) {
+export function CommandPalette({
+  items,
+  onClose,
+  mruIds = [],
+  onSelectItem,
+  loadTableDetail,
+}: CommandPaletteProps) {
   const t = useT();
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
@@ -95,6 +114,45 @@ export function CommandPalette({ items, onClose, mruIds = [], onSelectItem }: Co
     () => limitAndIndexGroups(grouped, deferredQuery, expanded),
     [grouped, deferredQuery, expanded],
   );
+
+  // プレビューペイン (#2425)。プレビューを持つ候補が 1 つでもあればペインを常設する
+  // (候補ごとに出し入れすると、↑↓ のたびにモーダルの幅が跳ねる)。
+  const hasPreviews = useMemo(() => items.some((it) => it.preview !== undefined), [items]);
+  const activeItem = flat[activeIndex]?.item ?? null;
+  const activeId = activeItem?.id ?? null;
+  // 速い移動では描画と取得を間引く。↑↓ を離して PREVIEW_DEBOUNCE_MS 経ってから追従する。
+  const [shownId, flushShown] = useDebouncedValue(activeId, PREVIEW_DEBOUNCE_MS);
+  const shownItem = useMemo(
+    () => (shownId === null ? null : (flat.find((f) => f.item.id === shownId)?.item ?? null)),
+    [flat, shownId],
+  );
+  const settled = shownId === activeId;
+  const detail = useCommandPreviewDetail(shownItem?.preview ?? null, loadTableDetail);
+  const [now] = useState(() => Date.now());
+  const paneRef = useRef<HTMLDivElement>(null);
+  const pendingFocusRef = useRef(false);
+
+  const focusFirstPreviewAction = useCallback((): boolean => {
+    const btn = paneRef.current?.querySelector<HTMLButtonElement>(`[${PREVIEW_ACTION_ATTR}]:not(:disabled)`);
+    if (!btn) return false;
+    btn.focus();
+    return true;
+  }, []);
+
+  // Tab で追いつかせた (flush) 直後、プレビューが描画し終えてからフォーカスを移す。
+  useEffect(() => {
+    if (!settled || !pendingFocusRef.current) return;
+    pendingFocusRef.current = false;
+    focusFirstPreviewAction();
+  }, [settled, focusFirstPreviewAction]);
+
+  const runPreviewAction = useCallback((item: CommandItem, kind: PreviewActionKind) => {
+    const action = item.previewActions?.find((a) => a.kind === kind);
+    if (!action || action.disabledReason) return;
+    // runAt と同様、先に閉じてから実行する (確認ダイアログ等を開いてもパレットが残らない)。
+    latest.current.onClose();
+    action.run();
+  }, []);
 
   const groupLabel: Record<CommandGroup, string> = {
     mru: t("cmdkGroupMru"),
@@ -167,6 +225,17 @@ export function CommandPalette({ items, onClose, mruIds = [], onSelectItem }: Co
         // Tab / Shift+Tab で候補内をループ (フォーカストラップに奪わせない)。
         e.preventDefault();
         e.stopPropagation();
+        // プレビューにアクションがある候補では、Tab でそのアクションへフォーカスを移す (#2425)。
+        // デバウンス待ちなら先に追いつかせ、描画後に移す (別の候補のアクションを実行させない)。
+        if (!e.shiftKey && activeItem?.previewActions?.some((a) => !a.disabledReason)) {
+          if (settled) {
+            if (focusFirstPreviewAction()) break;
+          } else {
+            pendingFocusRef.current = true;
+            flushShown();
+            break;
+          }
+        }
         move(e.shiftKey ? -1 : 1);
         break;
       // Home / End は入力欄のカーソル移動に任せ、候補の先頭 / 末尾へは Ctrl(Cmd)+Home / End (#1529)。
@@ -197,7 +266,7 @@ export function CommandPalette({ items, onClose, mruIds = [], onSelectItem }: Co
       // no-submit: 検索 UI。Enter が候補の決定を担う
       open
       onClose={onClose}
-      width="620px"
+      width={hasPreviews ? "960px" : "620px"}
       initialFocusEl={() => inputRef.current}
     >
       <Flex
@@ -250,69 +319,84 @@ export function CommandPalette({ items, onClose, mruIds = [], onSelectItem }: Co
         </Box>
       )}
 
-      <MotionListBox
-        ref={listRef}
-        id="command-palette-list"
-        role="listbox"
-        maxH="min(420px, 60vh)"
-        overflowY="auto"
-        py="1.5"
-        variants={staggerContainer(reduced)}
-        initial="initial"
-        animate="animate"
-      >
-        {flat.length === 0 ? (
-          <Box px="4" py="5" textAlign="center" color="app.textMuted" fontSize="sm">
-            {t("cmdkNoResults")}
-          </Box>
-        ) : (
-          <>
-            {visibleGroups.map((g) => (
-              <Box key={g.group}>
-                <Box px="4" pt="2" pb="1" textStyle="overline">
-                  {groupLabel[g.group]}
+      <Flex direction={{ base: "column", md: "row" }} align="stretch" minH={0}>
+        <MotionListBox
+          ref={listRef}
+          id="command-palette-list"
+          role="listbox"
+          flex="1"
+          minW={0}
+          maxH="min(420px, 60vh)"
+          overflowY="auto"
+          py="1.5"
+          variants={staggerContainer(reduced)}
+          initial="initial"
+          animate="animate"
+        >
+          {flat.length === 0 ? (
+            <Box px="4" py="5" textAlign="center" color="app.textMuted" fontSize="sm">
+              {t("cmdkNoResults")}
+            </Box>
+          ) : (
+            <>
+              {visibleGroups.map((g) => (
+                <Box key={g.group}>
+                  <Box px="4" pt="2" pb="1" textStyle="overline">
+                    {groupLabel[g.group]}
+                  </Box>
+                  {g.items.map(({ scored, flatIndex }) => (
+                    <CommandRow
+                      key={scored.item.id}
+                      scored={scored}
+                      index={flatIndex}
+                      active={flatIndex === activeIndex}
+                      animateEntrance={shouldStaggerEntrance(flatIndex)}
+                      highlightId={highlightId}
+                      registerRef={registerRef}
+                      onActivate={activate}
+                      onRun={runAt}
+                    />
+                  ))}
                 </Box>
-                {g.items.map(({ scored, flatIndex }) => (
-                  <CommandRow
-                    key={scored.item.id}
-                    scored={scored}
-                    index={flatIndex}
-                    active={flatIndex === activeIndex}
-                    animateEntrance={shouldStaggerEntrance(flatIndex)}
-                    highlightId={highlightId}
-                    registerRef={registerRef}
-                    onActivate={activate}
-                    onRun={runAt}
-                  />
-                ))}
-              </Box>
-            ))}
-            {hiddenCount > 0 && (
-              <chakra.button
-                type="button"
-                tabIndex={-1}
-                onClick={() => {
-                  setExpanded(true);
-                  inputRef.current?.focus();
-                }}
-                display="block"
-                w="100%"
-                px="4"
-                py="2"
-                border="none"
-                bg="transparent"
-                cursor="pointer"
-                textAlign="left"
-                fontSize="xs"
-                color="app.textMuted"
-                _hover={{ bg: "app.hover", color: "app.text" }}
-              >
-                {t("cmdkShowMore", { count: hiddenCount })}
-              </chakra.button>
-            )}
-          </>
+              ))}
+              {hiddenCount > 0 && (
+                <chakra.button
+                  type="button"
+                  tabIndex={-1}
+                  onClick={() => {
+                    setExpanded(true);
+                    inputRef.current?.focus();
+                  }}
+                  display="block"
+                  w="100%"
+                  px="4"
+                  py="2"
+                  border="none"
+                  bg="transparent"
+                  cursor="pointer"
+                  textAlign="left"
+                  fontSize="xs"
+                  color="app.textMuted"
+                  _hover={{ bg: "app.hover", color: "app.text" }}
+                >
+                  {t("cmdkShowMore", { count: hiddenCount })}
+                </chakra.button>
+              )}
+            </>
+          )}
+        </MotionListBox>
+        {hasPreviews && (
+          <PreviewPane
+            ref={paneRef}
+            item={shownItem?.preview ? shownItem : null}
+            settled={settled}
+            detail={detail}
+            now={now}
+            reduced={reduced}
+            onAction={runPreviewAction}
+          />
         )}
-      </MotionListBox>
+      </Flex>
 
       <Flex
         align="center"
@@ -328,6 +412,9 @@ export function CommandPalette({ items, onClose, mruIds = [], onSelectItem }: Co
       >
         <Hint keys="↑ ↓" label={t("cmdkHintMove")} />
         <Hint keys="↵" label={t("cmdkHintSelect")} />
+        {hasPreviews && activeItem?.previewActions && activeItem.previewActions.length > 0 && (
+          <Hint keys="Tab" label={t("cmdkHintPreview")} />
+        )}
         <Hint keys="Esc" label={t("cmdkHintClose")} />
       </Flex>
     </Modal>
