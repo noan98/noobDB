@@ -399,6 +399,8 @@ export function scanInsertValues(text: string, opts: ScanOptions = {}): InsertSt
         if (isWord(t, "insert", "replace")) {
           state = "head";
           stmtFrom = t.from;
+          // 前の文の列リストを持ち越さない (列リスト省略 + OVERRIDING の文がスキーマから列を引けるように)。
+          columns = [];
         } else {
           state = "skip";
         }
@@ -744,7 +746,12 @@ export function indexLookup(
 const DDL_TABLE_RE =
   /\b(create|alter|drop|rename)\s+(?:(?:or\s+replace|temporary|temp|unlogged|global|local|virtual|only)\s+)*table\b([^;]*)/gi;
 const RENAME_TO_RE = /\brename\s+(?:to|as)\s+((?:[`"[]?[\w$]+[`"\]]?\s*\.\s*)*[`"[]?[\w$]+[`"\]]?)/gi;
-const NAME_RE = /[`"[]?([\w$\u0080-\uffff]+)[`"\]]?/g;
+/** 引用符付き (空白や記号を含みうる) か素の識別子 1 つ。名前はグループ 1〜4 のどれか。 */
+const IDENT_SRC = '`([^`]+)`|"([^"]+)"|\\[([^\\]]+)\\]|([\\w$\\u0080-\\uffff]+)';
+const NAME_RE = new RegExp(IDENT_SRC, "g");
+const CHAIN_RE = new RegExp(`^(?:(?:${IDENT_SRC})\\s*\\.\\s*)*(?:${IDENT_SRC})`);
+const identName = (m: RegExpMatchArray, base: number): string =>
+  (m[base] ?? m[base + 1] ?? m[base + 2] ?? m[base + 3] ?? "").toLowerCase();
 
 /**
  * スクリプト内で CREATE / ALTER / DROP / RENAME TABLE の対象になった表名 (小文字、修飾は最後の要素) を集める。
@@ -761,13 +768,19 @@ export function ddlTargetTables(text: string): Set<string> {
     // `DROP TABLE a, b` / `RENAME TABLE a TO b, c TO d` は複数の表を持つ。他は最初の 1 つ。
     const body = m[2].replace(/\bif\s+(?:not\s+)?exists\b/gi, " ");
     if (verb === "drop" || verb === "rename") {
-      for (const n of body.matchAll(NAME_RE)) out.add(n[1].toLowerCase());
+      for (const n of body.matchAll(NAME_RE)) {
+        const name = identName(n, 1);
+        // `RENAME TABLE a TO b` の TO / `DROP TABLE a CASCADE` などの語も拾うが、除外が増えるだけで安全。
+        if (name) out.add(name);
+      }
     } else {
       const head = body.trimStart();
-      const chain = /^((?:[`"[]?[\w$\u0080-\uffff]+[`"\]]?\s*\.\s*)*)[`"[]?([\w$\u0080-\uffff]+)[`"\]]?/.exec(
-        head,
-      );
-      if (chain) out.add(chain[2].toLowerCase());
+      const chain = CHAIN_RE.exec(head);
+      if (chain) {
+        // 最後の要素 (修飾の後ろ) の名前。CHAIN_RE の末尾 4 グループが最後の識別子。
+        const last = identName(chain, chain.length - 4);
+        if (last) out.add(last);
+      }
     }
   }
   RENAME_TO_RE.lastIndex = 0;

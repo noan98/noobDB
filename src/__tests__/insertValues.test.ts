@@ -108,6 +108,16 @@ describe("scanInsertValues", () => {
     ).toHaveLength(1);
   });
 
+  it("前の文の列リストを次の文 (列リスト省略 + OVERRIDING) へ持ち越さない", () => {
+    const stmts = scanInsertValues(
+      "INSERT INTO t (a) VALUES (1); INSERT INTO t OVERRIDING SYSTEM VALUE VALUES (2, 3);",
+      { driver: "postgres" },
+    );
+    expect(stmts).toHaveLength(2);
+    expect(stmts[0].columns).toHaveLength(1);
+    expect(stmts[1].columns).toBeNull();
+  });
+
   it("列リスト省略", () => {
     const sql = "INSERT INTO t VALUES (1, 2)";
     const [s] = scanInsertValues(sql);
@@ -424,6 +434,14 @@ describe("ddlTargetTables / buildColumnIndex / indexLookup", () => {
       expect(t.has(n)).toBe(true);
     expect(t.has("plain")).toBe(false);
     expect(ddlTargetTables("SELECT 1").size).toBe(0);
+  });
+
+  it("空白や記号を含む引用符付きの表名を丸ごと拾う", () => {
+    const t = ddlTargetTables(
+      'ALTER TABLE `order items` ADD COLUMN b int; CREATE TABLE "app"."my-table" (x int); DROP TABLE [old one], `x y`;',
+    );
+    for (const n of ["order items", "my-table", "old one", "x y"]) expect(t.has(n)).toBe(true);
+    expect(t.has("order")).toBe(false);
   });
 
   it("DDL の対象表の列数は引かない (列リスト省略の INSERT は警告もヒントもしない)", () => {
