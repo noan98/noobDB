@@ -56,8 +56,12 @@ function inPredicate(driver: string, col: Column, values: readonly CellValue[]):
   const seen = new Set<string>();
   const literals: string[] = [];
   const extras: string[] = [];
+  // 重複の判定は Set で行う (配列の includes だと多数の値で二乗になる)。
+  const seenExtras = new Set<string>();
   const addExtra = (clause: string) => {
-    if (!extras.includes(clause)) extras.push(clause);
+    if (seenExtras.has(clause)) return;
+    seenExtras.add(clause);
+    extras.push(clause);
   };
   for (const v of values) {
     if (isNull(v)) {

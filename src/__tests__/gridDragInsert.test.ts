@@ -111,6 +111,14 @@ describe("planGridInsert", () => {
     );
   });
 
+  it("多数の単精度 FLOAT の値でも二乗の時間にならない (重複判定は Set)", () => {
+    const rows = Array.from({ length: 20_000 }, (_, i) => [i + 0.5] as CellValue[]);
+    const t0 = performance.now();
+    const p = planGridInsert("in", sel("postgres", [col("f", "real")], rows));
+    expect(performance.now() - t0).toBeLessThan(1000);
+    expect(text(p).split(" OR ")).toHaveLength(20_000);
+  });
+
   it("MySQL の空間型は ST_Equals、PostgreSQL は = ST_GeomFromText", () => {
     const geo = col("g", "POINT");
     const mysql = text(planGridInsert("where", sel("mysql", [geo], [["POINT(1 2)"]])));
