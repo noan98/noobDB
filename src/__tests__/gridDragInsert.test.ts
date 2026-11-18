@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CellValue, Column } from "../api/tauri";
-import { buildGridInsertSelection, planGridInsert } from "../components/gridDragInsert";
+import { buildGridInsertSelection, gridInsertShapeBlock, planGridInsert } from "../components/gridDragInsert";
 
 const col = (name: string, type_name: string): Column => ({ name, type_name });
 const id = col("id", "BIGINT");
@@ -78,6 +78,52 @@ describe("planGridInsert", () => {
     expect(text(planGridInsert("auto", sel("postgres", [blob], [["deadbeef"]])))).toBe("'\\xdeadbeef'");
   });
 
+  it("真偽値: MySQL / SQLite は <> 0 / = 0、PostgreSQL は TRUE / FALSE (= TRUE では当たらない行がある)", () => {
+    const flag = col("flag", "TINYINT");
+    expect(text(planGridInsert("where", sel("mysql", [flag], [[true]])))).toBe("`flag` <> 0");
+    expect(text(planGridInsert("where", sel("sqlite", [flag], [[false]])))).toBe('"flag" = 0');
+    expect(text(planGridInsert("where", sel("postgres", [col("flag", "BOOL")], [[true]])))).toBe(
+      '"flag" = TRUE',
+    );
+    expect(text(planGridInsert("auto", sel("mysql", [flag, id], [[true, 1]])))).toBe(
+      "`flag` <> 0 AND `id` = 1",
+    );
+  });
+
+  it("IN: = で厳密に比べられない値 (真偽値) は IN に入れず OR でつなぐ", () => {
+    const flag = col("flag", "TINYINT");
+    expect(text(planGridInsert("in", sel("mysql", [flag], [[true], [false], [true]])))).toBe(
+      "(`flag` <> 0 OR `flag` = 0)",
+    );
+    expect(text(planGridInsert("in", sel("mysql", [id], [[1], [null]])))).toBe(
+      "(`id` IN (1) OR `id` IS NULL)",
+    );
+  });
+
+  it("単精度 FLOAT (MySQL FLOAT / PG real) は許容差比較、SQLite REAL は等号", () => {
+    expect(text(planGridInsert("where", sel("mysql", [col("f", "FLOAT")], [[0.1]])))).toBe(
+      "ABS(`f` - (0.1)) <= ABS((0.1)) * 0.000001",
+    );
+    expect(text(planGridInsert("where", sel("postgres", [col("f", "float4")], [[0.1]])))).toContain("ABS(");
+    expect(text(planGridInsert("where", sel("sqlite", [col("f", "REAL")], [[0.1]])))).toBe('"f" = 0.1');
+    expect(text(planGridInsert("in", sel("postgres", [col("f", "REAL")], [[0.1], [0.2]])))).toBe(
+      '(ABS("f" - (0.1)) <= ABS((0.1)) * 0.000001 OR ABS("f" - (0.2)) <= ABS((0.2)) * 0.000001)',
+    );
+  });
+
+  it("MySQL の空間型は ST_Equals、PostgreSQL は = ST_GeomFromText", () => {
+    const geo = col("g", "POINT");
+    const mysql = text(planGridInsert("where", sel("mysql", [geo], [["POINT(1 2)"]])));
+    expect(mysql).toMatch(/^ST_Equals\(`g`, ST_GeomFromText\(/);
+    const pg = text(
+      planGridInsert("where", sel("postgres", [col("g", "geometry")], [["SRID=4326;POINT(1 2)"]])),
+    );
+    expect(pg).toMatch(/^"g" = ST_GeomFromText\(/);
+    expect(text(planGridInsert("in", sel("mysql", [geo], [["POINT(1 2)"], ["POINT(3 4)"]])))).toMatch(
+      /^\(ST_Equals\(.*\) OR ST_Equals\(.*\)\)$/,
+    );
+  });
+
   it("複数行 × 複数列と、IN の複数列は shape で拒否する", () => {
     expect(
       planGridInsert(
@@ -146,5 +192,15 @@ describe("buildGridInsertSelection", () => {
     expect(s.masked).toBe(true);
     expect(s.rows).toEqual([]);
     expect(planGridInsert("auto", s)).toEqual({ ok: false, reason: "masked" });
+  });
+});
+
+describe("gridInsertShapeBlock", () => {
+  it("行数・列数だけで形を判定する (巨大な選択でも値を集めない)", () => {
+    expect(gridInsertShapeBlock("auto", 100_000, 20)).toBe("shape");
+    expect(gridInsertShapeBlock("auto", 100_000, 1)).toBeNull();
+    expect(gridInsertShapeBlock("auto", 1, 20)).toBeNull();
+    expect(gridInsertShapeBlock("in", 1, 20)).toBe("shape");
+    expect(gridInsertShapeBlock("auto", 0, 1)).toBe("empty");
   });
 });

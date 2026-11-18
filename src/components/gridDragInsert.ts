@@ -1,5 +1,5 @@
 import type { CellValue, Column } from "../api/tauri";
-import { rowValueLiteral } from "./cellEdit";
+import { rowMatchClause, rowValueLiteral } from "./cellEdit";
 import { quoteIdentFor } from "./sqlDialect";
 
 /**
@@ -28,7 +28,7 @@ export interface GridInsertSelection {
   masked: boolean;
 }
 
-export type GridInsertBlock = "masked" | "empty" | "shape";
+export type GridInsertBlock = "masked" | "empty" | "shape" | "driver";
 
 export type GridInsertPlan =
   | { ok: true; text: string; label: string }
@@ -46,30 +46,57 @@ function isNull(v: CellValue): boolean {
   return v === null || v === undefined;
 }
 
-/** `col IN (v1, v2, ...)`。重複は除き、NULL は `IN` に入れず `IS NULL` を足す (NULL は IN に一致しない)。 */
+/**
+ * `col IN (v1, v2, ...)`。重複は除き、NULL は `IN` に入れず `IS NULL` を足す (NULL は IN に一致しない)。
+ * `=` で厳密に比べられる値だけを IN に入れ、真偽値・単精度 float・MySQL の空間型のように
+ * `rowMatchClause` が別の比較式にする値は、その式を OR でつなぐ (IN だと当たらない行が出るため)。
+ */
 function inPredicate(driver: string, col: Column, values: readonly CellValue[]): string {
   const ident = quoteIdentFor(driver, col.name);
   const seen = new Set<string>();
   const literals: string[] = [];
-  let hasNull = false;
+  const extras: string[] = [];
+  const addExtra = (clause: string) => {
+    if (!extras.includes(clause)) extras.push(clause);
+  };
   for (const v of values) {
     if (isNull(v)) {
-      hasNull = true;
+      addExtra(`${ident} IS NULL`);
       continue;
     }
     const lit = rowValueLiteral(driver, v, col);
+    const clause = rowMatchClause(driver, col, v);
+    if (clause !== `${ident} = ${lit}`) {
+      addExtra(clause);
+      continue;
+    }
     if (seen.has(lit)) continue;
     seen.add(lit);
     literals.push(lit);
   }
-  if (literals.length === 0) return `${ident} IS NULL`;
-  const list = `${ident} IN (${literals.join(", ")})`;
-  return hasNull ? `(${list} OR ${ident} IS NULL)` : list;
+  // NULL の IS NULL は常に末尾にする。
+  const nullIdx = extras.indexOf(`${ident} IS NULL`);
+  if (nullIdx >= 0) extras.push(...extras.splice(nullIdx, 1));
+  const parts = [...(literals.length > 0 ? [`${ident} IN (${literals.join(", ")})`] : []), ...extras];
+  return parts.length === 1 ? parts[0] : `(${parts.join(" OR ")})`;
 }
 
 function eqPredicate(driver: string, col: Column, v: CellValue): string {
-  const ident = quoteIdentFor(driver, col.name);
-  return isNull(v) ? `${ident} IS NULL` : `${ident} = ${rowValueLiteral(driver, v, col)}`;
+  return rowMatchClause(driver, col, v);
+}
+
+/**
+ * 行数・列数だけで決まる拒否理由。巨大な選択 (10 万行 × 20 列) でも、値を集める前にこれで弾く。
+ * 1 セル / 1 列 / 1 行 (`in` は 1 列) 以外は "shape"。
+ */
+export function gridInsertShapeBlock(
+  kind: GridInsertKind,
+  nRows: number,
+  nCols: number,
+): GridInsertBlock | null {
+  if (nRows === 0 || nCols === 0) return "empty";
+  if (nCols === 1) return null;
+  return nRows === 1 && kind !== "in" ? null : "shape";
 }
 
 /** 選択の形と種別から挿入文字列を決める。出せないときは理由を返す。 */

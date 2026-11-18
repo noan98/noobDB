@@ -44,6 +44,7 @@ import {
 } from "../settings";
 import { formatJsonCompact } from "../components/cellFormat";
 import { TOOLTIP_OPEN_DELAY_MS } from "../components/Tooltip";
+import { registerTreeDropTarget } from "../components/treeDragStore";
 import { FK_PEEK_CLOSE_GRACE_MS, FK_PEEK_HOVER_DELAY_MS } from "../fkPeek";
 
 // 選択範囲エクスポート (#917) のテストが `ExportModal` を実際にマウントするため、
@@ -1220,7 +1221,7 @@ describe("キーボードセルナビゲーション (#406)", () => {
       ["9007199254740995", null],
       ["9007199254740993", "c"],
     ]);
-    const { container } = renderWithProviders(<ResultGrid result={result} />);
+    const { container } = renderWithProviders(<ResultGrid result={result} driver="mysql" />);
     const cells = dataCells(container);
     const openCopy = async (cell: HTMLElement) => {
       fireEvent.contextMenu(cell);
@@ -1251,7 +1252,7 @@ describe("キーボードセルナビゲーション (#406)", () => {
     );
   });
 
-  it("マスク中のセルを含む選択では挿入・条件コピーが無効になり理由が出る (#2406)", async () => {
+  it("マスク中のセルを含む選択では挿入・条件コピーが無効になり、理由がツールチップに出る (#2406)", async () => {
     setColumnMaskEnabled(true);
     setColumnMaskPatterns(["secret"]);
     onTestFinished(() => {
@@ -1262,11 +1263,59 @@ describe("キーボードセルナビゲーション (#406)", () => {
       { name: "id", type_name: "INT" },
       { name: "secret", type_name: "VARCHAR" },
     ];
-    const { container } = renderWithProviders(<ResultGrid result={makeResult(columns, [[1, "hunter2"]])} />);
+    const { container } = renderWithProviders(
+      <ResultGrid result={makeResult(columns, [[1, "hunter2"]])} driver="mysql" />,
+    );
     const cells = dataCells(container);
     fireEvent.contextMenu(cells[0][1]);
     const insert = await screen.findByRole("menuitem", { name: t("gridInsertToEditor") });
     expect(insert).toBeDisabled();
+    // 無効項目の理由は Tooltip (focusableWrapper の span) に出る。
+    hoverForTooltip((insert.closest("span[tabindex]") ?? insert.parentElement) as HTMLElement);
+    expect(await screen.findByText(t("gridMaskedSqlCopyBlocked"))).toBeTruthy();
+  });
+
+  it("DB の種類が不明なグリッドでは挿入・条件コピーを無効にする (#2406)", async () => {
+    const columns: Column[] = [{ name: "id", type_name: "INT" }];
+    const { container } = renderWithProviders(<ResultGrid result={makeResult(columns, [[1]])} />);
+    fireEvent.contextMenu(dataCells(container)[0][0]);
+    expect(await screen.findByRole("menuitem", { name: t("gridInsertToEditor") })).toBeDisabled();
+  });
+
+  describe("エディタへ挿入 (キャレット位置, #2406)", () => {
+    const columns: Column[] = [{ name: "id", type_name: "INT" }];
+    const open = async () => {
+      const { container } = renderWithProviders(
+        <ResultGrid result={makeResult(columns, [[7]])} driver="postgres" />,
+      );
+      fireEvent.contextMenu(dataCells(container)[0][0]);
+      return screen.findByRole("menuitem", { name: t("gridInsertToEditor") });
+    };
+
+    it("見えているエディタへリテラルを挿入する", async () => {
+      const editor = document.createElement("div");
+      editor.getClientRects = () => [{}] as unknown as DOMRectList;
+      document.body.append(editor);
+      const insertAtSelection = vi.fn();
+      const off = registerTreeDropTarget({
+        element: editor,
+        posAtCoords: () => 0,
+        setMarker: () => {},
+        insert: vi.fn() as never,
+        insertAtSelection,
+      });
+      onTestFinished(() => {
+        off();
+        editor.remove();
+      });
+      await userEvent.setup().click(await open());
+      expect(insertAtSelection).toHaveBeenCalledWith({ kind: "text", text: "7", label: "7" });
+    });
+
+    it("エディタが無いときは挿入せずトーストで知らせる", async () => {
+      await userEvent.setup().click(await open());
+      expect(await screen.findByText(t("gridInsertNoEditor"))).toBeTruthy();
+    });
   });
 
   it("行コピー (TSV) は非表示列を含めず、列の並び替えに従う", async () => {

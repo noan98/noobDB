@@ -240,13 +240,76 @@ describe("treeDragStore (ポインタ・ドラッグ)", () => {
     expect(onTap).not.toHaveBeenCalled();
   });
 
-  it("insertAtEditorCaret: キャレット位置へ挿入し、ドロップ先が無ければ false", () => {
+  describe("insertAtEditorCaret", () => {
     const textItem: TreeDragItem = { kind: "text", text: "x", label: "x" };
-    target.caretPos = () => 7;
-    expect(insertAtEditorCaret(textItem)).toBe(true);
-    expect(target.insert).toHaveBeenCalledWith(textItem, 7, true, false);
-    unregister();
-    expect(insertAtEditorCaret(textItem)).toBe(false);
-    unregister = registerTreeDropTarget(target);
+    const show = (el: Element, visible: boolean) => {
+      el.getClientRects = () => (visible ? ([{}] as unknown as DOMRectList) : ([] as unknown as DOMRectList));
+    };
+
+    it("見えるエディタの選択範囲へ挿入する", () => {
+      show(editor, true);
+      target.insertAtSelection = vi.fn();
+      expect(insertAtEditorCaret(textItem)).toBe(true);
+      expect(target.insertAtSelection).toHaveBeenCalledWith(textItem);
+    });
+
+    it("見えるエディタが無ければ (非表示タブのエディタには挿入せず) false", () => {
+      show(editor, false);
+      target.insertAtSelection = vi.fn();
+      expect(insertAtEditorCaret(textItem)).toBe(false);
+      expect(target.insertAtSelection).not.toHaveBeenCalled();
+      expect(target.insert).not.toHaveBeenCalled();
+    });
+
+    it("ドロップ先が無ければ false", () => {
+      unregister();
+      expect(insertAtEditorCaret(textItem)).toBe(false);
+      unregister = registerTreeDropTarget(target);
+    });
+
+    it("分割ペインで複数見えるときは、グリッドと同じペインのエディタを選ぶ", () => {
+      const paneA = document.createElement("div");
+      const paneB = document.createElement("div");
+      const gridA = document.createElement("div");
+      const editorA = document.createElement("div");
+      const editorB = document.createElement("div");
+      paneA.append(gridA, editorA);
+      paneB.append(editorB);
+      document.body.append(paneA, paneB);
+      for (const el of [editor, editorA, editorB]) show(el, true);
+      const insertA = vi.fn();
+      const insertB = vi.fn();
+      const offA = registerTreeDropTarget({ ...target, element: editorA, insertAtSelection: insertA });
+      const offB = registerTreeDropTarget({ ...target, element: editorB, insertAtSelection: insertB });
+      expect(insertAtEditorCaret(textItem, gridA)).toBe(true);
+      expect(insertA).toHaveBeenCalledTimes(1);
+      expect(insertB).not.toHaveBeenCalled();
+      offA();
+      offB();
+      paneA.remove();
+      paneB.remove();
+    });
+
+    it("同じ近さなら最後にフォーカスされたエディタを選ぶ", () => {
+      const e1 = document.createElement("div");
+      const e2 = document.createElement("div");
+      const input = document.createElement("textarea");
+      e1.append(input);
+      document.body.append(e1, e2);
+      show(editor, false);
+      for (const el of [e1, e2]) show(el, true);
+      const i1 = vi.fn();
+      const i2 = vi.fn();
+      const off1 = registerTreeDropTarget({ ...target, element: e1, insertAtSelection: i1 });
+      const off2 = registerTreeDropTarget({ ...target, element: e2, insertAtSelection: i2 });
+      input.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+      expect(insertAtEditorCaret(textItem)).toBe(true);
+      expect(i1).toHaveBeenCalledTimes(1);
+      expect(i2).not.toHaveBeenCalled();
+      off1();
+      off2();
+      e1.remove();
+      e2.remove();
+    });
   });
 });

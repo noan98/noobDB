@@ -26,7 +26,15 @@ export function useGridSelectionDrag() {
       onTap?: () => void,
     ) => {
       const down = lastDownRef.current;
-      if (!plan.ok || !down || down.clientX !== mouse.clientX || down.clientY !== mouse.clientY) return false;
+      // タッチ / ペンは互換 mousedown が pointerup の後に来る (ドラッグを始められない) ので mouse だけ。
+      if (
+        !plan.ok ||
+        !down ||
+        down.pointerType !== "mouse" ||
+        down.clientX !== mouse.clientX ||
+        down.clientY !== mouse.clientY
+      )
+        return false;
       return beginPointerDrag(cell, down, { kind: "text", text: plan.text, label: plan.label }, onTap);
     },
     [],
