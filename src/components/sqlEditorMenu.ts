@@ -126,7 +126,7 @@ export function sqlEditorMenuSpec(ctx: SqlEditorMenuContext): SqlEditorMenuEntry
       disabledReasonKey: execReason,
     });
   }
-  if (ctx.canRunCte && !ctx.hasSelection && !ctx.explainMode) {
+  if (ctx.canRunCte && !ctx.explainMode) {
     entries.push({
       action: "runCte",
       labelKey: "editorMenuRunCte",

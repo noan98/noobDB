@@ -864,7 +864,8 @@ const en = {
     "Place the cursor inside a CTE definition (from its name to its closing parenthesis).",
   cteRunBlockedWrites: "A CTE that modifies data (INSERT / UPDATE / DELETE) cannot be run on its own.",
   cteRunBlockedNotReadOnly: "This CTE cannot be run on its own because it fails the read-only check.",
-  cteRunBlockedUnsupported: "This server does not support WITH (CTE); MySQL 8.0 or later is required.",
+  cteRunBlockedUnsupported:
+    "This server does not support WITH (CTE); MySQL 8.0 / MariaDB 10.2 or later is required.",
   settingsQueryTimeout: "Query timeout (seconds)",
   settingsQueryTimeoutHelp:
     "Automatically cancel an editor query that runs longer than this. 0 disables the timeout. The connection stays open when a query is cancelled.",
@@ -9844,7 +9845,8 @@ const ja: Dict = {
   cteRunBlockedNotInCte: "カーソルを CTE の定義 (名前から閉じ括弧まで) の中に置いてください。",
   cteRunBlockedWrites: "データ変更を含む CTE (INSERT / UPDATE / DELETE) は単体実行の対象外です。",
   cteRunBlockedNotReadOnly: "読み取り専用の検査を通らないため、この CTE は単体実行できません。",
-  cteRunBlockedUnsupported: "この接続先のサーバは WITH (CTE) に対応していません (MySQL 8.0 以降が必要です)。",
+  cteRunBlockedUnsupported:
+    "この接続先のサーバは WITH (CTE) に対応していません (MySQL 8.0 / MariaDB 10.2 以降が必要です)。",
   settingsQueryTimeout: "クエリ実行タイムアウト (秒)",
   settingsQueryTimeoutHelp:
     "エディタのクエリがこの秒数を超えたら自動的に中断します。0 で無効。中断しても接続は維持されます。",

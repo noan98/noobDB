@@ -1,7 +1,6 @@
 import type { I18nKey } from "./i18n";
 import { isReadOnlySql, maskLiterals } from "./dangerousSql";
 import { type CteDef, parseCteDefs } from "./components/sqlDerivedCompletion";
-import { quoteIdentFor } from "./components/sqlDialect";
 import { unquote } from "./components/sqlJoinCompletion";
 import { parseServerVersion } from "./components/statsAdvisor";
 import { statementAtOffset } from "./sqlScript";
@@ -18,8 +17,9 @@ import { statementAtOffset } from "./sqlScript";
  * - 参照は識別子の字句一致で見る (大文字小文字は区別しない・文字列とコメントは対象外・
  *   `x.name` の `name` のようにドットの後ろは参照と見なさない)。列名と偶然一致した CTE は
  *   余分に残るが、結果は変わらない (安全側)。
- * - 非 RECURSIVE では前段の CTE だけを参照元とする (後段の同名は実テーブルを指す)。
- *   RECURSIVE (PostgreSQL は前方参照も許す) では全 CTE を参照元にする。
+ * - MySQL / PostgreSQL の非 RECURSIVE では前段の CTE だけを参照元とする (後段の同名は実テーブルを指す)。
+ *   RECURSIVE (PostgreSQL は前方参照も許す) と SQLite (RECURSIVE なしでも前方参照・再帰できる) では
+ *   全 CTE を参照元にする。
  * - 書き込みを含む CTE (PG の writable CTE) が残る場合は組み立てない (`writes`)。
  *   最終的な SQL にも読み取り専用ガード (`isReadOnlySql`) を通し、通らなければ同じく拒否する。
  * - 再帰を含むときは `recursive: true` を返し、`limit` が渡されていれば末尾に `LIMIT n` を付ける
@@ -52,6 +52,8 @@ export type CteRunPlan =
 
 const IDENT_RE = /`[^`]+`|"[^"]+"|[A-Za-z_]\w*/g;
 const WRITE_KW = /\b(?:INSERT|UPDATE|DELETE|MERGE)\b(?!\s*\()/i;
+/** `FOR UPDATE` / `FOR NO KEY UPDATE` はロックであってデータ変更ではない (可否は読み取り専用ガードに任せる)。 */
+const LOCK_CLAUSE = /\bFOR\s+(?:NO\s+KEY\s+)?UPDATE\b/gi;
 
 /** 本体 (マスク済み) が参照している識別子 (小文字・引用符なし)。 */
 function referencedNames(maskedBody: string): Set<string> {
@@ -83,6 +85,8 @@ export function buildCteRun(opts: {
   const parsed = parseCteDefs(masked);
   if (!parsed || parsed.defs.length === 0) return { ok: false, reason: "noCte" };
   const { defs, recursive } = parsed;
+  // 前方参照・自己参照 (再帰) できるか。SQLite は RECURSIVE と書かなくても再帰を実行する。
+  const forward = recursive || driver === "sqlite";
 
   const target = defs.findIndex((d) => rel >= d.start && rel <= d.close + 1);
   if (target < 0) return { ok: false, reason: "notInCte" };
@@ -102,7 +106,7 @@ export function buildCteRun(opts: {
     for (const name of refs[cur]) {
       for (const j of byName.get(name) ?? []) {
         // 非 RECURSIVE は前段 (または自分より前) だけ。同名が複数あれば直近の前段を指す。
-        if (!recursive && j >= cur) continue;
+        if (!forward && j >= cur) continue;
         if (keep.has(j)) continue;
         keep.add(j);
         queue.push(j);
@@ -111,15 +115,16 @@ export function buildCteRun(opts: {
   }
   const kept = [...keep].sort((a, b) => a - b);
 
-  if (kept.some((i) => WRITE_KW.test(bodies[i]))) return { ok: false, reason: "writes" };
+  if (kept.some((i) => WRITE_KW.test(bodies[i].replace(LOCK_CLAUSE, " "))))
+    return { ok: false, reason: "writes" };
 
   // 再帰: 残した CTE のどれかが自分以降の CTE (自分自身を含む) を参照している。
   const isRecursive =
-    recursive && kept.some((i) => [...refs[i]].some((n) => (byName.get(n) ?? []).some((j) => j >= i)));
+    forward && kept.some((i) => [...refs[i]].some((n) => (byName.get(n) ?? []).some((j) => j >= i)));
 
   const target0: CteDef = defs[target];
   const defsSql = kept.map((i) => stmt.slice(defs[i].start, defs[i].close + 1)).join(",\n");
-  let sql = `WITH ${recursive ? "RECURSIVE " : ""}${defsSql}\nSELECT * FROM ${quoteIdentFor(driver, target0.name)}`;
+  let sql = `WITH ${recursive ? "RECURSIVE " : ""}${defsSql}\nSELECT * FROM ${target0.rawName}`;
   if (isRecursive && opts.limit && opts.limit > 0) sql += `\nLIMIT ${Math.floor(opts.limit)}`;
 
   if (!isReadOnlySql(sql, driver)) return { ok: false, reason: "notReadOnly" };

@@ -59,8 +59,8 @@ describe("sqlEditorMenuSpec", () => {
       disabled: true,
       disabledReasonKey: "cteRunBlockedWrites",
     });
-    // 選択中・EXPLAIN タブでは出さない。
-    expect(actions({ ...ok, hasSelection: true })).not.toContain("runCte");
+    // 選択中もショートカットと同じくカーソル (head) 基準で出す。EXPLAIN タブでは出さない。
+    expect(actions({ ...ok, hasSelection: true })).toContain("runCte");
     expect(actions({ ...ok, explainMode: true })).not.toContain("runCte");
   });
 

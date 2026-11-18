@@ -19,7 +19,7 @@ describe("buildCteRun", () => {
     const r = run("WITH a AS (SELECT |1 AS n) SELECT * FROM a WHERE n > 0");
     expect(r).toMatchObject({ ok: true, name: "a", title: "CTE: a", recursive: false });
     expect(sqlOf("WITH a AS (SELECT |1 AS n) SELECT * FROM a WHERE n > 0")).toBe(
-      'WITH a AS (SELECT 1 AS n)\nSELECT * FROM "a"',
+      "WITH a AS (SELECT 1 AS n)\nSELECT * FROM a",
     );
   });
 
@@ -27,7 +27,7 @@ describe("buildCteRun", () => {
     const sql = sqlOf(
       "WITH a AS (SELECT 1 AS n), unused AS (SELECT 2 AS m), b AS (SELECT n FROM a WHERE |n > 0), c AS (SELECT 3) SELECT * FROM b",
     );
-    expect(sql).toBe('WITH a AS (SELECT 1 AS n),\nb AS (SELECT n FROM a WHERE n > 0)\nSELECT * FROM "b"');
+    expect(sql).toBe("WITH a AS (SELECT 1 AS n),\nb AS (SELECT n FROM a WHERE n > 0)\nSELECT * FROM b");
   });
 
   it("推移的な依存 (c -> b -> a) をたどり、元の順序で並べる", () => {
@@ -42,8 +42,33 @@ describe("buildCteRun", () => {
     expect(r).toMatchObject({ ok: true, keptNames: ["a"] });
   });
 
-  it("非 RECURSIVE では後段の同名は参照元にしない (実テーブルを指す)", () => {
-    const r = run("WITH a AS (SELECT * FROM |b), b AS (SELECT 1) SELECT 1");
+  it("MySQL / PG の非 RECURSIVE では後段の同名は参照元にしない (実テーブルを指す)", () => {
+    for (const d of ["postgres", "mysql"]) {
+      const r = run("WITH a AS (SELECT * FROM |b), b AS (SELECT 1) SELECT 1", d);
+      expect(r).toMatchObject({ ok: true, keptNames: ["a"] });
+    }
+  });
+
+  it("SQLite は RECURSIVE なしでも前方参照できるので後段の CTE を残す", () => {
+    const r = run("WITH a AS (SELECT * FROM |b), b AS (SELECT 7) SELECT * FROM a", "sqlite");
+    expect(r).toMatchObject({ ok: true, keptNames: ["a", "b"] });
+  });
+
+  it("末尾の参照は元の綴りのまま (PG で WITH MyCte → SELECT * FROM MyCte)", () => {
+    expect(sqlOf("WITH MyCte AS (SELECT |1) SELECT * FROM MyCte")).toBe(
+      "WITH MyCte AS (SELECT 1)\nSELECT * FROM MyCte",
+    );
+  });
+
+  it("SELECT ... FOR UPDATE はデータ変更扱いにしない (ロックは読み取り専用ガードが判定する)", () => {
+    const r = run("WITH a AS (SELECT |1 FROM t FOR UPDATE) SELECT * FROM a", "mysql");
+    expect(r).not.toMatchObject({ reason: "writes" });
+  });
+
+  it("複数文で 2 文目にも WITH があり、カーソルが `)` の直後なら前の CTE が対象", () => {
+    const r = run(
+      "WITH x AS (SELECT 0) SELECT * FROM x; WITH a AS (SELECT 1)| , b AS (SELECT 2) SELECT * FROM b",
+    );
     expect(r).toMatchObject({ ok: true, keptNames: ["a"] });
   });
 
@@ -52,7 +77,7 @@ describe("buildCteRun", () => {
       'WITH "My CTE" (x, y) AS MATERIALIZED (SELECT 1, 2), t2 AS NOT MATERIALIZED (SELECT x FROM "My CTE" WHERE |x = 1) SELECT * FROM t2',
     );
     expect(sql).toBe(
-      'WITH "My CTE" (x, y) AS MATERIALIZED (SELECT 1, 2),\nt2 AS NOT MATERIALIZED (SELECT x FROM "My CTE" WHERE x = 1)\nSELECT * FROM "t2"',
+      'WITH "My CTE" (x, y) AS MATERIALIZED (SELECT 1, 2),\nt2 AS NOT MATERIALIZED (SELECT x FROM "My CTE" WHERE x = 1)\nSELECT * FROM t2',
     );
   });
 
@@ -66,12 +91,12 @@ describe("buildCteRun", () => {
       "WITH a AS (SELECT ')' AS p /* ) */ -- )\n), b AS (SELECT 'a' AS s FROM x WHERE |1=1) SELECT * FROM b",
     );
     // 文字列 'a' やコメントの `a` は参照ではないので a は残らない。
-    expect(sql).toBe("WITH b AS (SELECT 'a' AS s FROM x WHERE 1=1)\nSELECT * FROM \"b\"");
+    expect(sql).toBe("WITH b AS (SELECT 'a' AS s FROM x WHERE 1=1)\nSELECT * FROM b");
   });
 
   it("コメントを含む定義は本文のまま切り出す", () => {
     const sql = sqlOf("WITH a AS (\n  -- 注釈\n  SELECT |1\n) SELECT * FROM a");
-    expect(sql).toBe('WITH a AS (\n  -- 注釈\n  SELECT 1\n)\nSELECT * FROM "a"');
+    expect(sql).toBe("WITH a AS (\n  -- 注釈\n  SELECT 1\n)\nSELECT * FROM a");
   });
 
   it("入れ子の括弧・サブクエリを含む本体", () => {
@@ -79,7 +104,7 @@ describe("buildCteRun", () => {
       "WITH a AS (SELECT (SELECT max(((1+2))) ) AS m), b AS (SELECT * FROM (SELECT * FROM a) s WHERE |(1)) SELECT * FROM b",
     );
     expect(sql).toContain("WITH a AS (SELECT (SELECT max(((1+2))) ) AS m),\nb AS (");
-    expect(sql.endsWith('\nSELECT * FROM "b"')).toBe(true);
+    expect(sql.endsWith("\nSELECT * FROM b")).toBe(true);
   });
 
   it("名前の位置にカーソルがあっても対象になる / 大文字小文字は区別しない", () => {
@@ -89,7 +114,7 @@ describe("buildCteRun", () => {
 
   it("複数文のスクリプトではカーソルのある文だけを見る", () => {
     const sql = sqlOf("SELECT 1; WITH a AS (SELECT |2) SELECT * FROM a; SELECT 3");
-    expect(sql).toBe('WITH a AS (SELECT 2)\nSELECT * FROM "a"');
+    expect(sql).toBe("WITH a AS (SELECT 2)\nSELECT * FROM a");
   });
 
   it("WITH 句の外 / WITH が無い文では実行できない", () => {
@@ -140,12 +165,20 @@ describe("buildCteRun", () => {
     it("再帰 CTE は recursive: true で、limit があれば末尾に LIMIT を付ける", () => {
       expect(run(rec, "postgres", 100)).toMatchObject({ ok: true, recursive: true });
       expect(sqlOf(rec, "postgres", 100)).toBe(
-        'WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 5)\nSELECT * FROM "n"\nLIMIT 100',
+        "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 5)\nSELECT * FROM n\nLIMIT 100",
       );
     });
 
     it("limit が無ければ付けない (通常の自動 LIMIT に任せる)", () => {
       expect(sqlOf(rec)).not.toMatch(/LIMIT/);
+    });
+
+    it("SQLite は RECURSIVE なしでも再帰するので LIMIT を付ける", () => {
+      const src = "WITH n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE |i < 5) SELECT * FROM n";
+      expect(run(src, "sqlite", 100)).toMatchObject({ ok: true, recursive: true });
+      expect(sqlOf(src, "sqlite", 100)).toMatch(/\nLIMIT 100$/);
+      // MySQL / PG は RECURSIVE なしなら再帰ではない。
+      expect(run(src, "postgres", 100)).toMatchObject({ ok: true, recursive: false });
     });
 
     it("再帰でない CTE には明示の LIMIT を付けない (RECURSIVE 宣言があっても)", () => {

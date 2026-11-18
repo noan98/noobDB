@@ -1303,6 +1303,8 @@ export const QueryEditor = memo(
       y: number;
       hasSelection: boolean;
       hasContent: boolean;
+      /** 「この CTE までを実行」の基準位置。右クリックした位置 (選択中・キーボード由来はキャレット)。 */
+      cteOffset: number;
     } | null>(null);
     // 影響行数プリフライト (#737) の対象テキスト。updateListener が「選択 or 全文」を
     // 反映し、値が実際に変わったときだけ更新する (カーソル移動だけでは再計算しない)。
@@ -1421,7 +1423,7 @@ export const QueryEditor = memo(
     // 「この CTE までを実行」(#2409)。カーソルの CTE と依存する前段だけの `WITH ... SELECT * FROM <cte>` を
     // 組み立て、通常の実行ゲート (読み取り専用ガード・自動 LIMIT・危険クエリ確認) を通る新しい結果タブで
     // 実行する。エディタ本文は書き換えない。組み立てられないときは理由を通知して何もしない。
-    const runCteUnderCursor = (view: EditorView): boolean => {
+    const runCteUnderCursor = (view: EditorView, at?: number): boolean => {
       const run = onRunCteRef.current;
       if (!run) return false;
       if (cteRunUnsupportedRef.current) {
@@ -1430,7 +1432,7 @@ export const QueryEditor = memo(
       }
       const plan = buildCteRun({
         text: view.state.doc.toString(),
-        offset: view.state.selection.main.head,
+        offset: at ?? view.state.selection.main.head,
         driver: driverRef.current,
         limit: cteRunLimitRef.current,
       });
@@ -2349,7 +2351,7 @@ export const QueryEditor = memo(
           runFromCursor(view);
           break;
         case "runCte":
-          runCteUnderCursor(view);
+          runCteUnderCursor(view, editorMenu?.cteOffset);
           break;
         case "preview":
           previewSelectionOrAll();
@@ -2410,9 +2412,11 @@ export const QueryEditor = memo(
           y = caret.bottom;
         }
       }
+      const clicked = e.clientX === 0 && e.clientY === 0 ? null : view.posAtCoords({ x, y });
       setEditorMenu({
         x,
         y,
+        cteOffset: sel.empty && clicked !== null ? clicked : sel.head,
         hasSelection: !sel.empty && view.state.sliceDoc(sel.from, sel.to).trim().length > 0,
         hasContent: view.state.doc.toString().trim().length > 0,
       });
@@ -2435,7 +2439,7 @@ export const QueryEditor = memo(
         onRunCte && cteView && !cteRunUnsupported
           ? buildCteRun({
               text: cteView.state.doc.toString(),
-              offset: cteView.state.selection.main.head,
+              offset: editorMenu.cteOffset,
               driver,
               limit: cteRunLimit,
             })
