@@ -28,7 +28,7 @@ import { escapeHtml } from "./markdownLite";
 
 const W = 640;
 const H = 320;
-const PAD = { l: 56, r: 16, t: 16, b: 52 };
+const PAD = { l: 56, r: 48, t: 16, b: 52 };
 /** 軸ラベルに載せる文字数の上限 (超えたら末尾を … にする)。 */
 const LABEL_CHARS = 14;
 /** 横軸ラベルを間引く目安の個数。 */
@@ -186,8 +186,15 @@ function comboSvg(model: ChartModel, config: ChartConfig): string {
     const ci = bars.length;
     const right = scaleOf(valueExtent({ ...model, series: [line] }, "line"));
     const pts = linePoints(line.values, xs, right);
-    lineSvg = `<polyline class="k${ci} line" points="${pts.join(" ")}"/>${pts.map((p) => `<circle class="f${ci}" cx="${p.split(",")[0]}" cy="${p.split(",")[1]}" r="2.5"/>`).join("")}`;
-    rightAxis = yAxis(right, W - PAD.r, "r").replace(/<line[^>]*\/>/g, "");
+    const dots =
+      pts.length <= 60
+        ? pts
+            .map((p) => `<circle class="f${ci}" cx="${p.split(",")[0]}" cy="${p.split(",")[1]}" r="2.5"/>`)
+            .join("")
+        : "";
+    lineSvg = `<polyline class="k${ci} line" points="${pts.join(" ")}"/>${dots}`;
+    // 右軸は目盛りの文字だけ (格子線は左軸が引く)。右余白 PAD.r に収まる位置に置く。
+    rightAxis = yAxis(right, W - PAD.r, "r");
   }
   return `${yAxis(left, PAD.l)}${rects}${lineSvg}${rightAxis}<line class="axis" x1="${PAD.l}" x2="${W - PAD.r}" y1="${f(base)}" y2="${f(base)}"/>${xLabels(model.labels, xs)}`;
 }
@@ -296,12 +303,14 @@ export function buildChartFigure(
   config: ChartConfig,
   scope: string,
   ariaLabel: string,
+  legendMore?: (n: number) => string,
 ): ChartSvgResult | null {
   const model = buildChartModel(columns, rows, config);
   if (model.labels.length === 0 || model.series.length === 0) return null;
   const type = config.type;
   const pie = type === "pie";
-  const first = model.series[0]?.values ?? [];
+  // 円は負の値を 0 として描くので、色も画面 (ChartView) と同じくクランプ後の値で決める。
+  const first = (model.series[0]?.values ?? []).map((v) => (pie && Number.isFinite(v) ? Math.max(0, v) : v));
   const valueLight =
     (type === "bar" || pie) && (pie || model.series.length === 1)
       ? chartValueColors(first, config.palette, false)
@@ -338,11 +347,14 @@ export function buildChartFigure(
   if (inner === "") return null;
 
   // 凡例: 系列色の図は系列名、ラベルごとに着色する円・値着色の棒はラベル (上位だけ)。
-  const legendItems = (
-    colorByLabel && pie ? model.labels : colorByLabel ? [] : model.series.map((s) => s.name)
-  )
-    .slice(0, 20)
+  const names = colorByLabel && pie ? model.labels : colorByLabel ? [] : model.series.map((s) => s.name);
+  const LEGEND_MAX = 20;
+  const legendItems = names
+    .slice(0, LEGEND_MAX)
     .map((name, i) => `<li><span class="sw f${i}"></span>${escapeHtml(name)}</li>`);
+  if (names.length > LEGEND_MAX && legendMore) {
+    legendItems.push(`<li>${escapeHtml(legendMore(names.length - LEGEND_MAX))}</li>`);
+  }
   const legend = legendItems.length > 1 ? `<ul class="legend">${legendItems.join("")}</ul>` : "";
   const css = colorCss(scope, light, dark);
   return {

@@ -58,6 +58,8 @@ export interface NotebookExportText {
   chartTable: string;
   /** チャート SVG の代替テキスト (#2421)。 */
   chartAria: string;
+  /** 円グラフの凡例を省略したときの末尾の項目 (#2421)。例: `…他 5 件`。 */
+  chartMore: (n: number) => string;
   /** Markdown 書き出しのチャートセルの注記 (#2421)。例: `チャート (書き出し非対応) — 表で表示`。 */
   chartNotExported: string;
 }
@@ -285,16 +287,22 @@ function snapshotToHtml(
       cell.view === "chart"
         ? (() => {
             const cfg = cell.chart ?? defaultChartConfig(s.columns, s.rows);
-            return cfg ? buildChartFigure(s.columns, s.rows, cfg, chartScope, text.chartAria) : null;
+            return cfg
+              ? buildChartFigure(s.columns, s.rows, cfg, chartScope, text.chartAria, text.chartMore)
+              : null;
           })()
         : null;
+    const truncNote = s.truncated
+      ? `<p class="note">${escapeHtml(text.truncated(s.rows.length, s.totalRows))}</p>`
+      : "";
+    // 図は保存した行だけから描くので、全件の集計に見えないよう注記を図の直前にも置く。
+    if (fig && truncNote) out.push(truncNote);
     out.push(
       fig
         ? `${fig.html}\n<details><summary>${escapeHtml(text.chartTable)}</summary>\n${table}\n</details>`
         : table,
     );
-    if (s.truncated)
-      out.push(`<p class="note">${escapeHtml(text.truncated(s.rows.length, s.totalRows))}</p>`);
+    if (!fig && truncNote) out.push(truncNote);
     if (s.appliedAutoLimit !== null) {
       out.push(`<p class="note">${escapeHtml(text.autoLimit(s.appliedAutoLimit))}</p>`);
     }

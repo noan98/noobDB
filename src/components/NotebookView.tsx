@@ -135,6 +135,7 @@ function exportText(): NotebookExportText {
     connection: (name) => translate("notebookConnectionLine", { name }),
     cellLabel: (n) => translate("notebookCellLabel", { n }),
     toc: translate("notebookExportToc"),
+    chartMore: (n) => translate("notebookExportChartMore", { n }),
     chartTable: translate("notebookExportChartTable"),
     chartAria: translate("notebookExportChartAria"),
     chartNotExported: translate("notebookExportChartNotExported"),

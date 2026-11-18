@@ -19,6 +19,7 @@ const text: NotebookExportText = {
   cellLabel: (n) => `セル ${n}`,
   toc: "目次",
   chartTable: "表で表示",
+  chartMore: (n) => `ほか ${n} 件`,
   chartAria: "チャート",
   chartNotExported: "チャート (書き出し非対応) — 表で表示",
 };
@@ -256,5 +257,58 @@ describe("レポート仕上げ (#2421)", () => {
     expect(md).toContain("チャート (書き出し非対応) — 表で表示");
     expect(md).toContain("| <name>");
     expect(notebookToMarkdown(build(), text, NOW)).not.toContain("書き出し非対応");
+  });
+
+  it.each([
+    ["pie", '<path class="f0 slice"'],
+    ["line", "<polyline"],
+    ["scatter", "<circle"],
+    ["area", "<polygon"],
+    ["bar", "<rect"],
+  ] as const)("%s は図形要素を持ち、NaN / undefined を出さない", (type, shape) => {
+    const html = notebookToHtml(chartDoc(type), text, "ja", NOW);
+    const fig = html.slice(html.indexOf("<figure"), html.indexOf("</figure>"));
+    expect(fig).toContain(shape);
+    expect(fig).not.toMatch(/NaN|undefined|Infinity/);
+  });
+
+  it("combo の右軸の目盛りは viewBox 内 (右余白に収まる位置) に置く", () => {
+    const html = notebookToHtml(chartDoc("combo"), text, "ja", NOW);
+    const fig = html.slice(html.indexOf("<figure"), html.indexOf("</figure>"));
+    const xs = [...fig.matchAll(/<text class="tick" x="([\d.]+)"[^>]*text-anchor="start"/g)].map((m) =>
+      Number(m[1]),
+    );
+    expect(xs.length).toBeGreaterThan(0);
+    // viewBox 幅 640 のうち、始点から右端まで 30px 以上残る (2 文字以上のラベルが切れない)。
+    for (const x of xs) expect(640 - x).toBeGreaterThanOrEqual(30);
+  });
+
+  it("円の凡例が 20 件を超えたら「ほか N 件」を付ける。負値は 0 に丸めて描く", () => {
+    const rows = Array.from({ length: 25 }, (_, i) => [`k${i}`, i - 3] as [string, number]);
+    const fig = buildChartFigure(
+      [
+        { name: "k", type_name: "text" },
+        { name: "v", type_name: "int" },
+      ],
+      rows,
+      { type: "pie", xCol: 0, yCols: [1], aggregation: "none", palette: "blue" },
+      "chP",
+      "x",
+      (n) => `ほか ${n} 件`,
+    );
+    expect(fig?.html).toContain("ほか 5 件");
+    expect(fig?.html).not.toMatch(/NaN|undefined/);
+  });
+
+  it("行数上限で切り詰めたスナップショットは、図の前にも注記する", () => {
+    const d = chartDoc("bar");
+    const c = d.cells[1] as { snapshot: { truncated: boolean; totalRows: number } };
+    c.snapshot.truncated = true;
+    c.snapshot.totalRows = 99;
+    const html = notebookToHtml(d, text, "ja", NOW);
+    const note = html.indexOf("先頭 3 / 全 99");
+    expect(note).toBeGreaterThan(0);
+    expect(note).toBeLessThan(html.indexOf("<figure"));
+    expect(html.split("先頭 3 / 全 99")).toHaveLength(2);
   });
 });
