@@ -708,7 +708,7 @@ const en = {
   editorScrollMarkerMore: "+{n} more nearby",
   settingsSqlSemanticLintEnabled: "Warn on unknown tables and columns",
   settingsSqlSemanticLintEnabledHelp:
-    "Underlines table and column names that don't exist in the connected schema, before you run. Aliases, CTEs, subqueries and functions are resolved, and anything it can't resolve is left alone. Works only while the syntax check is on, and needs the schema to be loaded. On SQLite only table names are checked.",
+    "Underlines table and column names that don't exist in the connected schema, before you run. Aliases, CTEs, subqueries and functions are resolved, and anything it can't resolve is left alone. Works only while the syntax check is on, and needs the schema to be loaded. On SQLite only table names are checked. It also warns when the number of values in an INSERT ... VALUES row doesn't match the column count.",
 
   settingsPreflightImpact: "Impact-row preflight",
   settingsPreflightImpactHelp:
@@ -9688,7 +9688,7 @@ const ja: Dict = {
   editorScrollMarkerMore: "ほか {n} 件が近くにあります",
   settingsSqlSemanticLintEnabled: "存在しないテーブル・列を警告",
   settingsSqlSemanticLintEnabledHelp:
-    "接続中のスキーマに存在しないテーブル名・列名を、実行前に下線で警告します。エイリアス・CTE・サブクエリ・関数は解決し、解決できないものは警告しません。構文チェックがオンのときだけ働き、スキーマの取得後に有効になります。SQLite ではテーブル名だけを検査します。",
+    "接続中のスキーマに存在しないテーブル名・列名を、実行前に下線で警告します。エイリアス・CTE・サブクエリ・関数は解決し、解決できないものは警告しません。構文チェックがオンのときだけ働き、スキーマの取得後に有効になります。SQLite ではテーブル名だけを検査します。あわせて、INSERT ... VALUES の値の数が列数と合わない行も警告します。",
 
   settingsPreflightImpact: "影響行数プリフライト",
   settingsPreflightImpactHelp:

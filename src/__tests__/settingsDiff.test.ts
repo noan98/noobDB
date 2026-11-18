@@ -19,3 +19,15 @@ describe("diffSettingsPaths (#1631)", () => {
     expect(diffSettingsPaths(DEFAULT_SETTINGS, next)).toEqual([]);
   });
 });
+
+describe("insertColumnHints の取り込み (#2424)", () => {
+  it("不正値は既定 (cursor) に戻り、正しい値は保たれる", () => {
+    const wrap = (v: unknown) =>
+      deserializeSettingsImport(JSON.stringify({ settings: { insertColumnHints: v } }));
+    expect(wrap("bogus").insertColumnHints).toBe("cursor");
+    expect(wrap(3).insertColumnHints).toBe("cursor");
+    expect(wrap("always").insertColumnHints).toBe("always");
+    expect(wrap("off").insertColumnHints).toBe("off");
+    expect(deserializeSettingsImport("{}").insertColumnHints).toBe("cursor");
+  });
+});

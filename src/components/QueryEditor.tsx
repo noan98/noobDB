@@ -1609,6 +1609,7 @@ export const QueryEditor = memo(
                   tables: a.databaseSchema,
                   defaultDatabase: a.schemaTable?.database ?? a.defaultDatabase,
                   driver: a.driver,
+                  schemaTable: a.schemaTable,
                 };
               },
             }),

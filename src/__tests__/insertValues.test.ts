@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildColumnIndex,
+  ddlTargetTables,
+  indexLookup,
   type InsertStatement,
   insertArityIssues,
   insertValueHints,
@@ -138,13 +141,16 @@ describe("scanInsertValues", () => {
     const sql = "INSERT INTO a (x,y) VALUES (1,\n; INSERT INTO b (z) VALUES (1)";
     const r = scanInsertValues(sql);
     expect(r.map((s) => s.table)).toEqual(["a", "b"]);
-    expect(r[0].rows).toHaveLength(0);
+    expect(r[0].rows.map((x) => x.partial)).toEqual([true]);
     expect(r[1].rows).toHaveLength(1);
   });
 
   it("未終端の文字列・コメントはそこで止まり、例外にならない", () => {
     expect(() => scanInsertValues("INSERT INTO t (a) VALUES ('abc")).not.toThrow();
-    expect(scanInsertValues("INSERT INTO t (a) VALUES (1), ('abc")[0].rows).toHaveLength(1);
+    expect(scanInsertValues("INSERT INTO t (a) VALUES (1), ('abc")[0].rows.map((x) => x.partial)).toEqual([
+      false,
+      true,
+    ]);
     expect(scanInsertValues("/* x INSERT INTO t (a) VALUES (1)")).toEqual([]);
   });
 
@@ -304,5 +310,149 @@ describe("insertArityIssues", () => {
     const sql = `INSERT INTO t (a,b) VALUES ${Array.from({ length: 50 }, () => "(1)").join(",")}`;
     const r = insertArityIssues(scanInsertValues(sql), { lookup: none, max: 5 });
     expect(r).toHaveLength(5);
+  });
+});
+
+describe("partial 行 (入力中の閉じていないタプル) (#2424 review)", () => {
+  it("文書末尾で閉じていない行を途中の行として残す", () => {
+    const sql = "INSERT INTO t (a,b,c) VALUES (1, 'x', ";
+    const [s] = scanInsertValues(sql);
+    expect(s.rows).toHaveLength(1);
+    expect(s.rows[0].partial).toBe(true);
+    expect(s.rows[0].count).toBe(2);
+    expect(vals(sql, s)).toEqual(["1", "'x'"]);
+    // 警告は出さない
+    expect(insertArityIssues([s], { lookup: none })).toEqual([]);
+  });
+
+  it("`;` で閉じていない行も残し、次の文は読む", () => {
+    const sql = "INSERT INTO a (x,y) VALUES (1,\n; INSERT INTO b (z) VALUES (1)";
+    const r = scanInsertValues(sql);
+    expect(r[0].rows).toHaveLength(1);
+    expect(r[0].rows[0].partial).toBe(true);
+    expect(r[0].rows[0].count).toBe(1);
+    expect(r[1].rows[0].partial).toBe(false);
+  });
+
+  it("未終端の文字列の手前までの値は残る", () => {
+    const sql = "INSERT INTO t (a,b) VALUES (1, 'abc";
+    const [s] = scanInsertValues(sql);
+    expect(s.rows[0].partial).toBe(true);
+    expect(vals(sql, s)).toEqual(["1"]);
+  });
+
+  it("表示範囲の下端で切れたタプルは、そこまでの値をヒントにできる", () => {
+    const sql = "INSERT INTO t (a,b,c) VALUES (1, 2, 3), (4, 5, 6)";
+    const to = sql.indexOf("5") + 1;
+    const text = sql.slice(0, to);
+    const stmts = scanInsertValues(text, { to });
+    const h = insertValueHints(text, stmts, { mode: "always", lookup: none });
+    expect(h.map((x) => x.label)).toEqual(["a", "b", "c", "a", "b"]);
+  });
+});
+
+describe("PostgreSQL の入れ子ブロックコメント", () => {
+  it("postgres は深さを数え、他は最初の */ で閉じる", () => {
+    const sql = "INSERT INTO t (a,b) VALUES (1, /* x /* y */ , 9 */ 2)";
+    expect(scanInsertValues(sql, { driver: "postgres" })[0].rows[0].count).toBe(2);
+    // MySQL では最初の */ で閉じるので、`, 9 */ 2` が値として残る。
+    expect(scanInsertValues(sql, { driver: "mysql" })[0].rows[0].count).toBe(3);
+  });
+});
+
+describe("seek (表示範囲だけを読む)", () => {
+  const cols = ["id", "name", "email", "status", "total"];
+  const row = (i: number) => `(${i}, 'user_${i}', 'm${i}@x.com', 'paid, ok', ${i * 3.5})`;
+  const header = `INSERT INTO orders (${cols.join(",")}) VALUES`;
+  const sep: Record<string, string> = { multi: ",\n", dense: ",", indent: ",\n  " };
+
+  for (const style of Object.keys(sep)) {
+    it(`${style}: seek と全走査で表示範囲のタプルが一致する`, () => {
+      const doc = `${header}\n${Array.from({ length: 10_000 }, (_, i) => row(i)).join(sep[style])};\n`;
+      const from = doc.length - 1500;
+      const to = doc.length;
+      const full = scanInsertValues(doc, { from, to })[0];
+      const seek = scanInsertValues(doc, { from, to, seek: true })[0];
+      const pick = (s: InsertStatement) => s.rows.filter((r) => r.values).map((r) => [r.from, r.to, r.count]);
+      expect(pick(seek)).toEqual(pick(full));
+      expect(seek.columns?.map((c) => c.name)).toEqual(cols);
+      expect(seek.rows.length).toBeLessThan(100);
+    });
+  }
+
+  it("複数の文の途中でも、直前の文の先頭から読んで同じ結果になる", () => {
+    const small = Array.from({ length: 2000 }, (_, i) => `INSERT INTO a (x,y) VALUES (${i}, ${i});`).join(
+      "\n",
+    );
+    const doc = `${small}\nINSERT INTO b (p,q) VALUES (1, 2),\n(3, 4);`;
+    const from = doc.length - 12;
+    const seek = scanInsertValues(doc, { from, to: doc.length, seek: true });
+    expect(seek.at(-1)?.table).toBe("b");
+    expect(seek.at(-1)?.rows.at(-1)?.count).toBe(2);
+  });
+
+  it("1.1MB・末尾付近の走査は数十 ms 以内 (全走査の 1/10 未満)", () => {
+    const wide = (i: number) =>
+      `(${i}, 'user_${i}', 'mail${i}@example.com', 'paid', ${i * 3.5}, NOW(), NULL, 'note with (paren), comma', ${i % 7}, 'x')`;
+    const doc = `INSERT INTO orders (a,b,c,d,e,f,g,h,i,j) VALUES\n${Array.from({ length: 10_000 }, (_, i) => wide(i)).join(",\n")};\n`;
+    expect(doc.length).toBeGreaterThan(1_000_000);
+    const from = doc.length - 3000;
+    const run = () => {
+      const t0 = performance.now();
+      scanInsertValues(doc, { from, to: doc.length, seek: true });
+      return performance.now() - t0;
+    };
+    run();
+    const best = Math.min(run(), run(), run());
+    expect(best).toBeLessThan(40);
+  });
+});
+
+describe("ddlTargetTables / buildColumnIndex / indexLookup", () => {
+  it("CREATE / ALTER / DROP / RENAME の対象表を集める", () => {
+    const sql = [
+      "DROP TABLE IF EXISTS `users`;",
+      'CREATE TABLE IF NOT EXISTS "app"."Orders" (id int);',
+      "ALTER TABLE items ADD COLUMN x int;",
+      "RENAME TABLE a TO b, c TO d;",
+      "ALTER TABLE old RENAME TO fresh;",
+      "CREATE TEMPORARY TABLE tmp1 (x int);",
+      "INSERT INTO plain VALUES (1);",
+    ].join("\n");
+    const t = ddlTargetTables(sql);
+    for (const n of ["users", "orders", "items", "a", "b", "c", "d", "old", "fresh", "tmp1"])
+      expect(t.has(n)).toBe(true);
+    expect(t.has("plain")).toBe(false);
+    expect(ddlTargetTables("SELECT 1").size).toBe(0);
+  });
+
+  it("DDL の対象表の列数は引かない (列リスト省略の INSERT は警告もヒントもしない)", () => {
+    const index = buildColumnIndex([{ name: "users", columns: ["id", "name", "mail"] }]);
+    const sql = "DROP TABLE IF EXISTS users;\nCREATE TABLE users (id int);\nINSERT INTO users VALUES (1);";
+    const stmts = scanInsertValues(sql);
+    const withDdl = indexLookup(index, "app", ddlTargetTables(sql));
+    expect(insertArityIssues(stmts, { lookup: withDdl })).toEqual([]);
+    expect(insertValueHints(sql, stmts, { mode: "always", lookup: withDdl })).toEqual([]);
+    // DDL が無ければ従来どおり警告する。
+    expect(insertArityIssues(stmts, { lookup: indexLookup(index, "app") })).toHaveLength(1);
+    // 明示の列リストは DDL の対象でも検査できる。
+    const explicit = scanInsertValues("ALTER TABLE users ADD x int;\nINSERT INTO users (a,b) VALUES (1);");
+    expect(insertArityIssues(explicit, { lookup: withDdl })).toHaveLength(1);
+  });
+
+  it("大文字小文字違いの同名表は衝突として null、概観で列が空なら schemaTable で補う", () => {
+    const index = buildColumnIndex(
+      [
+        { name: "Users", columns: ["a"] },
+        { name: "users", columns: ["a", "b"] },
+        { name: "empty", columns: [] },
+      ],
+      { name: "empty", columns: ["p", "q"] },
+    );
+    expect(index.get("users")).toBeNull();
+    expect(index.get("empty")).toEqual(["p", "q"]);
+    expect(indexLookup(index, "app")("users", null)).toBeNull();
+    expect(indexLookup(index, "app")("empty", "other")).toBeNull();
+    expect(indexLookup(index, "app")("empty", "app")).toEqual(["p", "q"]);
   });
 });

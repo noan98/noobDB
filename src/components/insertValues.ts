@@ -56,7 +56,18 @@ export interface ScanOptions {
   to?: number;
   /** 1 文あたりに読む行数の上限。既定は無制限。 */
   maxRows?: number;
+  /**
+   * `from` が文書の奥にあるとき、文書の先頭から全部は読まず、`from` を含む文の先頭 (直前の `;` + 改行) から読み、
+   * 巨大な VALUES は `from` 直前のタプルの境界 (`), (`) へ飛ぶ (ヒューリスティック)。表示範囲だけが欲しい
+   * エディタ向け。境界を誤っても、その表示範囲のヒントが欠けるか不正確になるだけで、警告には使わない。
+   */
+  seek?: boolean;
 }
+
+/** `seek` でタプルの境界を探すときに `from` から遡る最大文字数。 */
+const SEEK_WINDOW = 20_000;
+/** `from` がこれ以上先頭から離れているときだけ飛ぶ。 */
+const SEEK_MIN_DISTANCE = 2_000;
 
 // ---------------------------------------------------------------------------
 // トークナイザ
@@ -101,14 +112,19 @@ function scanQuoted(text: string, start: number, quote: string, backslash: boole
 }
 
 /** 区切りのトークンをコールバックへ渡す。コールバックが false を返したら止める。 */
-function forEachToken(text: string, driver: string | null | undefined, cb: (t: Tok) => boolean): void {
+function forEachToken(
+  text: string,
+  driver: string | null | undefined,
+  cb: (t: Tok) => boolean,
+  startAt = 0,
+): void {
   const postgres = driver === "postgres";
   const sqlite = driver === "sqlite";
   const mysql = !postgres && !sqlite;
   const n = text.length;
   const emit = (kind: TokKind, from: number, to: number, norm?: string, raw?: string) =>
     cb({ kind, norm: norm ?? text.slice(from, to), raw: raw ?? text.slice(from, to), from, to });
-  let i = 0;
+  let i = startAt;
   while (i < n) {
     const c = text[i];
     if (c === " " || c === "\n" || c === "\t" || c === "\r" || c === "\f" || c === "\v") {
@@ -126,7 +142,24 @@ function forEachToken(text: string, driver: string | null | undefined, cb: (t: T
       continue;
     }
     if (c === "/" && text[i + 1] === "*") {
-      const end = text.indexOf("*/", i + 2);
+      // PostgreSQL のブロックコメントは入れ子にできる (MySQL / SQLite はできない)。
+      let end = -1;
+      if (postgres) {
+        let depth = 1;
+        let k = i + 2;
+        while (k < n && depth > 0) {
+          if (text[k] === "/" && text[k + 1] === "*") {
+            depth++;
+            k += 2;
+          } else if (text[k] === "*" && text[k + 1] === "/") {
+            depth--;
+            k += 2;
+          } else k++;
+        }
+        end = depth === 0 ? k - 2 : -1;
+      } else {
+        end = text.indexOf("*/", i + 2);
+      }
       if (end < 0) {
         emit("bad", i, n);
         return;
@@ -250,6 +283,28 @@ const isName = (t: Tok) => t.kind === "word" || t.kind === "qid";
 const isPunct = (t: Tok, ch: string) => t.kind === "punct" && t.norm === ch;
 const isWord = (t: Tok, ...ws: string[]) => t.kind === "word" && ws.includes(t.norm);
 
+/** `pos` より前で最後の「`;` + 改行」の直後。無ければ 0 (文字列の値に `;` が混ざっても拾いにくい形だけを見る)。 */
+function statementStartBefore(text: string, pos: number): number {
+  const a = text.lastIndexOf(";\n", pos - 1);
+  const b = text.lastIndexOf(";\r\n", pos - 1);
+  const m = Math.max(a, b);
+  return m < 0 ? 0 : m + 1;
+}
+
+/**
+ * 最初のタプル (`firstRow`) より先にある `from` の直前の、タプルの境界 (`) , (`) の `(` の位置。
+ * `from` から `SEEK_WINDOW` 文字だけ遡って探し、無ければ -1 (飛ばない)。
+ */
+function findRowBoundary(text: string, firstRow: number, from: number): number {
+  if (from - firstRow < SEEK_MIN_DISTANCE) return -1;
+  const start = Math.max(firstRow + 1, from - SEEK_WINDOW);
+  const re = /\)\s*,\s*\(/g;
+  const win = text.slice(start, Math.min(text.length, from + 1));
+  let last = -1;
+  for (let m = re.exec(win); m; m = re.exec(win)) last = start + m.index + m[0].length - 1;
+  return last;
+}
+
 /**
  * `text` の `INSERT ... VALUES` 文を列リストと各タプルの値の範囲つきで返す。
  * `opts.to` を超えたトークンは読まない。壊れた (引用符が閉じていない) 箇所に達したら、そこまでの結果を返す。
@@ -277,6 +332,9 @@ export function scanInsertValues(text: string, opts: ScanOptions = {}): InsertSt
   let vals: Span[] = [];
   let valFrom = -1;
   let valTo = -1;
+  // seek 用
+  let seeking = !!opts.seek && rangeFrom > 0;
+  let resumeAt = -1;
 
   const abort = () => {
     state = "skip";
@@ -286,6 +344,11 @@ export function scanInsertValues(text: string, opts: ScanOptions = {}): InsertSt
     vals.push(valFrom >= 0 ? { from: valFrom, to: valTo } : { from: at, to: at });
     count++;
     valFrom = -1;
+  };
+  /** 閉じていない行を、そこまでの値で途中の行として積む (入力中・表示範囲の端で切れた行)。 */
+  const pushPartial = (to: number) => {
+    if (valFrom >= 0) closeValue(to);
+    pushRow(to, true);
   };
   const pushRow = (to: number, partial: boolean) => {
     if (!cur) return;
@@ -316,11 +379,15 @@ export function scanInsertValues(text: string, opts: ScanOptions = {}): InsertSt
       return false;
     }
     if (t.from > rangeTo) {
-      if (state === "inRow" && cur) pushRow(t.from, true);
+      if (state === "inRow" && cur) {
+        pushPartial(t.from);
+        state = "skip";
+      }
       return false;
     }
     if (isPunct(t, ";")) {
-      // 閉じていない行の途中でも `;` で文が終わる (入力中に後続の文を飲み込まない)。
+      // 閉じていない行の途中でも `;` で文が終わる (入力中に後続の文を飲み込まない)。途中の行は残す。
+      if (state === "inRow" && cur) pushPartial(t.from);
       state = "start";
       cur = null;
       return true;
@@ -415,6 +482,15 @@ export function scanInsertValues(text: string, opts: ScanOptions = {}): InsertSt
             abort();
             return true;
           }
+          if (seeking) {
+            // 最初のタプルに来た。表示範囲がずっと先なら、その直前のタプルの境界へ飛ぶ。
+            seeking = false;
+            const target = findRowBoundary(text, t.from, rangeFrom);
+            if (target > t.from) {
+              resumeAt = target;
+              return false;
+            }
+          }
           if (cur.rows.length === 0 && !out.includes(cur)) out.push(cur);
           state = "inRow";
           depth = 1;
@@ -456,7 +532,17 @@ export function scanInsertValues(text: string, opts: ScanOptions = {}): InsertSt
     }
   };
 
-  forEachToken(text, opts.driver, handle);
+  let startAt = 0;
+  if (seeking) startAt = statementStartBefore(text, rangeFrom);
+  forEachToken(text, opts.driver, handle, startAt);
+  if (resumeAt >= 0) {
+    // 飛び先はタプルの開き括弧。ヘッダ (cur) を引き継いで、そこから読み直す。
+    state = "rowsExpect";
+    forEachToken(text, opts.driver, handle, resumeAt);
+  }
+  // 文書 (または `to`) の終わりで閉じていない行も、途中の行として残す。
+  const finalState = state as State;
+  if (finalState === "inRow" && (cur as InsertStatement | null)) pushPartial(text.length);
   return out;
 }
 
@@ -467,7 +553,13 @@ export function scanInsertValues(text: string, opts: ScanOptions = {}): InsertSt
 /** 表名 (小文字) → 列名 (定義順)。不明なら null。 */
 export type ColumnLookup = (table: string, qualifier: string | null) => readonly string[] | null;
 
-/** 文の対象列。明示の列リストがあればそれ、無ければスキーマの定義順。 */
+/**
+ * 文の対象列。明示の列リストがあればそれ、無ければスキーマの定義順。
+ *
+ * 既知の制限: スキーマの列一覧が `INSERT INTO t VALUES (...)` の暗黙の列と一致しないことがある
+ * (MySQL の INVISIBLE 列 / GIPK の `my_row_id`、PostgreSQL の生成列など)。列リストを省略した文の
+ * ヒントと列数の警告はベストエフォートで、ずれうる。確実に合わせたいときは列リストを書く。
+ */
 export function resolveInsertColumns(stmt: InsertStatement, lookup: ColumnLookup): string[] | null {
   if (stmt.columns) return stmt.columns.map((c) => c.name);
   const cols = lookup(stmt.table, stmt.qualifier);
@@ -605,6 +697,83 @@ export function insertArityIssues(stmts: readonly InsertStatement[], opts: Arity
       out.push({ from: row.from, to: row.to, columns: names.length, values: row.count });
       if (out.length >= max) return out;
     }
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// スキーマの索引と、スクリプト内で DDL の対象になった表
+// ---------------------------------------------------------------------------
+
+/** 表名 (小文字) → 定義順の列名。同名 (大文字小文字違い) の衝突は null (使わない)。 */
+export type ColumnIndex = Map<string, readonly string[] | null>;
+
+/**
+ * スキーマ概観から `ColumnIndex` を作る。概観で列が空の表は `schemaTable` (アクティブテーブル) の列で補う。
+ * 大文字小文字だけ違う表名が複数あるときは、どちらの列か決められないので null にして検査・ヒントを止める。
+ */
+export function buildColumnIndex(
+  overview: ReadonlyArray<{ name: string; columns: readonly string[] }> | null | undefined,
+  schemaTable?: { name: string; columns: readonly string[] } | null,
+): ColumnIndex {
+  const index: ColumnIndex = new Map();
+  for (const t of overview ?? []) {
+    let cols = t.columns;
+    if (cols.length === 0 && schemaTable && schemaTable.name === t.name) cols = schemaTable.columns;
+    const key = t.name.toLowerCase();
+    index.set(key, index.has(key) ? null : cols.length > 0 ? cols : null);
+  }
+  return index;
+}
+
+/** `ColumnIndex` と、既定 DB / DDL の対象表から `ColumnLookup` を作る。 */
+export function indexLookup(
+  index: ColumnIndex,
+  defaultDatabase: string | null | undefined,
+  ddlTables?: ReadonlySet<string>,
+): ColumnLookup {
+  const db = defaultDatabase ? defaultDatabase.toLowerCase() : null;
+  return (table, qualifier) => {
+    if (qualifier !== null && qualifier !== db) return null;
+    // 同じスクリプトで作り直した / 変更した表は、接続中のスキーマの列とは限らない。
+    if (ddlTables?.has(table)) return null;
+    return index.get(table) ?? null;
+  };
+}
+
+const DDL_TABLE_RE =
+  /\b(create|alter|drop|rename)\s+(?:(?:or\s+replace|temporary|temp|unlogged|global|local|virtual|only)\s+)*table\b([^;]*)/gi;
+const RENAME_TO_RE = /\brename\s+(?:to|as)\s+((?:[`"[]?[\w$]+[`"\]]?\s*\.\s*)*[`"[]?[\w$]+[`"\]]?)/gi;
+const NAME_RE = /[`"[]?([\w$\u0080-\uffff]+)[`"\]]?/g;
+
+/**
+ * スクリプト内で CREATE / ALTER / DROP / RENAME TABLE の対象になった表名 (小文字、修飾は最後の要素) を集める。
+ * mysqldump の DROP / CREATE / INSERT や、ALTER ... ADD COLUMN の後の INSERT を、接続中の (古い) スキーマの列数と
+ * 比べて全行警告しないための除外リスト。文字列やコメントの中の `drop table x` も拾うが、拾い過ぎは「警告しない」
+ * 側に倒れるだけで安全。
+ */
+export function ddlTargetTables(text: string): Set<string> {
+  const out = new Set<string>();
+  if (!/(?:create|alter|drop|rename)/i.test(text)) return out;
+  DDL_TABLE_RE.lastIndex = 0;
+  for (let m = DDL_TABLE_RE.exec(text); m; m = DDL_TABLE_RE.exec(text)) {
+    const verb = m[1].toLowerCase();
+    // `DROP TABLE a, b` / `RENAME TABLE a TO b, c TO d` は複数の表を持つ。他は最初の 1 つ。
+    const body = m[2].replace(/\bif\s+(?:not\s+)?exists\b/gi, " ");
+    if (verb === "drop" || verb === "rename") {
+      for (const n of body.matchAll(NAME_RE)) out.add(n[1].toLowerCase());
+    } else {
+      const head = body.trimStart();
+      const chain = /^((?:[`"[]?[\w$\u0080-\uffff]+[`"\]]?\s*\.\s*)*)[`"[]?([\w$\u0080-\uffff]+)[`"\]]?/.exec(
+        head,
+      );
+      if (chain) out.add(chain[2].toLowerCase());
+    }
+  }
+  RENAME_TO_RE.lastIndex = 0;
+  for (let m = RENAME_TO_RE.exec(text); m; m = RENAME_TO_RE.exec(text)) {
+    const last = m[1].split(".").pop() ?? "";
+    out.add(last.replace(/[`"[\]\s]/g, "").toLowerCase());
   }
   return out;
 }

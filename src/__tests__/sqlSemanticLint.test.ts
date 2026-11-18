@@ -387,3 +387,33 @@ describe("insertArityDiagnostics (#2424)", () => {
     expect(insertArityDiagnostics("INSERT INTO orders (id) VALUES (1, 2)", null, MSG)).toEqual([]);
   });
 });
+
+describe("insertArityDiagnostics: DDL・大小文字衝突・メモ化 (#2424 review)", () => {
+  const mk = (cols: string[], extra: Array<{ name: string; columns: string[] }> = []) =>
+    buildSemanticSchema({
+      driver: "mysql",
+      databaseSchema: [{ name: "users", columns: cols }, ...extra],
+      defaultDatabase: "app",
+    });
+  it("同じスクリプトで DROP / CREATE / ALTER した表は列数と比べない", () => {
+    const schema = mk(["id", "name", "mail"]);
+    const dump =
+      "DROP TABLE IF EXISTS `users`;\nCREATE TABLE `users` (id int);\nINSERT INTO `users` VALUES (1);";
+    expect(insertArityDiagnostics(dump, schema, MSG)).toEqual([]);
+    const alter = "ALTER TABLE users ADD COLUMN extra int;\nINSERT INTO users VALUES (1,2,3,4);";
+    expect(insertArityDiagnostics(alter, schema, MSG)).toEqual([]);
+    expect(insertArityDiagnostics("INSERT INTO users VALUES (1);", schema, MSG)).toHaveLength(1);
+  });
+  it("大文字小文字違いの同名表は列数不明として黙る", () => {
+    const schema = mk(["id", "name"], [{ name: "Users", columns: ["id"] }]);
+    expect(insertArityDiagnostics("INSERT INTO users VALUES (1);", schema, MSG)).toEqual([]);
+  });
+  it("同じ文書の再 lint (カーソル移動) は結果が変わらない", () => {
+    const schema = mk(["id", "name"]);
+    const doc = "INSERT INTO users VALUES (1);";
+    const a = insertArityDiagnostics(doc, schema, MSG, { cursor: 0 });
+    const b = insertArityDiagnostics(doc, schema, MSG, { cursor: doc.length });
+    expect(a).toHaveLength(1);
+    expect(b).toHaveLength(1);
+  });
+});
