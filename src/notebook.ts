@@ -12,7 +12,7 @@
  */
 import type { CellValue, Column, ConnectionProfile } from "./api/tauri";
 import { MASK_PLACEHOLDER, resolveMaskedColumns, type MaskConfig } from "./components/columnMask";
-import { isReadOnlySql } from "./dangerousSql";
+import { isReadOnlySql, maskLiterals } from "./dangerousSql";
 import type { ChartConfig } from "./components/chartData";
 import { sanitizeChartConfig } from "./components/chartData";
 
@@ -59,6 +59,22 @@ export interface NotebookSnapshot {
   valuesTruncated: boolean;
   /** 自動 LIMIT が掛かった行数 (掛からなければ null)。「全 N 行」が実件数でないことを示す。 */
   appliedAutoLimit: number | null;
+  /**
+   * この結果を得たときに実行した SQL の本文 (#2420)。SQL を編集した後の「古い結果」の判定と差分表示に使う。
+   * 古いファイル (#2420 より前) には無いので null (= 不明。古いとは判定しない)。
+   */
+  sql: string | null;
+  /** 実行した接続のプロファイル ID と表示名 (#2396 のセルの接続と突き合わせる)。不明なら null。 */
+  connection: NotebookConnectionRef | null;
+  /** 実行先のデータベース (PostgreSQL ではスキーマ)。接続の既定なら null。 */
+  database: string | null;
+}
+
+/** スナップショットを得た実行の出どころ (`buildSnapshot` / `buildErrorSnapshot` に渡す)。 */
+export interface SnapshotSource {
+  sql: string;
+  connection: NotebookConnectionRef | null;
+  database: string | null;
 }
 
 export type NotebookCellView = "table" | "chart";
@@ -287,12 +303,25 @@ export interface SnapshotInput {
   appliedAutoLimit?: number | null;
 }
 
+function sourceFields(
+  source: SnapshotSource | null,
+): Pick<NotebookSnapshot, "sql" | "connection" | "database"> {
+  return {
+    sql: source ? source.sql : null,
+    connection: source?.connection
+      ? { profileId: source.connection.profileId, name: source.connection.name }
+      : null,
+    database: source?.database ?? null,
+  };
+}
+
 /** 実行結果からスナップショットを作る。行数の上限で切り詰め、マスクを掛ける。 */
 export function buildSnapshot(
   input: SnapshotInput,
   limit: number,
   mask: MaskConfig,
   now: Date = new Date(),
+  source: SnapshotSource | null = null,
 ): NotebookSnapshot {
   const cap = clampSnapshotRowLimit(limit);
   const kept = input.rows.slice(0, cap);
@@ -311,6 +340,7 @@ export function buildSnapshot(
     maskedColumns: masked.maskedColumns,
     valuesTruncated: clipped.truncated,
     appliedAutoLimit: input.appliedAutoLimit ?? null,
+    ...sourceFields(source),
   };
 }
 
@@ -319,6 +349,7 @@ export function buildErrorSnapshot(
   error: string,
   elapsedMs: number,
   now: Date = new Date(),
+  source: SnapshotSource | null = null,
 ): NotebookSnapshot {
   return {
     columns: [],
@@ -333,7 +364,153 @@ export function buildErrorSnapshot(
     maskedColumns: [],
     valuesTruncated: false,
     appliedAutoLimit: null,
+    ...sourceFields(source),
   };
+}
+
+// ── 古い結果の判定 (#2420) ───────────────────────────────────────
+
+/**
+ * SQL を比較用に正規化する。`maskLiterals` (安全網と同じ字句規則: ドル引用・ドライバ別のバックスラッシュ・
+ * `#` コメント・MySQL のバージョンコメント・SQLite の `[識別子]` に対応) で「文字列リテラル / 識別子 / コメントの中」を判定し、
+ * その**外**の連続する空白を 1 つにする。前後の空白と、トップレベルの末尾セミコロンも落とす
+ * (コメントの中の `;` や、コメントの後ろの `;` は落とさない)。
+ * リテラル・コメントの中身 (空白・改行を含む) と、行コメントを終わらせる改行はそのまま残す
+ * (`-- c\nFROM t` と `-- c FROM t` は別の SQL)。大文字小文字は区別する。
+ * `driver` が分からなければ undefined (MySQL 方言を含めて保守的に読む)。
+ */
+const MAX_NEWLINE_PROBES = 300;
+
+function newlineIsSignificant(probe: string, i: number, driver: string | undefined, many: boolean): boolean {
+  if (many) return true;
+  const replaced = `${probe.slice(0, i)}\u0001${probe.slice(i + 1)}`;
+  return maskLiterals(replaced, driver, { cache: false })[i] === " ";
+}
+
+export function normalizeSqlForCompare(sql: string, driver?: string): string {
+  // 空白・タブを全部タブにしてからマスクする: 外側の空白はタブのまま残り、リテラル / コメントの中は空白に潰れるので区別できる。
+  const probe = sql.replace(/[ \t\r]/g, "\t");
+  const masked = maskLiterals(probe, driver);
+  // 改行ごとにマスクし直すので、極端に多いときは (潰さず全部残す) 保守的な扱いにして計算量を抑える。
+  const many = (sql.match(/\n/g)?.length ?? 0) > MAX_NEWLINE_PROBES;
+  let out = "";
+  // out の各文字が「リテラル / コメントの外」か (末尾の落とし判定に使う)。
+  const outside: boolean[] = [];
+  let pending = false;
+  const push = (ch: string, isOutside: boolean) => {
+    out += ch;
+    outside.push(isOutside);
+  };
+  for (let i = 0; i < sql.length; i++) {
+    const ch = sql[i];
+    const isSpace = ch === " " || ch === "\t" || ch === "\r";
+    const isNewline = ch === "\n";
+    if (isSpace) {
+      if (masked[i] === " ") push(ch, false);
+      else pending = true;
+    } else if (isNewline) {
+      // 改行はマスクでも残るので、マスク結果の比較では内外が分からない。この 1 文字だけ別の文字に差し替えて
+      // マスクし直し、それでも潰れる (= リテラル / ブロックコメントの中、または行コメントの終端) なら残す。
+      if (newlineIsSignificant(probe, i, driver, many)) {
+        pending = false;
+        push(ch, false);
+      } else pending = true;
+    } else {
+      if (pending && out.length > 0 && !out.endsWith("\n")) push(" ", true);
+      pending = false;
+      push(ch, masked[i] === probe[i]);
+    }
+  }
+  // 末尾: 外側の空白・セミコロン、コメントを終わらせた後の改行を落とす。
+  let end = out.length;
+  while (end > 0) {
+    const c = out[end - 1];
+    if (/\s/.test(c) && (outside[end - 1] || c === "\n" || c === "\r")) end -= 1;
+    else if (c === ";" && outside[end - 1]) end -= 1;
+    else break;
+  }
+  return out.slice(0, end);
+}
+
+/** 2 つの SQL が (空白・末尾セミコロンの違いを除いて) 同じか。 */
+export function sameSql(a: string, b: string, driver?: string): boolean {
+  return normalizeSqlForCompare(a, driver) === normalizeSqlForCompare(b, driver);
+}
+
+/** 結果が古いと判断した理由。 */
+export type StaleReason = "sql" | "connection";
+
+/**
+ * セルの結果の鮮度。
+ * - `none`: 結果が無い (未実行)。
+ * - `unknown`: 実行時の SQL を記録していない古いファイルのスナップショット。古いとは判定しない。
+ * - `fresh`: 現在の SQL と実行時の SQL が同じ (空白・末尾セミコロンの違いは無視)。
+ * - `stale`: SQL か、セルに指定した接続が実行後に変わった。
+ *
+ * 接続は、セルが接続を明示 (`cell.connection`) しているときだけ比べる。既定 (null) のセルは「現在の接続」で動くので、
+ * 接続を切り替えるたびに全セルが古い扱いになるのを避ける (実行した接続はスナップショットに表示として残す)。
+ */
+export type SnapshotFreshness =
+  | { kind: "none" }
+  | { kind: "unknown" }
+  | { kind: "fresh" }
+  | { kind: "stale"; reasons: StaleReason[] };
+
+export function snapshotFreshness(cell: NotebookSqlCell, driver?: string): SnapshotFreshness {
+  const s = cell.snapshot;
+  if (!s) return { kind: "none" };
+  if (s.sql === null) return { kind: "unknown" };
+  const reasons: StaleReason[] = [];
+  if (!sameSql(cell.sql, s.sql, driver)) reasons.push("sql");
+  if (cell.connection && s.connection && cell.connection.profileId !== s.connection.profileId) {
+    reasons.push("connection");
+  }
+  return reasons.length > 0 ? { kind: "stale", reasons } : { kind: "fresh" };
+}
+
+/** 行単位の差分 (`-` 削除 / `+` 追加 / 空白 2 つは共通)。長すぎる入力は null (差分を出さない)。 */
+export function diffSqlLines(before: string, after: string, maxLines = 1000): string | null {
+  const norm = (t: string) => t.replace(/\r\n?/g, "\n").trimEnd().split("\n");
+  const a = norm(before);
+  const b = norm(after);
+  if (a.length > maxLines || b.length > maxLines) return null;
+  const lcs: number[][] = Array.from({ length: a.length + 1 }, () => new Array<number>(b.length + 1).fill(0));
+  for (let i = a.length - 1; i >= 0; i -= 1) {
+    for (let j = b.length - 1; j >= 0; j -= 1) {
+      lcs[i][j] = a[i] === b[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+    }
+  }
+  const out: string[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) {
+      out.push(`  ${a[i]}`);
+      i += 1;
+      j += 1;
+    } else if (lcs[i + 1][j] >= lcs[i][j + 1]) {
+      out.push(`- ${a[i]}`);
+      i += 1;
+    } else {
+      out.push(`+ ${b[j]}`);
+      j += 1;
+    }
+  }
+  for (; i < a.length; i += 1) out.push(`- ${a[i]}`);
+  for (; j < b.length; j += 1) out.push(`+ ${b[j]}`);
+  return out.join("\n");
+}
+
+/** 古い結果を持つ SQL セルの数。 */
+export function countStaleCells(
+  cells: readonly NotebookCell[],
+  driverOf?: (cell: NotebookSqlCell) => string | undefined,
+): number {
+  let n = 0;
+  for (const c of cells) {
+    if (c.kind === "sql" && snapshotFreshness(c, driverOf?.(c)).kind === "stale") n += 1;
+  }
+  return n;
 }
 
 // ── 保存 / 読み込み ────────────────────────────────────────────────
@@ -358,6 +535,9 @@ function snapshotForFile(s: NotebookSnapshot, mask: MaskConfig) {
     maskedColumns,
     valuesTruncated: s.valuesTruncated || clipped.truncated,
     appliedAutoLimit: s.appliedAutoLimit,
+    sql: s.sql,
+    connection: s.connection ? { profileId: s.connection.profileId, name: s.connection.name } : null,
+    database: s.database,
   };
 }
 
@@ -462,6 +642,10 @@ function parseSnapshot(raw: unknown, limit: number): NotebookSnapshot | null {
     maskedColumns: Array.isArray(raw.maskedColumns)
       ? raw.maskedColumns.filter((x): x is string => typeof x === "string").slice(0, MAX_COLUMNS)
       : [],
+    // #2420 以前のファイルには無い。無ければ「不明」(null) として読む。
+    sql: typeof raw.sql === "string" ? raw.sql.slice(0, MAX_CELL_TEXT_CHARS) : null,
+    connection: parseConnectionRef(raw.connection),
+    database: typeof raw.database === "string" && raw.database ? raw.database.slice(0, 200) : null,
   };
 }
 
