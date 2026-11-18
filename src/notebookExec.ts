@@ -8,7 +8,7 @@
  * 確認ダイアログ (危険クエリ / 書き込み承認) は呼び出し側 (`App.tsx` の `runGuardedDdl`) が実行前に通す。
  */
 import { api, listenQueryStream } from "./api/tauri";
-import type { CellValue, Column, ServerMessage } from "./api/tauri";
+import type { CellValue, Column, ConnectionProfile, ServerMessage } from "./api/tauri";
 
 export interface NotebookRunParams {
   sessionId: string;
@@ -50,11 +50,12 @@ export interface NotebookRunRequest {
   /** 実行先 DB (PostgreSQL ではスキーマ)。null = 接続の既定。 */
   database: string | null;
   /**
-   * セルの実行先の接続 (#2396)。null = 現在の接続。現在と違う接続を指すときは、呼び出し側がその接続の
-   * セッション・プロファイルの設定 (`read_only` / `confirm_writes` / `is_production`) で実行ゲートを通す。
-   * 開いていなければ `NotebookRunError` で reject する。
+   * セルの実行先の接続 (#2396)。**常に明示する** (既定のセルも省略しない)。呼び出し側 (`NotebookView`) が
+   * 実行開始時点に解決した「セッション ID + プロファイル ID」の組に固定する。実行中にアクティブ接続が
+   * 切り替わっても、別の接続で流れないようにするため。`runNotebookSql` は、この組が開いている接続に
+   * 実在するか検証し、無ければ `NotebookRunError` で reject する。
    */
-  connection: { profileId: string; name: string } | null;
+  connection: { profileId: string; sessionId: string; name: string };
   /** 実行中のストリーム ID を受け取る (中止用)。 */
   onStart: (streamId: string) => void;
   /** 中止が押されたか。文と文の間で見る。 */
@@ -160,6 +161,64 @@ export function resolveNotebookDatabase(
   profileDatabase: string | null | undefined,
 ): string | null {
   return docDatabase ?? (driver === "postgres" ? null : (profileDatabase ?? null));
+}
+
+/** 実行先の検証・決定に使う状態 (App が ref から集める)。 */
+export interface NotebookRunTargetState {
+  /** アクティブな接続のセッション / プロファイル。 */
+  activeSessionId: string | null;
+  activeProfile: ConnectionProfile | null;
+  /** 開いている接続 (アクティブ + 背景)。 */
+  openConnections: readonly { sessionId: string; profile: ConnectionProfile }[];
+  emergencySessions: ReadonlySet<string>;
+  /** `txActive` / `txBySession` がどのセッションのものか (`txOwnerRef`)。 */
+  txOwner: string | null;
+  txActive: boolean;
+  /** 背景セッションが退避した TX 状態を持つか。 */
+  txBySessionHas: (sessionId: string) => boolean;
+}
+
+export interface NotebookRunTarget {
+  sid: string;
+  profile: ConnectionProfile;
+  /** アクティブな接続か (履歴・ドリフト・接続断ハンドラはアクティブのものだけ扱う)。 */
+  isActive: boolean;
+  /** 緊急モードか (接続ごと)。 */
+  emergency: boolean;
+  inTx: boolean;
+}
+
+/** セッションが明示トランザクション中か。アクティブな接続の state か、背景接続の退避した状態を見る。 */
+export function notebookInTransaction(
+  sid: string,
+  s: Pick<NotebookRunTargetState, "txOwner" | "txActive" | "txBySessionHas">,
+): boolean {
+  return s.txOwner === sid ? s.txActive : s.txBySessionHas(sid);
+}
+
+/**
+ * セルの実行先を決める (#2396)。要求の `{profileId, sessionId}` の組が、開いている接続 (またはアクティブな接続) に
+ * 実在するときだけ解決する。プロファイルは要求ではなく実在したエントリから取る (設定 = `read_only` /
+ * `confirm_writes` / `is_production` は、そのセッションの接続のものを使う)。無ければ null (拒否)。
+ */
+export function resolveNotebookRunTarget(
+  conn: { profileId: string; sessionId: string },
+  s: NotebookRunTargetState,
+): NotebookRunTarget | null {
+  const entry = s.openConnections.find(
+    (c) => c.sessionId === conn.sessionId && c.profile.id === conn.profileId,
+  );
+  const profile =
+    entry?.profile ??
+    (s.activeSessionId === conn.sessionId && s.activeProfile?.id === conn.profileId ? s.activeProfile : null);
+  if (!profile) return null;
+  return {
+    sid: conn.sessionId,
+    profile,
+    isActive: s.activeSessionId === conn.sessionId,
+    emergency: s.emergencySessions.has(conn.sessionId),
+    inTx: notebookInTransaction(conn.sessionId, s),
+  };
 }
 
 /** `runNotebookStatements` が外へ頼る操作。App が実行ゲート・実行・記録を結びつける。 */

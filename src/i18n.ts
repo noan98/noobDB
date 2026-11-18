@@ -8973,6 +8973,9 @@ const en = {
   notebookCellConnMessageProd:
     "Cells will run on {names}, which includes a PRODUCTION connection, not the current connection “{current}”. Dangerous-query confirmations and read-only settings follow each cell's own connection.",
   notebookCellConnConfirm: "Run",
+  notebookCellConnName: "“{name}”",
+  notebookCellConnNameSep: ", ",
+  notebookCellConnChanged: "A cell's connection was changed while running. Stopped; run it again to confirm.",
   notebookTooLarge:
     "The notebook is {size} MiB, over the {limit} MiB limit for opening files. Lower the snapshot rows and run the cells again.",
   notebookTooManyCells:
@@ -17872,6 +17875,10 @@ const ja: Dict = {
   notebookCellConnMessageProd:
     "セルは現在の接続「{current}」ではなく、本番接続を含む {names} で実行されます。危険クエリの確認と読み取り専用の設定は、セルごとの接続に従います。",
   notebookCellConnConfirm: "実行",
+  notebookCellConnName: "「{name}」",
+  notebookCellConnNameSep: "、",
+  notebookCellConnChanged:
+    "実行中にセルの接続が変更されたため停止しました。もう一度実行して確認してください。",
   notebookTooLarge:
     "ノートブックが {size} MiB で、開ける上限 ({limit} MiB) を超えています。保存行数を下げてセルを再実行してください。",
   notebookTooManyCells: "セルが {limit} 個を超えており、開き直せません。セルを減らしてから保存してください。",

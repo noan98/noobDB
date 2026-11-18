@@ -6,13 +6,18 @@ vi.mock("../api/tauri", () => ({
   listenQueryStream: vi.fn().mockResolvedValue(() => {}),
 }));
 
+import type { ConnectionProfile } from "../api/tauri";
+import { evaluateDdlGate } from "../ddlGate";
 import {
+  notebookInTransaction,
   NotebookRunError,
   resolveNotebookDatabase,
+  resolveNotebookRunTarget,
   runNotebookStatements,
   runStatementCollect,
   type NotebookRunIo,
   type NotebookRunOutput,
+  type NotebookRunTargetState,
 } from "../notebookExec";
 
 function out(over: Partial<NotebookRunOutput> = {}): NotebookRunOutput {
@@ -167,5 +172,109 @@ describe("runStatementCollect (#2380)", () => {
       database: "public",
       forceReadOnly: false,
     });
+  });
+});
+
+describe("resolveNotebookRunTarget / notebookInTransaction (#2396)", () => {
+  const mk = (id: string, driver: string, over: Record<string, unknown> = {}) =>
+    ({
+      id,
+      name: id,
+      driver,
+      database: "db",
+      is_production: false,
+      confirm_writes: false,
+      read_only: false,
+      ...over,
+    }) as unknown as ConnectionProfile;
+  const my = mk("my", "mysql", { is_production: true, confirm_writes: true });
+  const pg = mk("pg", "postgres", { read_only: true });
+  const lite = mk("lite", "sqlite");
+  const open = [
+    { sessionId: "s-my", profile: my },
+    { sessionId: "s-pg", profile: pg },
+    { sessionId: "s-lite", profile: lite },
+  ];
+  const state = (activeId: "s-my" | "s-pg" | "s-lite", over: Partial<NotebookRunTargetState> = {}) => {
+    const entry = open.find((o) => o.sessionId === activeId);
+    return {
+      activeSessionId: activeId,
+      activeProfile: entry?.profile ?? null,
+      openConnections: open,
+      emergencySessions: new Set<string>(),
+      txOwner: activeId,
+      txActive: false,
+      txBySessionHas: () => false,
+      ...over,
+    } satisfies NotebookRunTargetState;
+  };
+
+  it("3 ドライバの接続ごとに、そのセッションのプロファイル設定 (本番 + confirm_writes / read_only) を返す", () => {
+    const t1 = resolveNotebookRunTarget({ profileId: "my", sessionId: "s-my" }, state("s-lite"));
+    expect(t1).toMatchObject({ sid: "s-my", isActive: false });
+    expect(t1?.profile).toMatchObject({ driver: "mysql", is_production: true, confirm_writes: true });
+    const t2 = resolveNotebookRunTarget({ profileId: "pg", sessionId: "s-pg" }, state("s-lite"));
+    expect(t2?.profile).toMatchObject({ driver: "postgres", read_only: true, is_production: false });
+    const t3 = resolveNotebookRunTarget({ profileId: "lite", sessionId: "s-lite" }, state("s-lite"));
+    expect(t3).toMatchObject({ isActive: true });
+    expect(t3?.profile.driver).toBe("sqlite");
+  });
+
+  it("アクティブ接続が切り替わっても、要求した組の接続で実行する (回帰)", () => {
+    const req = { profileId: "my", sessionId: "s-my" };
+    expect(resolveNotebookRunTarget(req, state("s-pg"))).toMatchObject({ sid: "s-my", isActive: false });
+    expect(resolveNotebookRunTarget(req, state("s-my"))).toMatchObject({ sid: "s-my", isActive: true });
+  });
+
+  it("実在しない組 (別プロファイルのセッション / 閉じたセッション / 未知の ID) は拒否する", () => {
+    const s = state("s-my");
+    expect(resolveNotebookRunTarget({ profileId: "pg", sessionId: "s-my" }, s)).toBeNull();
+    expect(resolveNotebookRunTarget({ profileId: "my", sessionId: "s-pg" }, s)).toBeNull();
+    expect(resolveNotebookRunTarget({ profileId: "my", sessionId: "s-gone" }, s)).toBeNull();
+    expect(resolveNotebookRunTarget({ profileId: "nope", sessionId: "s-nope" }, s)).toBeNull();
+  });
+
+  it("開いている接続の一覧に無くても、アクティブな接続の組なら解決する", () => {
+    const s = state("s-my", { openConnections: [] });
+    expect(resolveNotebookRunTarget({ profileId: "my", sessionId: "s-my" }, s)?.isActive).toBe(true);
+    expect(resolveNotebookRunTarget({ profileId: "pg", sessionId: "s-pg" }, s)).toBeNull();
+  });
+
+  it("緊急モードは接続ごと", () => {
+    const s = state("s-lite", { emergencySessions: new Set(["s-pg"]) });
+    expect(resolveNotebookRunTarget({ profileId: "pg", sessionId: "s-pg" }, s)?.emergency).toBe(true);
+    expect(resolveNotebookRunTarget({ profileId: "my", sessionId: "s-my" }, s)?.emergency).toBe(false);
+  });
+
+  it("トランザクション判定: アクティブは state、背景は退避した状態を見る", () => {
+    const s = state("s-lite", { txActive: true, txBySessionHas: (id) => id === "s-pg" });
+    expect(notebookInTransaction("s-lite", s)).toBe(true);
+    expect(notebookInTransaction("s-pg", s)).toBe(true);
+    expect(notebookInTransaction("s-my", s)).toBe(false);
+    expect(resolveNotebookRunTarget({ profileId: "pg", sessionId: "s-pg" }, s)?.inTx).toBe(true);
+  });
+
+  it("確認ゲートは解決した接続の設定で変わる (本番 + confirm_writes / read_only / 緊急)", () => {
+    const sql = "DELETE FROM orders";
+    const gateFor = (id: string, sid: string, emergencySessions = new Set<string>()) => {
+      const t = resolveNotebookRunTarget(
+        { profileId: id, sessionId: sid },
+        state("s-lite", { emergencySessions }),
+      );
+      if (!t) throw new Error("unresolved");
+      return evaluateDdlGate({
+        sql,
+        driver: t.profile.driver,
+        isProduction: t.profile.is_production,
+        confirmWrites: t.profile.confirm_writes,
+        readOnly: t.profile.read_only,
+        emergencyMode: t.emergency,
+        confirmDangerousQueries: false,
+      });
+    };
+    expect(gateFor("my", "s-my")?.writeApproval).toBe(true);
+    expect(gateFor("pg", "s-pg")).toBeNull();
+    expect(gateFor("lite", "s-lite")).toBeNull();
+    expect(gateFor("lite", "s-lite", new Set(["s-lite"]))?.writeApproval).toBe(true);
   });
 });

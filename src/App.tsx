@@ -719,8 +719,10 @@ import {
   toBatchResult,
 } from "./sqlScript";
 import {
+  notebookInTransaction,
   NotebookRunError,
   resolveNotebookDatabase,
+  resolveNotebookRunTarget,
   runNotebookStatements,
   runStatementCollect,
   type NotebookRunOutput,
@@ -2821,6 +2823,9 @@ export default function App() {
   // パネルからの書き込み実行を一時的に許可する (バックエンドの
   // `Session.emergency_write` が真のガードで、これはその UI ミラー)。
   const emergencyMode = !!sessionId && emergencySessions.has(sessionId);
+  // 実行中に最新を読みたい処理 (SQL ノートブックのセル実行など) 用。
+  const emergencySessionsRef = useRef(emergencySessions);
+  emergencySessionsRef.current = emergencySessions;
   // 緊急クエリ実行モードの切替。有効化は「接続先名をタイプして合意」ゲート
   // (#675 の typed-confirm と同じパターン) を通ってからバックエンドのフラグを
   // 立てる。無効化は即時 (安全側へ倒す操作に確認は要らない)。
@@ -9305,34 +9310,42 @@ export default function App() {
   // 確認を取りやめたら null。複数文のセルは 1 文ずつ順に流し、最後の結果をセルの結果にする。
   const runNotebookSql = useCallback(
     async (sql: string, req: NotebookRunRequest): Promise<NotebookRunOutput | null> => {
-      // セル単位の接続 (#2396): 現在の接続と違う接続を指すセルは、開いている接続 (背景を含む) のセッションで流す。
-      // 開いていなければ実行しない (ここでは接続を張らない。`NotebookView` も実行前に止めるが、二重に守る)。
-      const otherId =
-        req.connection && req.connection.profileId !== selectedProfile?.id ? req.connection.profileId : null;
-      const other = otherId ? openConnectionsRef.current.find((c) => c.profile.id === otherId) : null;
-      if (otherId && !other) {
+      // セル単位の接続 (#2396): 要求の「セッション + プロファイル」の組が開いている接続に実在するときだけ実行する
+      // (実行中にアクティブ接続が切り替わっても別の接続で流さない)。ここでは接続を張らない。
+      const target = resolveNotebookRunTarget(req.connection, {
+        activeSessionId: sessionIdRef.current,
+        activeProfile: selectedProfileRef.current,
+        openConnections: openConnectionsRef.current,
+        emergencySessions: emergencySessionsRef.current,
+        txOwner: txOwnerRef.current,
+        txActive: txActiveRef.current,
+        txBySessionHas: (id) => txBySessionRef.current.has(id),
+      });
+      if (!target) {
         throw new NotebookRunError(
-          translate("notebookCellConnNotOpen", { name: req.connection?.name ?? otherId }),
+          translate("notebookCellConnNotOpen", { name: req.connection.name }),
           false,
           false,
           false,
         );
       }
-      const sid = other ? other.sessionId : sessionId;
-      const profile = other ? other.profile : selectedProfile;
-      const isActive = !other;
-      if (!sid) throw new NotebookRunError(translate("statusNotConnected"), false, false, false);
+      const { sid, profile, isActive } = target;
       if (isActive && connectionStatusRef.current === "reconnecting") {
         throw new NotebookRunError(translate("statusReconnectBusy"), false, false, false);
       }
-      const driver = profile?.driver;
+      const driver = profile.driver;
       // 実行先はノートブック自身が持つ (現在のタブには従わない)。決め方は `resolveNotebookDatabase`
       // (PostgreSQL ではスキーマなのでプロファイル DB へ寄せず、MySQL は接続の既定 DB へ寄せる)。
-      const database = resolveNotebookDatabase(req.database, driver, profile?.database);
+      const database = resolveNotebookDatabase(req.database, driver, profile.database);
       const outCtx = outputCtxFor(sid);
       const statements = splitSqlStatements(sql, driver).filter((st) => st.trim().length > 0);
       // 明示トランザクション中か。アクティブな接続は state、背景の接続は接続ごとの保存先 (退避した TX 状態) を見る。
-      const inTransaction = () => (isActive ? txActiveRef.current : txBySessionRef.current.has(sid));
+      const inTransaction = () =>
+        notebookInTransaction(sid, {
+          txOwner: txOwnerRef.current,
+          txActive: txActiveRef.current,
+          txBySessionHas: (id) => txBySessionRef.current.has(id),
+        });
       const showDone = (out: NotebookRunOutput) =>
         setStatus(
           out.hasColumns
@@ -9347,10 +9360,7 @@ export default function App() {
           {
             // 確認ゲートは必ず「そのセルの接続」の設定で判定する (本番 + confirm_writes / 緊急モード / 危険クエリ)。
             gate: (stmtSql) =>
-              runGuardedDdl(
-                stmtSql,
-                isActive ? undefined : { profile, emergencyMode: emergencySessions.has(sid) },
-              ),
+              runGuardedDdl(stmtSql, { profile, emergencyMode: emergencySessionsRef.current.has(sid) }),
             isTransaction: inTransaction,
             onBegin: () => setStatus({ kind: "key", key: "statusRunningQuery" }),
             onEnd: (reason) => {
@@ -9433,9 +9443,6 @@ export default function App() {
       }
     },
     [
-      sessionId,
-      selectedProfile,
-      emergencySessions,
       runGuardedDdl,
       outputCtxFor,
       recordOutput,

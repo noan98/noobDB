@@ -295,6 +295,14 @@ function CellResult({ cell, onViewChange, onChartChange }: CellResultProps) {
   );
 }
 
+/** 実行開始時点に解決した、セルの実行先 (接続 + セッション)。 */
+interface CellPin {
+  /** 文書の既定 (= 現在の接続) で動くセルか。 */
+  isDefault: boolean;
+  profile: ConnectionProfile;
+  sessionId: string;
+}
+
 interface CellShellProps {
   cell: NotebookCell;
   index: number;
@@ -310,6 +318,8 @@ interface CellShellProps {
   /** セルの実行先の状態 (`current` = 文書の既定 = 現在の接続)。 */
   targetKind: NotebookCellTarget["kind"];
   connectionOptions: readonly ListboxSelectOption[];
+  /** 実行中は接続を変えさせない (確認済みの組とずれるため)。 */
+  connectionLocked: boolean;
   onConnectionChange: (id: string, profileId: string) => void;
   databaseSchema: TableSchema[] | null;
   defaultDatabase: string | null;
@@ -394,6 +404,7 @@ const CellShell = memo(function CellShell(p: CellShellProps) {
               <>
                 <ListboxSelect
                   ariaLabel={t("notebookCellConn")}
+                  disabled={p.connectionLocked}
                   css={{ minWidth: "160px", maxWidth: "240px" }}
                   value={cell.connection?.profileId ?? ""}
                   options={
@@ -679,21 +690,23 @@ export function NotebookView(props: NotebookViewProps) {
     [],
   );
 
-  /** 1 セルを実行してスナップショットを書き戻す。続けてよいなら true。 */
+  /**
+   * 1 セルを実行してスナップショットを書き戻す。続けてよいなら true。
+   * 実行先は `pin` (実行開始時点に解決した接続 + セッション) に固定し、省略しない (実行中にアクティブ接続が
+   * 切り替わっても別の接続で流さない)。
+   */
   const runOne = useCallback(
-    async (cell: NotebookSqlCell): Promise<boolean> => {
+    async (cell: NotebookSqlCell, pin: CellPin): Promise<boolean> => {
       setRunningId(cell.id);
       const started = Date.now();
-      const target = targetOf(cell);
       // 別の接続で流すセルには、文書の実行先 DB (既定の接続の DB 名) を持ち込まない。接続の既定 DB へ寄せる。
-      const other = target.kind === "open";
-      const driverOfCell = other ? target.profile.driver : profileRef.current?.driver;
+      const driverOfCell = pin.profile.driver;
       try {
         const limit = clampSnapshotRowLimit(docRef.current.snapshotRowLimit);
         const out = await props.onRunSql(cell.sql, {
           rowCap: limit,
-          database: other ? null : docRef.current.database,
-          connection: other ? cell.connection : null,
+          database: pin.isDefault ? docRef.current.database : null,
+          connection: { profileId: pin.profile.id, sessionId: pin.sessionId, name: pin.profile.name },
           onStart: (id) => {
             streamRef.current = id;
           },
@@ -715,17 +728,15 @@ export function NotebookView(props: NotebookViewProps) {
         setRunningId(null);
       }
     },
-    [props.onRunSql, patchCell, targetOf],
+    [props.onRunSql, patchCell],
   );
 
   /**
    * 保存時の接続と現在の接続が違うときは、実行前に確認する (特に現在が本番のとき)。承認したらファイルの接続を
    * 現在の接続へ付け替える (黙って書き換えない)。接続がまだ無い文書は黙って現在の接続を記録する。
    */
-  const confirmConnection = async (cells: readonly NotebookSqlCell[]): Promise<boolean> => {
-    // 既定の接続 (現在の接続) で動くセルが無ければ、文書の接続の付け替えは起きない。
-    if (!cells.some((c) => targetOf(c).kind === "current")) return true;
-    const profile = profileRef.current;
+  const confirmConnection = async (profile: ConnectionProfile | null): Promise<boolean> => {
+    // `profile` は既定の接続で動くセルがあるときの、実行開始時点の現在の接続 (無ければ付け替えは起きない)。
     const saved = docRef.current.connection;
     if (!profile) return true;
     if (!saved) {
@@ -752,17 +763,18 @@ export function NotebookView(props: NotebookViewProps) {
    * 承認は文書ごと (新規 / 読み込みで入れ替わるまで) 覚える。危険クエリ・本番 confirm_writes の確認は、
    * そのセルの接続の設定で実行時に別途かかる (`onRunSql`)。
    */
-  const confirmCellConnections = async (cells: readonly NotebookSqlCell[]): Promise<boolean> => {
+  const confirmCellConnections = async (pins: readonly CellPin[]): Promise<boolean> => {
     const epoch = getNotebookState().epoch;
     if (confirmedConnRef.current.epoch !== epoch) confirmedConnRef.current = { epoch, ids: new Set() };
     const pending = new Map<string, { name: string; production: boolean }>();
-    for (const c of cells) {
-      const target = targetOf(c);
-      if (target.kind !== "open" || confirmedConnRef.current.ids.has(target.profile.id)) continue;
-      pending.set(target.profile.id, { name: target.profile.name, production: target.profile.is_production });
+    for (const pin of pins) {
+      if (pin.isDefault || confirmedConnRef.current.ids.has(pin.profile.id)) continue;
+      pending.set(pin.profile.id, { name: pin.profile.name, production: pin.profile.is_production });
     }
     if (pending.size === 0) return true;
-    const names = [...pending.values()].map((v) => `「${v.name}」`).join("");
+    const names = [...pending.values()]
+      .map((v) => t("notebookCellConnName", { name: v.name }))
+      .join(t("notebookCellConnNameSep"));
     const production = [...pending.values()].some((v) => v.production);
     const ok = await confirm({
       title: t("notebookCellConnTitle"),
@@ -784,24 +796,44 @@ export function NotebookView(props: NotebookViewProps) {
       if (busy || cells.length === 0) return;
       // 実行先が無いセル (現在の接続が無い / 別接続が開いていない・見つからない) があれば、1 つも流さずに止める
       // (途中までの実行で、後続が前のセルの結果を欠いたまま残るのを避ける)。
+      // あわせて、実行先を「このときの接続 + セッション」に固定する (確認も実行もこの組で行う)。
+      const pins = new Map<string, CellPin>();
       for (const c of cells) {
-        const reason = blockReason(targetOf(c));
+        const target = targetOf(c);
+        const reason = blockReason(target);
         if (reason) {
           toast.error(reason);
           return;
         }
+        if (target.kind === "open") {
+          pins.set(c.id, { isDefault: false, profile: target.profile, sessionId: target.sessionId });
+        } else if (target.kind === "current") {
+          const profile = profileRef.current;
+          if (!profile || !props.sessionId) {
+            toast.error(t("notebookNeedsConnection"));
+            return;
+          }
+          pins.set(c.id, { isDefault: true, profile, sessionId: props.sessionId });
+        }
       }
-      if (!(await confirmConnection(cells))) return;
-      if (!(await confirmCellConnections(cells))) return;
+      const pinList = [...pins.values()];
+      if (!(await confirmConnection(pinList.find((p) => p.isDefault)?.profile ?? null))) return;
+      if (!(await confirmCellConnections(pinList))) return;
       cancelRef.current = false;
       setRunAll(all);
       for (const c of cells) {
         if (cancelRef.current) break;
         // 実行直前の最新の SQL を使う (編集直後の実行でも取りこぼさない)。
         const latest = docRef.current.cells.find((x) => x.id === c.id);
-        if (!latest || latest.kind !== "sql") continue;
+        const pin = pins.get(c.id);
+        if (!latest || latest.kind !== "sql" || !pin) continue;
+        // 確認した後にセルの接続が変えられていたら、確認なしでは流さず止める。
+        if ((latest.connection?.profileId ?? null) !== (c.connection?.profileId ?? null)) {
+          toast.error(t("notebookCellConnChanged"));
+          break;
+        }
         // 失敗・取りやめ・中止のセルで止める (後続は前のセルの結果を前提にしがち)。
-        if (!(await runOne(latest))) break;
+        if (!(await runOne(latest, pin))) break;
       }
       setRunAll(false);
     },
@@ -1204,6 +1236,7 @@ export function NotebookView(props: NotebookViewProps) {
                       profile={cellProfile}
                       targetKind={target.kind}
                       connectionOptions={connectionOptions}
+                      connectionLocked={busy}
                       onConnectionChange={onConnectionChange}
                       databaseSchema={target.kind === "current" ? databaseSchema : null}
                       defaultDatabase={
