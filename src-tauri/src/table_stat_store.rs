@@ -69,6 +69,55 @@ pub fn attach_and_roll(
     STORE.update::<SnapshotFile, _>(|f| attach_in(f, profile_id, database, stats, &now))
 }
 
+/// プロファイル削除時に、そのプロファイルのスナップショットをすべて消す (全データベース分)。
+/// 削除した件数を返す。キーは `"{profile_id}|{database}"`。
+pub fn delete_profile_data(profile_id: &str) -> Result<u64> {
+    // 該当が無ければ書き込まない (先に読んで確認する)。
+    let prefix = format!("{profile_id}|");
+    let file: SnapshotFile = STORE.read()?;
+    if !file.snapshots.keys().any(|k| k.starts_with(&prefix)) {
+        return Ok(0);
+    }
+    // `|` を含む別 ID (例: `a` を消すときの `a|b`) のキーも `a|` で始まるので、
+    // 現存するプロファイルのうち `{profile_id}|` で始まる ID のキーは巻き込まない。
+    // 一覧が読めないときは安全側に倒し、何も消さない。
+    let others: Vec<String> = crate::profiles::store::load_all()?
+        .into_iter()
+        .map(|p| p.id)
+        .filter(|k| k != profile_id && k.starts_with(&prefix))
+        .collect();
+    STORE.update::<SnapshotFile, _>(|f| purge_profile(f, profile_id, &others))
+}
+
+/// 保存済みのプロファイル ID (起動時の孤立データ掃除用)。プロファイルを持たない一時接続
+/// (キー接頭辞 `-`) は含まない。キーは最初の `|` で分けるので、`|` を含む ID は先頭部分だけが
+/// 返る。呼び出し側 (`profiles::cleanup::select_orphans`) が、既知 ID の接頭辞になっている
+/// 候補を除いて誤削除を防ぐ。
+pub fn profile_ids() -> Result<Vec<String>> {
+    let file: SnapshotFile = STORE.read()?;
+    Ok(ids_in(&file))
+}
+
+fn ids_in(file: &SnapshotFile) -> Vec<String> {
+    let set: std::collections::BTreeSet<&str> = file
+        .snapshots
+        .keys()
+        .filter_map(|k| k.split_once('|').map(|(p, _)| p))
+        .filter(|p| *p != "-")
+        .collect();
+    set.into_iter().map(str::to_string).collect()
+}
+
+/// `others` は `{profile_id}|` で始まる、現存する別のプロファイル ID。そのキーは残す。
+fn purge_profile(file: &mut SnapshotFile, profile_id: &str, others: &[String]) -> u64 {
+    let prefix = format!("{profile_id}|");
+    let before = file.snapshots.len();
+    file.snapshots.retain(|k, _| {
+        !k.starts_with(&prefix) || others.iter().any(|o| k.starts_with(&format!("{o}|")))
+    });
+    (before - file.snapshots.len()) as u64
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -194,5 +243,74 @@ mod tests {
             );
         }
         assert_eq!(file.snapshots.len(), MAX_KEYS);
+    }
+
+    #[test]
+    fn purge_profile_removes_only_that_profile_and_lists_ids() {
+        let mut file = SnapshotFile::default();
+        let mut stats = vec![stat("a", 1, 1)];
+        attach_in(
+            &mut file,
+            Some("p"),
+            "db1",
+            &mut stats,
+            "2026-01-01T00:00:00Z",
+        );
+        attach_in(
+            &mut file,
+            Some("p"),
+            "db2",
+            &mut stats,
+            "2026-01-01T00:00:00Z",
+        );
+        attach_in(
+            &mut file,
+            Some("pp"),
+            "db1",
+            &mut stats,
+            "2026-01-01T00:00:00Z",
+        );
+        attach_in(&mut file, None, "db1", &mut stats, "2026-01-01T00:00:00Z");
+        assert_eq!(ids_in(&file), vec!["p", "pp"]);
+        // 接頭辞が同じ別 ID ("pp") は巻き込まない。
+        assert_eq!(purge_profile(&mut file, "p", &[]), 2);
+        assert_eq!(ids_in(&file), vec!["pp"]);
+        assert_eq!(file.snapshots.len(), 2);
+    }
+
+    #[test]
+    fn ids_split_at_the_first_pipe_so_pipe_ids_yield_a_prefix() {
+        let mut file = SnapshotFile::default();
+        let mut stats = vec![stat("a", 1, 1)];
+        attach_in(
+            &mut file,
+            Some("a|b"),
+            "db",
+            &mut stats,
+            "2026-01-01T00:00:00Z",
+        );
+        // 呼び出し側 (cleanup::select_orphans) が既知 ID の接頭辞として除外できる形で返る。
+        assert_eq!(ids_in(&file), vec!["a"]);
+        // 接頭辞だけの ID を消しても、`|` を含む別 ID のキーは巻き込まない。
+        assert_eq!(purge_profile(&mut file, "a|b", &[]), 1);
+    }
+
+    #[test]
+    fn purging_a_prefix_id_keeps_snapshots_of_an_existing_pipe_id() {
+        let mut file = SnapshotFile::default();
+        for id in ["a", "a|b"] {
+            let mut stats = vec![stat("t", 1, 1)];
+            attach_in(
+                &mut file,
+                Some(id),
+                "db",
+                &mut stats,
+                "2026-01-01T00:00:00Z",
+            );
+        }
+        // `a` を消しても、現存する `a|b` のスナップショットは残る。
+        assert_eq!(purge_profile(&mut file, "a", &["a|b".to_string()]), 1);
+        assert!(file.snapshots.contains_key("a|b|db"));
+        assert!(!file.snapshots.contains_key("a|db"));
     }
 }

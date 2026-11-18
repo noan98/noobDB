@@ -421,6 +421,35 @@ async fn import_legacy_in(
     Ok(imported)
 }
 
+/// プロファイル削除時に、そのプロファイルの世代 (スキーマ定義を含む) をすべて消す。
+/// 削除した世代数を返す。
+pub async fn delete_profile_data(profile_id: &str) -> Result<u64> {
+    delete_profile_data_in(pool().await?, profile_id).await
+}
+
+/// 保存済みのプロファイル ID (起動時の孤立データ掃除用)。
+pub async fn profile_ids() -> Result<Vec<String>> {
+    profile_ids_in(pool().await?).await
+}
+
+async fn delete_profile_data_in(pool: &SqlitePool, profile_id: &str) -> Result<u64> {
+    let _guard = WRITE_LOCK.lock().await;
+    let n = sqlx::query("DELETE FROM generation WHERE profile_id = ?")
+        .bind(profile_id)
+        .execute(pool)
+        .await?
+        .rows_affected();
+    Ok(n)
+}
+
+async fn profile_ids_in(pool: &SqlitePool) -> Result<Vec<String>> {
+    Ok(
+        sqlx::query_scalar("SELECT DISTINCT profile_id FROM generation ORDER BY profile_id")
+            .fetch_all(pool)
+            .await?,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -732,5 +761,18 @@ mod tests {
               "indexes":[{"name":"PRIMARY","columns":["id"],"unique":true,"primary":true,"method":"BTREE"}]}]}}"#;
         let g: LegacyGeneration = serde_json::from_str(json).unwrap();
         assert_eq!(g.payload.unwrap().tables[0].indexes.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn delete_profile_data_removes_only_that_profile() {
+        let pool = temp_pool().await;
+        rec(&pool, "p", &payload(&["a"]), 5).await;
+        rec(&pool, "p", &payload(&["a", "b"]), 5).await;
+        rec(&pool, "q", &payload(&["a"]), 5).await;
+        assert_eq!(profile_ids_in(&pool).await.unwrap(), vec!["p", "q"]);
+        assert_eq!(delete_profile_data_in(&pool, "p").await.unwrap(), 2);
+        assert!(list_in(&pool, "p").await.unwrap().is_empty());
+        assert_eq!(list_in(&pool, "q").await.unwrap().len(), 1);
+        assert_eq!(profile_ids_in(&pool).await.unwrap(), vec!["q"]);
     }
 }

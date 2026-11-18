@@ -354,6 +354,9 @@ const DumpModal = lazy(() => import("./components/DumpModal").then((m) => ({ def
 const TablesExportModal = lazy(() =>
   import("./components/TablesExportModal").then((m) => ({ default: m.TablesExportModal })),
 );
+const TypeDefModal = lazy(() =>
+  import("./components/TypeDefModal").then((m) => ({ default: m.TypeDefModal })),
+);
 const AiSchemaDocModal = lazy(() =>
   import("./components/AiSchemaDocModal").then((m) => ({ default: m.AiSchemaDocModal })),
 );
@@ -719,9 +722,12 @@ import {
   toBatchResult,
 } from "./sqlScript";
 import {
+  notebookInTransaction,
   NotebookRunError,
   resolveNotebookDatabase,
+  resolveNotebookRunTarget,
   runNotebookStatements,
+  schemaInvalidationFor,
   runStatementCollect,
   type NotebookRunOutput,
   type NotebookRunRequest,
@@ -2041,6 +2047,8 @@ export default function App() {
   }, []);
 
   const [profiles, setProfiles] = useState<ConnectionProfile[]>([]);
+  const profilesRef = useRef(profiles);
+  profilesRef.current = profiles;
   // 直近のプロファイル読込が失敗したか。失敗時に空配列をウェルカム (初回起動) と取り違えない。
   const [profilesLoadError, setProfilesLoadError] = useState<string | null>(null);
   // サンドボックス (壊せる砂場、#747) の一覧。`ConnectionList` の通常プロファイル
@@ -2446,6 +2454,8 @@ export default function App() {
   const [logicalRelationsTick, setLogicalRelationsTick] = useState(0);
   // AI スキーマドキュメント (#696)。ER 図で選択中のテーブルを初期スコープとして渡す。
   const [schemaDocTarget, setSchemaDocTarget] = useState<{ database: string; tables: string[] } | null>(null);
+  // 型定義の生成モーダル (#2411)。tables が空ならモーダル内で選ぶ。
+  const [typeDefTarget, setTypeDefTarget] = useState<{ database: string; tables: string[] } | null>(null);
   // プロファイルインポート: ファイル選択後、衝突解決ダイアログに渡すパス。
   const [importProfilesPath, setImportProfilesPath] = useState<string | null>(null);
   // 暗号化バックアップ (#710): 書き出しのパスフレーズダイアログの開閉と、読み込む
@@ -2823,6 +2833,9 @@ export default function App() {
   // パネルからの書き込み実行を一時的に許可する (バックエンドの
   // `Session.emergency_write` が真のガードで、これはその UI ミラー)。
   const emergencyMode = !!sessionId && emergencySessions.has(sessionId);
+  // 実行中に最新を読みたい処理 (SQL ノートブックのセル実行など) 用。
+  const emergencySessionsRef = useRef(emergencySessions);
+  emergencySessionsRef.current = emergencySessions;
   // 緊急クエリ実行モードの切替。有効化は「接続先名をタイプして合意」ゲート
   // (#675 の typed-confirm と同じパターン) を通ってからバックエンドのフラグを
   // 立てる。無効化は即時 (安全側へ倒す操作に確認は要らない)。
@@ -5079,15 +5092,22 @@ export default function App() {
   // snapshot, so a split pane editing another database keeps its cache (and
   // doesn't trigger a needless re-fetch). With no database (or no session) we
   // fall back to clearing the whole map; entries are cheap to rebuild.
+  // `targetSessionId` は、実行したセッションを明示したいとき (SQL ノートブックのセル実行など、実行中に
+  // アクティブ接続が切り替わりうる呼び出し) に渡す。アクティブと違えば、キャッシュは全消しにする。
   const invalidateSchemaCache = useCallback(
-    (database?: string | null) => {
-      if (!sessionId || !database) {
+    (database?: string | null, targetSessionId?: string) => {
+      const plan = targetSessionId
+        ? schemaInvalidationFor(targetSessionId, sessionIdRef.current, database ?? null)
+        : !sessionId || !database
+          ? ({ kind: "all" } as const)
+          : ({ kind: "one", sessionId, database } as const);
+      if (plan.kind === "all") {
         prefetchEpochRef.current += 1;
         schemaInFlightRef.current.clear();
         setSchemaCache({});
         return;
       }
-      const key = schemaCacheKey(sessionId, database);
+      const key = schemaCacheKey(plan.sessionId, plan.database);
       schemaGenRef.current.set(key, (schemaGenRef.current.get(key) ?? 0) + 1);
       const wasInFlight = schemaInFlightRef.current.delete(key);
       setSchemaCache((prev) => {
@@ -9269,16 +9289,24 @@ export default function App() {
         destructiveTargets?: readonly string[];
         alreadyConfirmed?: boolean;
         forceTypedConfirm?: boolean;
+        /**
+         * ゲートの判定に使う接続の設定 (省略時はアクティブな接続)。SQL ノートブックのセル単位の接続 (#2396) が
+         * 背景接続のセルを流すとき、そのセルの接続の `is_production` / `confirm_writes` / `read_only` で判定する。
+         * `emergencyMode` も一緒に渡す (緊急モードは接続ごと)。
+         */
+        profile?: ConnectionProfile | null;
+        emergencyMode?: boolean;
       },
     ): Promise<boolean> => {
       if (opts?.alreadyConfirmed) return true;
+      const gateProfile = opts?.profile ?? selectedProfile;
       const gate = evaluateDdlGate({
         sql,
-        driver: selectedProfile?.driver,
-        isProduction: selectedProfile?.is_production ?? false,
-        confirmWrites: selectedProfile?.confirm_writes ?? false,
-        readOnly: selectedProfile?.read_only ?? false,
-        emergencyMode,
+        driver: gateProfile?.driver,
+        isProduction: gateProfile?.is_production ?? false,
+        confirmWrites: gateProfile?.confirm_writes ?? false,
+        readOnly: gateProfile?.read_only ?? false,
+        emergencyMode: opts?.emergencyMode ?? emergencyMode,
         confirmDangerousQueries: settings.confirmDangerousQueries,
         destructiveTargets: opts?.destructiveTargets,
         forceTypedConfirm: opts?.forceTypedConfirm,
@@ -9292,14 +9320,7 @@ export default function App() {
         });
       });
     },
-    [
-      selectedProfile?.driver,
-      selectedProfile?.is_production,
-      selectedProfile?.confirm_writes,
-      selectedProfile?.read_only,
-      emergencyMode,
-      settings.confirmDangerousQueries,
-    ],
+    [selectedProfile, emergencyMode, settings.confirmDangerousQueries],
   );
 
   // SQL ノートブック (#2380) のセル実行。新しい実行 IPC は作らず、エディタと同じ
@@ -9309,17 +9330,49 @@ export default function App() {
   // 確認を取りやめたら null。複数文のセルは 1 文ずつ順に流し、最後の結果をセルの結果にする。
   const runNotebookSql = useCallback(
     async (sql: string, req: NotebookRunRequest): Promise<NotebookRunOutput | null> => {
-      const sid = sessionId;
-      if (!sid) throw new NotebookRunError(translate("statusNotConnected"), false, false, false);
-      if (connectionStatusRef.current === "reconnecting") {
+      // セル単位の接続 (#2396): 要求の「セッション + プロファイル」の組が開いている接続に実在するときだけ実行する
+      // (実行中にアクティブ接続が切り替わっても別の接続で流さない)。ここでは接続を張らない。
+      const target = resolveNotebookRunTarget(req.connection, {
+        activeSessionId: sessionIdRef.current,
+        activeProfile: selectedProfileRef.current,
+        profiles: profilesRef.current,
+        openConnections: openConnectionsRef.current,
+        emergencySessions: emergencySessionsRef.current,
+        txOwner: txOwnerRef.current,
+        txActive: txActiveRef.current,
+        txBySessionHas: (id) => txBySessionRef.current.has(id),
+      });
+      if (!target) {
+        // プロファイルは開いているのにセッション ID が違う = 再接続された。固定した組では流さない。
+        const reconnected = openConnectionsRef.current.some((c) => c.profile.id === req.connection.profileId);
+        throw new NotebookRunError(
+          translate(reconnected ? "notebookCellConnReconnected" : "notebookCellConnNotOpen", {
+            name: req.connection.name,
+          }),
+          false,
+          false,
+          false,
+        );
+      }
+      const { sid, profile } = target;
+      // 実行中にアクティブ接続が切り替わりうるので、アクティブかどうかは使う時点で判定する。
+      const isActiveNow = () => sessionIdRef.current === sid;
+      if (isActiveNow() && connectionStatusRef.current === "reconnecting") {
         throw new NotebookRunError(translate("statusReconnectBusy"), false, false, false);
       }
-      const driver = selectedProfile?.driver;
+      const driver = profile.driver;
       // 実行先はノートブック自身が持つ (現在のタブには従わない)。決め方は `resolveNotebookDatabase`
       // (PostgreSQL ではスキーマなのでプロファイル DB へ寄せず、MySQL は接続の既定 DB へ寄せる)。
-      const database = resolveNotebookDatabase(req.database, driver, selectedProfile?.database);
+      const database = resolveNotebookDatabase(req.database, driver, profile.database);
       const outCtx = outputCtxFor(sid);
       const statements = splitSqlStatements(sql, driver).filter((st) => st.trim().length > 0);
+      // 明示トランザクション中か。アクティブな接続は state、背景の接続は接続ごとの保存先 (退避した TX 状態) を見る。
+      const inTransaction = () =>
+        notebookInTransaction(sid, {
+          txOwner: txOwnerRef.current,
+          txActive: txActiveRef.current,
+          txBySessionHas: (id) => txBySessionRef.current.has(id),
+        });
       const showDone = (out: NotebookRunOutput) =>
         setStatus(
           out.hasColumns
@@ -9332,8 +9385,10 @@ export default function App() {
           statements,
           { onStart: req.onStart, isCancelled: req.isCancelled },
           {
-            gate: runGuardedDdl,
-            isTransaction: () => txActiveRef.current,
+            // 確認ゲートは必ず「そのセルの接続」の設定で判定する (本番 + confirm_writes / 緊急モード / 危険クエリ)。
+            gate: (stmtSql) =>
+              runGuardedDdl(stmtSql, { profile, emergencyMode: emergencySessionsRef.current.has(sid) }),
+            isTransaction: inTransaction,
             onBegin: () => setStatus({ kind: "key", key: "statusRunningQuery" }),
             onEnd: (reason) => {
               if (reason === "cancelled") setStatus({ kind: "key", key: "statusQueryCancelled" });
@@ -9382,10 +9437,12 @@ export default function App() {
                 outCtx,
               );
               setHistoryReloadKey((k) => k + 1);
-              pushQueryHistory(stmt);
+              // 履歴ナビ・スキーマドリフトはアクティブな接続のもの。背景の接続のセルでは触らない
+              // (スキーマキャッシュは接続ごとに持つので、背景のキャッシュは丸ごと捨てる)。
+              if (isActiveNow()) pushQueryHistory(stmt);
               if (out.schemaMayChange) {
-                invalidateSchemaCache(database);
-                noteSchemaDdl(stmt, database);
+                invalidateSchemaCache(database, sid);
+                if (isActiveNow()) noteSchemaDdl(stmt, database);
               }
             },
             onStatementError: (stmt, err, startedAt) => {
@@ -9401,9 +9458,9 @@ export default function App() {
                 outCtx,
               );
               setHistoryReloadKey((k) => k + 1);
-              pushQueryHistory(stmt);
+              if (isActiveNow()) pushQueryHistory(stmt);
               setStatus({ kind: "key", key: "statusQueryError", vars: { error: err.message }, error: true });
-              if (err.connectionLost) void handleConnectionLostRef.current();
+              if (err.connectionLost && isActiveNow()) void handleConnectionLostRef.current();
             },
           },
         );
@@ -9413,9 +9470,6 @@ export default function App() {
       }
     },
     [
-      sessionId,
-      selectedProfile?.driver,
-      selectedProfile?.database,
       runGuardedDdl,
       outputCtxFor,
       recordOutput,
@@ -13334,6 +13388,15 @@ export default function App() {
           run: () => setLogicalRelationsTarget(paletteDatabase),
         });
         items.push({
+          id: "nav:type-defs",
+          group: "navigation",
+          label: t("cmdkActionTypeDefs"),
+          icon: "braces",
+          keywords:
+            "type definition typescript go rust python struct interface zod pydantic dataclass 型定義 モデル 生成",
+          run: () => setTypeDefTarget({ database: paletteDatabase, tables: [] }),
+        });
+        items.push({
           id: "nav:schema-export",
           group: "navigation",
           label: t("cmdkActionSchemaExport"),
@@ -14064,6 +14127,7 @@ export default function App() {
     onChunkedDml: (database: string, table: string) => setChunkedDmlTarget({ database, table }),
     onShowCreateTables: handleShowCreateTables,
     onCopyTablesDdl: handleCopyTablesDdl,
+    onCopyTypeDefs: (database: string, tables: string[]) => setTypeDefTarget({ database, tables }),
     onCopyTableNames: handleCopyTableNames,
     onExportTables: (database: string, tables: string[]) => setExportTablesTarget({ database, tables }),
     onDumpTables: (database: string, tables: string[]) => setDumpTablesTarget({ database, tables }),
@@ -14735,6 +14799,7 @@ export default function App() {
                           onPartitionOp={handlePartitionOp}
                           onAttachPartition={handleAttachPartition}
                           onAddPartitions={handleAddPartitions}
+                          onCopyTypeDefs={(database, tables) => setTypeDefTarget({ database, tables })}
                           onManageAudit={handleAuditTrigger}
                           auditTick={auditTick}
                         />
@@ -15283,6 +15348,8 @@ export default function App() {
                         transactionActive={txActive}
                         emergencyMode={emergencyMode}
                         onRunSql={runNotebookSql}
+                        profiles={profiles}
+                        openConnections={openConnections}
                         onOpenInEditor={(sql, title, docDatabase) => {
                           // 実行先はノートブックと同じ決め方 (`runNotebookSql` と共通)。別 DB で走らせない。
                           const database = resolveNotebookDatabase(
@@ -15832,6 +15899,22 @@ export default function App() {
                 driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
                 onClose={() => setDumpTablesTarget(null)}
               />
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {typeDefTarget && sessionId && (
+              <Suspense fallback={null}>
+                <TypeDefModal
+                  key={typeDefTarget.database}
+                  sessionId={sessionId}
+                  driver={selectedProfile?.driver ?? "mysql"}
+                  database={typeDefTarget.database}
+                  tables={typeDefTarget.tables}
+                  profileId={selectedProfile?.id}
+                  onClose={() => setTypeDefTarget(null)}
+                />
+              </Suspense>
             )}
           </AnimatePresence>
 
