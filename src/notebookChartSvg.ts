@@ -46,6 +46,31 @@ export function formatTick(v: number): string {
   return String(Number(v.toPrecision(6)));
 }
 
+/**
+ * 目盛りの並び全体をまとめて整形する。短い表記で隣り合う目盛りが同じ文字列になるとき
+ * (値が大きく幅が狭い軸。例: 1000000〜1000001 の 10 区間がすべて「1M」) は、
+ * 目盛りの最小の間隔から必要な小数桁を決めて省略しない表記に切り替える。
+ */
+export function formatTicks(values: number[]): string[] {
+  const short = values.map(formatTick);
+  const collide = values.some(
+    (v, i) => i > 0 && v !== values[i - 1] && short[i] === short[i - 1] && short[i] !== "",
+  );
+  if (!collide) return short;
+  let minGap = Number.POSITIVE_INFINITY;
+  for (let i = 1; i < values.length; i++) {
+    const a = values[i - 1];
+    const b = values[i];
+    if (a === undefined || b === undefined || !Number.isFinite(a) || !Number.isFinite(b)) continue;
+    const d = Math.abs(b - a);
+    if (d > 0 && d < minGap) minGap = d;
+  }
+  const decimals = Number.isFinite(minGap)
+    ? Math.min(12, Math.max(0, Math.ceil(-Math.log10(minGap)) + 1))
+    : 0;
+  return values.map((v) => (Number.isFinite(v) ? String(Number(v.toFixed(decimals))) : ""));
+}
+
 function clip(s: string): string {
   return s.length > LABEL_CHARS ? `${s.slice(0, LABEL_CHARS - 1)}…` : s;
 }
@@ -75,12 +100,13 @@ function yOf(v: number, s: Scale): number {
 function yAxis(s: Scale, x: number, side: "l" | "r" = "l"): string {
   const anchor = side === "l" ? "end" : "start";
   const tx = side === "l" ? x - 6 : x + 6;
+  const labels = formatTicks(s.ticks);
   return s.ticks
-    .map((t) => {
+    .map((t, i) => {
       const y = yOf(t, s);
       const grid =
         side === "l" ? `<line class="grid" x1="${PAD.l}" x2="${W - PAD.r}" y1="${f(y)}" y2="${f(y)}"/>` : "";
-      return `${grid}<text class="tick" x="${tx}" y="${f(y + 4)}" text-anchor="${anchor}">${escapeHtml(formatTick(t))}</text>`;
+      return `${grid}<text class="tick" x="${tx}" y="${f(y + 4)}" text-anchor="${anchor}">${escapeHtml(labels[i] ?? "")}</text>`;
     })
     .join("");
 }
@@ -164,6 +190,9 @@ function comboSvg(model: ChartModel, config: ChartConfig): string {
   const lineName = model.series[comboLineIndex(config)]?.name;
   const { bars, line } = splitComboSeries(model, lineName);
   const barModel: ChartModel = { ...model, series: bars };
+  // 色は元の系列順 (凡例と同じ並び) の番号で引く。棒→線の並べ替え後の番号を使うと、
+  // 線に選んだ列が最後でないとき凡例の色と図の色が食い違う。
+  const colorIndex = (s: (typeof model.series)[number]) => Math.max(0, model.series.indexOf(s));
   const left = scaleOf(valueExtent(barModel, "bar"));
   const { xs, band } = bandCenters(model.labels.length);
   const base = yOf(0, left);
@@ -175,7 +204,7 @@ function comboSvg(model: ChartModel, config: ChartConfig): string {
           if (!Number.isFinite(v)) return "";
           const y = yOf(v, left);
           const x = (xs[i] ?? 0) - (bw * bars.length) / 2 + bw * si;
-          return `<rect class="f${si}" x="${f(x)}" y="${f(Math.min(y, base))}" width="${f(bw)}" height="${f(Math.abs(base - y))}"/>`;
+          return `<rect class="f${colorIndex(s)}" x="${f(x)}" y="${f(Math.min(y, base))}" width="${f(bw)}" height="${f(Math.abs(base - y))}"/>`;
         })
         .join(""),
     )
@@ -183,7 +212,7 @@ function comboSvg(model: ChartModel, config: ChartConfig): string {
   let lineSvg = "";
   let rightAxis = "";
   if (line) {
-    const ci = bars.length;
+    const ci = colorIndex(line);
     const right = scaleOf(valueExtent({ ...model, series: [line] }, "line"));
     const pts = linePoints(line.values, xs, right);
     const dots =
@@ -217,10 +246,11 @@ function scatterSvg(model: ChartModel): string {
         .join(""),
     )
     .join("");
+  const xLabelsText = formatTicks(sx.ticks);
   const xt = sx.ticks
     .map(
-      (t) =>
-        `<text class="tick" x="${f(xOf(t))}" y="${H - PAD.b + 16}" text-anchor="middle">${escapeHtml(formatTick(t))}</text>`,
+      (t, i) =>
+        `<text class="tick" x="${f(xOf(t))}" y="${H - PAD.b + 16}" text-anchor="middle">${escapeHtml(xLabelsText[i] ?? "")}</text>`,
     )
     .join("");
   return `${yAxis(sy, PAD.l)}${dots}<line class="axis" x1="${PAD.l}" x2="${W - PAD.r}" y1="${H - PAD.b}" y2="${H - PAD.b}"/>${xt}`;
@@ -245,10 +275,11 @@ function histogramSvg(model: ChartModel): string {
     })
     .join("");
   const step = Math.max(1, Math.ceil(edges.length / MAX_X_LABELS));
+  const edgeLabels = formatTicks(edges);
   const xt = edges
     .map((e, i) =>
       i % step === 0
-        ? `<text class="tick" x="${f(hi === lo ? (PAD.l + W - PAD.r) / 2 : xOf(e))}" y="${H - PAD.b + 16}" text-anchor="middle">${escapeHtml(formatTick(e))}</text>`
+        ? `<text class="tick" x="${f(hi === lo ? (PAD.l + W - PAD.r) / 2 : xOf(e))}" y="${H - PAD.b + 16}" text-anchor="middle">${escapeHtml(edgeLabels[i] ?? "")}</text>`
         : "",
     )
     .join("");

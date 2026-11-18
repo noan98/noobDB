@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildSnapshot, createEmptyNotebook, newMarkdownCell, newSqlCell } from "../notebook";
-import { buildChartFigure } from "../notebookChartSvg";
+import { buildChartFigure, formatTicks } from "../notebookChartSvg";
 import { notebookToHtml, notebookToMarkdown, type NotebookExportText } from "../notebookExport";
 
 const text: NotebookExportText = {
@@ -310,5 +310,56 @@ describe("レポート仕上げ (#2421)", () => {
     expect(note).toBeGreaterThan(0);
     expect(note).toBeLessThan(html.indexOf("<figure"));
     expect(html.split("先頭 3 / 全 99")).toHaveLength(2);
+  });
+});
+
+describe("ノートブックの HTML チャートの目盛りと配色", () => {
+  it("値が大きく幅が狭い目盛りも隣どうしが同じ文字列にならない", () => {
+    const edges = Array.from({ length: 11 }, (_, i) => 1000000 + i / 10);
+    const labels = formatTicks(edges);
+    expect(new Set(labels).size).toBe(11);
+    expect(labels[0]).toBe("1000000");
+    expect(labels[1]).toBe("1000000.1");
+  });
+
+  it("短い表記で区別できるときは従来どおり省略表記にする", () => {
+    expect(formatTicks([0, 20000, 40000])).toEqual(["0", "20k", "40k"]);
+  });
+
+  it("ヒストグラムの横軸も狭い幅の区間を区別して書く", () => {
+    const fig = buildChartFigure(
+      [{ name: "v", type_name: "float" }],
+      [[1000000], [1000000.5], [1000001]],
+      { type: "histogram", xCol: 0, yCols: [], aggregation: "none", bins: 10 },
+      "chH",
+      "x",
+    );
+    const ticks = [
+      ...(fig?.html ?? "").matchAll(/<text class="tick"[^>]*text-anchor="middle">([^<]*)</g),
+    ].map((m) => m[1]);
+    expect(ticks.length).toBeGreaterThan(1);
+    expect(new Set(ticks).size).toBe(ticks.length);
+  });
+
+  it("複合グラフで線に最後以外の列を選んでも、色は凡例と同じ元の系列順で付ける", () => {
+    const fig = buildChartFigure(
+      [
+        { name: "k", type_name: "text" },
+        { name: "revenue", type_name: "int" },
+        { name: "profit", type_name: "int" },
+      ],
+      [
+        ["a", 10, 3],
+        ["b", 20, 5],
+      ],
+      { type: "combo", xCol: 0, yCols: [1, 2], aggregation: "none", comboLineCol: 1 },
+      "chC",
+      "x",
+    );
+    const html = fig?.html ?? "";
+    // revenue (元の 0 番) が線、profit (元の 1 番) が棒。
+    expect(html).toContain('<polyline class="k0 line"');
+    expect(html).toMatch(/<rect class="f1"/);
+    expect(html).not.toMatch(/<rect class="f0"/);
   });
 });
