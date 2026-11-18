@@ -9,6 +9,7 @@ import { Button, Checkbox, Input, PressableButton, Radio } from "./ui";
 import { copyToClipboard } from "./clipboard";
 import { useToast } from "./Toast";
 import {
+  buildPgColumnTypesQuery,
   generateTypeDefs,
   namingApplies,
   TYPE_DEF_LANGS,
@@ -43,6 +44,12 @@ interface Props {
   onClose: () => void;
 }
 
+/** PostgreSQL で追加の読み取りクエリが要る列 (ENUM らしい USER-DEFINED / 配列の ARRAY) を持つか。 */
+function pgLookupNeeds(cols: TableColumnInfo[]): { enums: boolean; arrays: boolean } {
+  const types = cols.map((c) => c.data_type.toUpperCase());
+  return { enums: types.includes("USER-DEFINED"), arrays: types.includes("ARRAY") };
+}
+
 interface Loaded {
   columns: Map<string, TableColumnInfo[]>;
   comments: Map<string, string>;
@@ -65,9 +72,12 @@ export function TypeDefModal({ sessionId, driver, database, tables, profileId, o
   const [filter, setFilter] = useState("");
   // PostgreSQL の ENUM ラベル ((テーブル) → (列 → 値))。取得済みのテーブルだけ入る。
   const [pgEnums, setPgEnums] = useState<Map<string, Map<string, string[]>>>(new Map());
+  // PostgreSQL の配列列の型名 (`integer[]` など、(テーブル) → (列 → 型名))。information_schema は `ARRAY` としか返さない。
+  const [pgArrays, setPgArrays] = useState<Map<string, Map<string, string>>>(new Map());
   const [enumFailed, setEnumFailed] = useState(false);
+  // 追加クエリが終わった (成功・失敗を問わない) テーブル。取得中はコピーを止める。
+  const [lookupDone, setLookupDone] = useState<ReadonlySet<string>>(new Set());
   const requested = useRef<Set<string>>(new Set());
-  const filterRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     let alive = true;
@@ -94,27 +104,56 @@ export function TypeDefModal({ sessionId, driver, database, tables, profileId, o
   const allNames = useMemo(() => (ready ? [...ready.columns.keys()] : []), [ready]);
   const selectedNames = useMemo(() => allNames.filter((n) => selected.has(n)), [allNames, selected]);
 
-  // 選択したテーブルのうち ENUM らしい列 (USER-DEFINED) を持つものだけ、PostgreSQL のラベルを引く。
+  // 選択したテーブルのうち ENUM らしい列 (USER-DEFINED) / 配列列 (ARRAY) を持つものだけ、PostgreSQL へ追加で問い合わせる。
   useEffect(() => {
     if (!ready || driver !== "postgres") return;
     for (const name of selectedNames) {
       if (requested.current.has(name)) continue;
       const cols = ready.columns.get(name) ?? [];
-      if (!cols.some((c) => c.data_type.toUpperCase() === "USER-DEFINED")) continue;
+      const need = pgLookupNeeds(cols);
+      if (!need.enums && !need.arrays) continue;
       requested.current.add(name);
-      const q = buildAllowedValuesQueries(driver, database, name).find((x) => x.purpose === "pgEnum");
-      if (!q) continue;
-      api
-        .runLookupQuery({ sessionId, sql: q.sql, database, rowCap: 1000, queryTimeoutSecs: 5 })
-        .then((res) => {
-          const m = collectAllowedValues(driver, cols, res.rows);
-          const byCol = new Map<string, string[]>();
-          for (const [col, a] of m) if (a.kind === "enum") byCol.set(col, a.values);
-          setPgEnums((cur) => new Map(cur).set(name, byCol));
-        })
-        .catch(() => setEnumFailed(true));
+      const run = (sql: string) =>
+        api.runLookupQuery({ sessionId, sql, database, rowCap: 1000, queryTimeoutSecs: 5 });
+      const tasks: Promise<void>[] = [];
+      const enumQuery = need.enums
+        ? buildAllowedValuesQueries(driver, database, name).find((x) => x.purpose === "pgEnum")
+        : undefined;
+      if (enumQuery) {
+        tasks.push(
+          run(enumQuery.sql)
+            .then((res) => {
+              const m = collectAllowedValues(driver, cols, res.rows);
+              const byCol = new Map<string, string[]>();
+              for (const [col, a] of m) if (a.kind === "enum") byCol.set(col, a.values);
+              setPgEnums((cur) => new Map(cur).set(name, byCol));
+            })
+            .catch(() => setEnumFailed(true)),
+        );
+      }
+      if (need.arrays) {
+        tasks.push(
+          run(buildPgColumnTypesQuery(database, name))
+            .then((res) => {
+              const byCol = new Map<string, string>();
+              for (const row of res.rows)
+                if (row[0] != null && row[1] != null) byCol.set(String(row[0]), String(row[1]));
+              setPgArrays((cur) => new Map(cur).set(name, byCol));
+            })
+            .catch(() => setEnumFailed(true)),
+        );
+      }
+      void Promise.all(tasks).then(() => setLookupDone((cur) => new Set(cur).add(name)));
     }
   }, [ready, driver, database, sessionId, selectedNames]);
+
+  const lookupPending = useMemo(() => {
+    if (!ready || driver !== "postgres") return false;
+    return selectedNames.some((name) => {
+      const need = pgLookupNeeds(ready.columns.get(name) ?? []);
+      return (need.enums || need.arrays) && !lookupDone.has(name);
+    });
+  }, [ready, driver, selectedNames, lookupDone]);
 
   const defs = useMemo<TypeDefTable[]>(
     () =>
@@ -123,19 +162,19 @@ export function TypeDefModal({ sessionId, driver, database, tables, profileId, o
         comment: ready?.comments.get(name) ?? null,
         columns: (ready?.columns.get(name) ?? []).map((c) => ({
           name: c.name,
-          data_type: c.data_type,
+          data_type: pgArrays.get(name)?.get(c.name) ?? c.data_type,
           nullable: c.nullable,
           comment: c.comment ?? null,
           enumValues: pgEnums.get(name)?.get(c.name) ?? null,
         })),
       })),
-    [selectedNames, ready, pgEnums],
+    [selectedNames, ready, pgEnums, pgArrays],
   );
   const previewContent = useMemo(
     () => generateTypeDefs(defs, { driver, lang, naming }),
     [defs, driver, lang, naming],
   );
-  const canCopy = previewContent.length > 0;
+  const canCopy = previewContent.length > 0 && !lookupPending;
 
   const filtered = useMemo(() => {
     const f = filter.trim().toLowerCase();
@@ -223,7 +262,6 @@ export function TypeDefModal({ sessionId, driver, database, tables, profileId, o
               <FieldLabel as="div">{t("typeDefTables")}</FieldLabel>
               <Input
                 type="text"
-                ref={filterRef}
                 value={filter}
                 onChange={(e) => setFilter(e.target.value)}
                 placeholder={t("typeDefTablesFilter")}
@@ -265,7 +303,7 @@ export function TypeDefModal({ sessionId, driver, database, tables, profileId, o
             </FormSection>
             <FormSection>
               <FieldLabel as="div">{t("typeDefPreview")}</FieldLabel>
-              {canCopy ? (
+              {previewContent.length > 0 ? (
                 <CodePreview minH="80px" maxH="280px" aria-label={t("typeDefPreview")}>
                   {previewContent}
                 </CodePreview>

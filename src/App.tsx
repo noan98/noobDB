@@ -2446,9 +2446,9 @@ export default function App() {
   // 論理リレーションのダイアログを閉じるたびに進め、開いている ER 図を取得し直す。
   const [logicalRelationsTick, setLogicalRelationsTick] = useState(0);
   // AI スキーマドキュメント (#696)。ER 図で選択中のテーブルを初期スコープとして渡す。
+  const [schemaDocTarget, setSchemaDocTarget] = useState<{ database: string; tables: string[] } | null>(null);
   // 型定義の生成モーダル (#2411)。tables が空ならモーダル内で選ぶ。
   const [typeDefTarget, setTypeDefTarget] = useState<{ database: string; tables: string[] } | null>(null);
-  const [schemaDocTarget, setSchemaDocTarget] = useState<{ database: string; tables: string[] } | null>(null);
   // プロファイルインポート: ファイル選択後、衝突解決ダイアログに渡すパス。
   const [importProfilesPath, setImportProfilesPath] = useState<string | null>(null);
   // 暗号化バックアップ (#710): 書き出しのパスフレーズダイアログの開閉と、読み込む

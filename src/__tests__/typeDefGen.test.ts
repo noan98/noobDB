@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildPgColumnTypesQuery,
   classifyColumnType,
   generateTypeDefs,
   toCamelCase,
@@ -20,19 +21,19 @@ const MAP: Case[] = [
   ["mysql", "bigint unsigned", "string", "uint64", "u64", "int"],
   ["mysql", "tinyint(1)", "boolean", "bool", "bool", "bool"],
   ["mysql", "tinyint(4)", "number", "int8", "i8", "int"],
-  ["mysql", "decimal(10,2)", "string", "string", "rust_decimal::Decimal", "decimal.Decimal"],
+  ["mysql", "decimal(10,2)", "string", "string", "rust_decimal::Decimal", "_decimal.Decimal"],
   ["mysql", "double", "number", "float64", "f64", "float"],
   ["mysql", "float", "number", "float32", "f32", "float"],
   ["mysql", "varchar(255)", "string", "string", "String", "str"],
-  ["mysql", "datetime(6)", "string", "time.Time", "chrono::NaiveDateTime", "datetime.datetime"],
-  ["mysql", "timestamp", "string", "time.Time", "chrono::DateTime<chrono::Utc>", "datetime.datetime"],
-  ["mysql", "date", "string", "time.Time", "chrono::NaiveDate", "datetime.date"],
+  ["mysql", "datetime(6)", "string", "time.Time", "chrono::NaiveDateTime", "_datetime.datetime"],
+  ["mysql", "timestamp", "string", "time.Time", "chrono::DateTime<chrono::Utc>", "_datetime.datetime"],
+  ["mysql", "date", "string", "time.Time", "chrono::NaiveDate", "_datetime.date"],
   ["mysql", "json", "unknown", "json.RawMessage", "serde_json::Value", "Any"],
   ["mysql", "longblob", "string", "[]byte", "Vec<u8>", "bytes"],
   ["mysql", "enum('a','b')", '"a" | "b"', "string", "String", 'Literal["a", "b"]'],
   ["postgres", "integer", "number", "int32", "i32", "int"],
   ["postgres", "bigint", "string", "int64", "i64", "int"],
-  ["postgres", "numeric(12,4)", "string", "string", "rust_decimal::Decimal", "decimal.Decimal"],
+  ["postgres", "numeric(12,4)", "string", "string", "rust_decimal::Decimal", "_decimal.Decimal"],
   ["postgres", "character varying(50)", "string", "string", "String", "str"],
   ["postgres", "boolean", "boolean", "bool", "bool", "bool"],
   ["postgres", "double precision", "number", "float64", "f64", "float"],
@@ -42,7 +43,7 @@ const MAP: Case[] = [
     "string",
     "time.Time",
     "chrono::DateTime<chrono::Utc>",
-    "datetime.datetime",
+    "_datetime.datetime",
   ],
   [
     "postgres",
@@ -50,9 +51,9 @@ const MAP: Case[] = [
     "string",
     "time.Time",
     "chrono::NaiveDateTime",
-    "datetime.datetime",
+    "_datetime.datetime",
   ],
-  ["postgres", "uuid", "string", "string", "uuid::Uuid", "uuid.UUID"],
+  ["postgres", "uuid", "string", "string", "uuid::Uuid", "_uuid.UUID"],
   ["postgres", "jsonb", "unknown", "json.RawMessage", "serde_json::Value", "Any"],
   ["postgres", "bytea", "string", "[]byte", "Vec<u8>", "bytes"],
   ["postgres", "integer[]", "number[]", "[]int32", "Vec<i32>", "list[int]"],
@@ -62,8 +63,8 @@ const MAP: Case[] = [
   ["sqlite", "TEXT", "string", "string", "String", "str"],
   ["sqlite", "REAL", "number", "float64", "f64", "float"],
   ["sqlite", "BLOB", "string", "[]byte", "Vec<u8>", "bytes"],
-  ["sqlite", "NUMERIC", "string", "string", "rust_decimal::Decimal", "decimal.Decimal"],
-  ["sqlite", "DATETIME", "string", "time.Time", "chrono::NaiveDateTime", "datetime.datetime"],
+  ["sqlite", "NUMERIC", "string", "string", "f64", "_decimal.Decimal"],
+  ["sqlite", "DATETIME", "string", "time.Time", "chrono::NaiveDateTime", "_datetime.datetime"],
   ["sqlite", "BOOLEAN", "boolean", "bool", "bool", "bool"],
 ];
 
@@ -164,6 +165,7 @@ describe("識別子の変換", () => {
     expect(s).toContain("@column user id");
     expect(s).toContain("  userId: number;");
     expect(s).toContain("  _1st: number;");
+    expect(s).toContain("@column 1st");
     expect(s).toContain("  field: number;");
     expect(s).toContain("  userId_2: number;");
   });
@@ -191,6 +193,15 @@ describe("識別子の変換", () => {
     expect(kw).toContain('#[sqlx(rename = "type")]');
     expect(kw).toContain("pub type_: i32,");
     expect(s).toContain("pub _1st: i32,");
+  });
+  it("Python: 先頭数字は col_ (Pydantic v2 は _ 始まりを無視する)、元の名前を残す", () => {
+    const d = gen("python");
+    expect(d).toContain("    col_1st: int");
+    expect(d).toContain("#: column: 1st");
+    expect(d).not.toContain("_1st: int\n    col");
+    const p = gen("pythonPydantic");
+    expect(p).toContain('col_1st: int = Field(alias="1st")');
+    expect(p).not.toMatch(/^ {4}_1st/m);
   });
   it("Python: 予約語を避け、Pydantic は alias を付ける", () => {
     expect(gen("python")).toContain("    class_: int");
@@ -225,7 +236,7 @@ describe("複数テーブル・import", () => {
   it("Python の import を統合", () => {
     const s = run("python");
     expect(s).toContain(
-      "import datetime\nfrom dataclasses import dataclass\nfrom typing import Any, Optional",
+      "import datetime as _datetime\nfrom dataclasses import dataclass\nfrom typing import Any, Optional",
     );
   });
   it("テーブル 0 件は空文字、型名の衝突は連番", () => {
@@ -239,5 +250,79 @@ describe("複数テーブル・import", () => {
     );
     expect(dup).toContain("pub struct AB {");
     expect(dup).toContain("pub struct AB2 {");
+  });
+});
+
+describe("レビュー指摘の補正", () => {
+  const gen1 = (driver: string, lang: TypeDefLang, columns: TypeDefColumn[], comment?: string) =>
+    generateTypeDefs([{ name: "t", comment, columns }], { driver, lang, naming: "snake" });
+  const col = (name: string, data_type: string, over: Partial<TypeDefColumn> = {}): TypeDefColumn => ({
+    name,
+    data_type,
+    nullable: true,
+    ...over,
+  });
+
+  it("Python: 列名が import 済みモジュール名でも衝突しない", () => {
+    for (const lang of ["python", "pythonPydantic"] as const) {
+      const s = gen1("postgres", lang, [
+        col("uuid", "uuid"),
+        col("datetime", "timestamp without time zone"),
+        col("decimal", "numeric"),
+      ]);
+      expect(s).toContain("import uuid as _uuid");
+      expect(s).toContain("import datetime as _datetime");
+      expect(s).toContain("import decimal as _decimal");
+      expect(s).toContain("uuid: Optional[_uuid.UUID]");
+      expect(s).toContain("datetime: Optional[_datetime.datetime]");
+      expect(s).toContain("decimal: Optional[_decimal.Decimal]");
+      expect(s).not.toMatch(/[^_]uuid\.UUID/);
+    }
+  });
+
+  it("docstring のエスケープ", () => {
+    const s = gen1("mysql", "python", [], 'a\\b """x""" end"');
+    expect(s).toContain('"""a\\\\b \\"\\"\\"x\\"\\"\\" end\\""""');
+  });
+
+  it("TS / zod / dataclass は名前が変わるとき (lossy でなくても) 元の列名を注記", () => {
+    const cols = [col("userId", "int")];
+    expect(gen1("mysql", "typescript", cols)).toContain("@column userId");
+    expect(gen1("mysql", "typescriptZod", cols)).toContain("@column userId");
+    expect(gen1("mysql", "python", cols)).toContain("#: column: userId");
+    expect(gen1("mysql", "typescript", [col("user_id", "int")])).not.toContain("@column");
+  });
+
+  it("Go: バッククォートを含む列名はタグを付けずコメントに残す", () => {
+    const s = gen1("mysql", "go", [col("a`b", "int"), col("ok", "int")]);
+    expect(s).toContain("// column: a`b");
+    expect(s).toMatch(/\tAB\s+\*int32\n/);
+    expect(s).toContain('`db:"ok"`');
+  });
+
+  it("Rust: SQLite の NUMERIC は f64、PostgreSQL の ENUM / timetz / money に注記", () => {
+    expect(gen1("sqlite", "rust", [col("n", "DECIMAL(10,2)", { nullable: false })])).toContain("pub n: f64,");
+    const pg = gen1("postgres", "rust", [
+      col("e", "USER-DEFINED"),
+      col("t", "time with time zone"),
+      col("m", "money"),
+    ]);
+    expect(pg).toContain(
+      "/// ENUM: sqlx cannot decode it as String directly; select it with a `::text` cast",
+    );
+    expect(pg).toContain("/// timetz:");
+    expect(pg).toContain("/// money:");
+    expect(gen1("mysql", "rust", [col("e", "enum('a')")])).not.toContain("::text");
+  });
+
+  it("PostgreSQL の列型クエリはスキーマ名・テーブル名をエスケープする", () => {
+    const sql = buildPgColumnTypesQuery("pub'lic", "t'x");
+    expect(sql).toContain("n.nspname = 'pub''lic'");
+    expect(sql).toContain("c.relname = 't''x'");
+    expect(sql).toContain("format_type(a.atttypid, NULL)");
+  });
+
+  it("配列列は lookup で得た型名を渡せば要素型まで辿る", () => {
+    expect(one("postgres", "typescript", { data_type: "integer[]" })).toContain("c: number[];");
   });
 });

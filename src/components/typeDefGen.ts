@@ -18,6 +18,7 @@
  */
 
 import { baseTypeName } from "./cellTypeMeta";
+import { quoteString } from "./cellEdit";
 import { allowedValuesFromType } from "./valuePicker";
 
 export const TYPE_DEF_LANGS = [
@@ -58,6 +59,21 @@ export interface TypeDefOptions {
   driver: string;
   lang: TypeDefLang;
   naming: TypeDefNaming;
+}
+
+/**
+ * PostgreSQL の列ごとの正確な型名 (`integer[]` など) を引く読み取りクエリ。行 = `[列名, 型名]`。
+ * `information_schema` は配列列を `ARRAY` としか返さないので、要素型を知るために使う。
+ */
+export function buildPgColumnTypesQuery(schema: string, table: string): string {
+  const lit = (s: string) => quoteString("postgres", s);
+  return (
+    "SELECT a.attname, pg_catalog.format_type(a.atttypid, NULL) FROM pg_catalog.pg_attribute a" +
+    " JOIN pg_catalog.pg_class c ON c.oid = a.attrelid" +
+    " JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace" +
+    ` WHERE n.nspname = ${lit(schema)} AND c.relname = ${lit(table)}` +
+    " AND a.attnum > 0 AND NOT a.attisdropped"
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -383,8 +399,13 @@ function fieldIdent(orig: string, lang: TypeDefLang, naming: TypeDefNaming, used
     lossy = true;
   }
   // 先頭が数字 / (Go は) ASCII 英字でないと識別子・エクスポートとして成立しない。
+  // Python 系は `_` 始まりだと Pydantic v2 がフィールドとして扱わないため `col_` を付ける。
   if (goStyle ? !/^[A-Z]/.test(name) : /^\p{N}/u.test(name)) {
-    name = goStyle ? `Col${name}` : `_${name}`;
+    name = goStyle
+      ? `Col${name}`
+      : lang === "python" || lang === "pythonPydantic"
+        ? `col_${name}`
+        : `_${name}`;
     lossy = true;
   }
   if (lang === "python" || lang === "pythonPydantic") {
@@ -490,14 +511,15 @@ function goType(ir: TypeIR, imports: Set<string>): GoType {
   }
 }
 
-function rustType(ir: TypeIR): string {
+function rustType(ir: TypeIR, driver: string): string {
   switch (ir.k) {
     case "int":
       return `${ir.unsigned ? "u" : "i"}${ir.bits}`;
     case "float":
       return `f${ir.bits}`;
     case "decimal":
-      return "rust_decimal::Decimal";
+      // SQLite の NUMERIC / DECIMAL は REAL として保存され、sqlx は Decimal をデコードできない。
+      return driver === "sqlite" ? "f64" : "rust_decimal::Decimal";
     case "bool":
       return "bool";
     case "uuid":
@@ -513,7 +535,7 @@ function rustType(ir: TypeIR): string {
     case "binary":
       return "Vec<u8>";
     case "array":
-      return `Vec<${ir.of ? rustType(ir.of) : "serde_json::Value"}>`;
+      return `Vec<${ir.of ? rustType(ir.of, driver) : "serde_json::Value"}>`;
     default:
       return "String";
   }
@@ -526,22 +548,22 @@ function pyType(ir: TypeIR, imports: Set<string>): string {
     case "float":
       return "float";
     case "decimal":
-      imports.add("import decimal");
-      return "decimal.Decimal";
+      imports.add("import decimal as _decimal");
+      return "_decimal.Decimal";
     case "bool":
       return "bool";
     case "uuid":
-      imports.add("import uuid");
-      return "uuid.UUID";
+      imports.add("import uuid as _uuid");
+      return "_uuid.UUID";
     case "date":
-      imports.add("import datetime");
-      return "datetime.date";
+      imports.add("import datetime as _datetime");
+      return "_datetime.date";
     case "time":
-      imports.add("import datetime");
-      return "datetime.time";
+      imports.add("import datetime as _datetime");
+      return "_datetime.time";
     case "datetime":
-      imports.add("import datetime");
-      return "datetime.datetime";
+      imports.add("import datetime as _datetime");
+      return "_datetime.datetime";
     case "json":
       imports.add("from typing import Any");
       return "Any";
@@ -617,7 +639,7 @@ function genTypeScript(table: TypeDefTable, name: string, o: TypeDefOptions): st
   const out = jsDoc(commentLines(table.comment), "");
   out.push(`export interface ${name} {`);
   for (const { col, ir, ident } of prepare(table, o)) {
-    const doc = [...commentLines(col.comment), ...(ident.lossy ? [`@column ${col.name}`] : [])];
+    const doc = [...commentLines(col.comment), ...(ident.name !== col.name ? [`@column ${col.name}`] : [])];
     out.push(...jsDoc(doc, "  "));
     out.push(`  ${ident.name}: ${tsType(ir)}${col.nullable ? " | null" : ""};`);
   }
@@ -629,7 +651,7 @@ function genZod(table: TypeDefTable, name: string, o: TypeDefOptions): string[] 
   const out = jsDoc(commentLines(table.comment), "");
   out.push(`export const ${name}Schema = z.object({`);
   for (const { col, ir, ident } of prepare(table, o)) {
-    const doc = [...commentLines(col.comment), ...(ident.lossy ? [`@column ${col.name}`] : [])];
+    const doc = [...commentLines(col.comment), ...(ident.name !== col.name ? [`@column ${col.name}`] : [])];
     out.push(...jsDoc(doc, "  "));
     out.push(`  ${ident.name}: ${zodType(ir)}${col.nullable ? ".nullable()" : ""},`);
   }
@@ -642,8 +664,10 @@ function genGo(table: TypeDefTable, name: string, o: TypeDefOptions, imports: Se
   const rows = prepare(table, o).map(({ col, ir, ident }) => {
     const t = goType(ir, imports);
     const type = col.nullable && !t.nilable ? `*${t.text}` : t.text;
-    const doc = [...commentLines(col.comment), ...enumNote(ir)];
-    return { doc, field: ident.name, type, tag: `\`db:${JSON.stringify(col.name)}\`` };
+    // 生文字列のタグはバッククォートを含められないので、その列はタグを付けず元の名前をコメントに残す。
+    const tagless = col.name.includes("`");
+    const doc = [...commentLines(col.comment), ...enumNote(ir), ...(tagless ? [`column: ${col.name}`] : [])];
+    return { doc, field: ident.name, type, tag: tagless ? "" : `\`db:${JSON.stringify(col.name)}\`` };
   });
   const nameW = Math.max(0, ...rows.map((r) => r.field.length));
   const typeW = Math.max(0, ...rows.map((r) => r.type.length));
@@ -651,10 +675,26 @@ function genGo(table: TypeDefTable, name: string, o: TypeDefOptions, imports: Se
   out.push(`type ${name} struct {`);
   for (const r of rows) {
     out.push(...prefixed(r.doc, "\t", "//"));
-    out.push(`\t${r.field.padEnd(nameW)} ${r.type.padEnd(typeW)} ${r.tag}`);
+    out.push(`\t${r.field.padEnd(nameW)} ${r.type.padEnd(typeW)} ${r.tag}`.trimEnd());
   }
   out.push("}");
   return out;
+}
+
+/** sqlx がそのままではデコードできない PostgreSQL の型への注記。 */
+function rustNotes(driver: string, col: TypeDefColumn, ir: TypeIR): string[] {
+  if (driver !== "postgres") return [];
+  const base = baseTypeName(col.data_type.trim().toLowerCase());
+  if (ir.k === "enum" || base === "user-defined") {
+    return ["ENUM: sqlx cannot decode it as String directly; select it with a `::text` cast"];
+  }
+  if (base === "timetz" || base === "time with time zone") {
+    return ["timetz: sqlx has no chrono mapping (PgTimeTz); select it with a `::text` cast"];
+  }
+  if (base === "money" || base === "smallmoney") {
+    return ["money: sqlx decodes it as PgMoney, not Decimal; select it with a `::numeric` cast"];
+  }
+  return [];
 }
 
 function genRust(table: TypeDefTable, name: string, o: TypeDefOptions): string[] {
@@ -662,13 +702,24 @@ function genRust(table: TypeDefTable, name: string, o: TypeDefOptions): string[]
   out.push("#[derive(Debug, Clone, sqlx::FromRow)]");
   out.push(`pub struct ${name} {`);
   for (const { col, ir, ident } of prepare(table, o)) {
-    out.push(...prefixed([...commentLines(col.comment), ...enumNote(ir)], "    ", "///"));
+    out.push(
+      ...prefixed(
+        [...commentLines(col.comment), ...enumNote(ir), ...rustNotes(o.driver, col, ir)],
+        "    ",
+        "///",
+      ),
+    );
     if (ident.name !== col.name) out.push(`    #[sqlx(rename = ${JSON.stringify(col.name)})]`);
-    const type = rustType(ir);
+    const type = rustType(ir, o.driver);
     out.push(`    pub ${ident.name}: ${col.nullable ? `Option<${type}>` : type},`);
   }
   out.push("}");
   return out;
+}
+
+/** Python の三連引用符 docstring に入れられるようエスケープする (`\\` / 末尾の `"` / `"""`)。 */
+function escapeDocstring(text: string): string {
+  return text.replace(/\\/g, "\\\\").replace(/"$/, '\\"').replace(/"""/g, '\\"\\"\\"');
 }
 
 function genPython(
@@ -692,7 +743,7 @@ function genPython(
     out.push("@dataclass", `class ${name}:`);
   }
   const doc = commentLines(table.comment);
-  if (doc.length > 0) out.push(`    """${doc.join(" ").replace(/"""/g, '\\"\\"\\"')}"""`);
+  if (doc.length > 0) out.push(`    """${escapeDocstring(doc.join(" "))}"""`);
   const aliased = pydantic && rows.some((r) => r.ident.name !== r.col.name);
   if (aliased) {
     imports.add("from pydantic import ConfigDict");
@@ -701,7 +752,7 @@ function genPython(
   for (const r of rows) {
     const note = [
       ...commentLines(r.col.comment),
-      ...(!pydantic && r.ident.lossy ? [`column: ${r.col.name}`] : []),
+      ...(!pydantic && r.ident.name !== r.col.name ? [`column: ${r.col.name}`] : []),
     ];
     out.push(...prefixed(note, "    ", "#:"));
     if (pydantic) {
