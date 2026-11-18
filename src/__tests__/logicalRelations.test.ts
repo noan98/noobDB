@@ -302,6 +302,20 @@ describe("classifyImport (#2423)", () => {
     ]);
   });
 
+  it("blocks only a relation whose columns collapse to the same column when folding case", () => {
+    const dupChild = rel("orders", ["user_id", "USER_ID"], "users", ["id", "ID"]);
+    const dupParent = rel("orders", ["id", "user_id"], "users", ["ID", "id"]);
+    const ok = rel("orders", ["user_id"], "users", ["id"]);
+    const res = classifyImport([dupChild, dupParent, ok], tables, [], true);
+    expect(res.addable).toEqual([ok]);
+    expect(res.blocked).toEqual([
+      { relation: dupChild, reason: { kind: "duplicateColumn", table: "orders", column: "user_id" } },
+      { relation: dupParent, reason: { kind: "duplicateColumn", table: "users", column: "id" } },
+    ]);
+    // 完全一致のみ (PostgreSQL) では別の列なので、存在しない列として扱う。
+    expect(classifyImport([dupChild], tables, [], false).blocked[0]?.reason.kind).toBe("missingColumn");
+  });
+
   it("compares names exactly (case-sensitive)", () => {
     const res = classifyImport([rel("Orders", ["user_id"], "users", ["id"])], tables, []);
     expect(res.blocked).toHaveLength(1);

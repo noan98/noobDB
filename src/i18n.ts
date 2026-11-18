@@ -4741,6 +4741,8 @@ const en = {
   logicalRelImportBlockedMore: "…and {count} more",
   logicalRelImportMissingTable: "Table {table} does not exist in this database",
   logicalRelImportMissingColumn: "Column {column} does not exist in table {table}",
+  logicalRelImportDuplicateColumn:
+    "Column {column} in table {table} is listed more than once after matching names (case-insensitive)",
   logicalRelImportMode: "How to import",
   logicalRelImportAdd: "Add",
   logicalRelImportAddDesc:
@@ -13770,6 +13772,8 @@ const ja: Dict = {
   logicalRelImportBlockedMore: "ほか {count} 件",
   logicalRelImportMissingTable: "テーブル {table} がこのデータベースにありません",
   logicalRelImportMissingColumn: "テーブル {table} に列 {column} がありません",
+  logicalRelImportDuplicateColumn:
+    "テーブル {table} の列 {column} が、大文字小文字を無視した名前の照合で重複します",
   logicalRelImportMode: "取り込み方",
   logicalRelImportAdd: "追加",
   logicalRelImportAddDesc:

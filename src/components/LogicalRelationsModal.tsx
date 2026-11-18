@@ -216,7 +216,9 @@ export function LogicalRelationsModal({ sessionId, database, driver, onChanged, 
   const describeReason = (reason: ImportBlockReason) =>
     reason.kind === "missingTable"
       ? t("logicalRelImportMissingTable", { table: reason.table })
-      : t("logicalRelImportMissingColumn", { table: reason.table, column: reason.column });
+      : reason.kind === "duplicateColumn"
+        ? t("logicalRelImportDuplicateColumn", { table: reason.table, column: reason.column })
+        : t("logicalRelImportMissingColumn", { table: reason.table, column: reason.column });
 
   // 登録済みの定義だけを JSON へ書き出す (profile_id・接続情報は Rust 側で落とす)。保存先は保存ダイアログ、
   // 書き込みは既存の `write_text_file` (Rust 経由。fs capability は増やさない)。

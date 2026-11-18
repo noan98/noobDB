@@ -248,7 +248,8 @@ export function suggestLogicalRelations(
 /** 取り込み候補が接続先に適用できない理由。 */
 export type ImportBlockReason =
   | { kind: "missingTable"; table: string }
-  | { kind: "missingColumn"; table: string; column: string };
+  | { kind: "missingColumn"; table: string; column: string }
+  | { kind: "duplicateColumn"; table: string; column: string };
 
 /** 取り込みファイルの関係を、接続先のスキーマ・登録済みの一覧と照合した結果 (#2423)。 */
 export interface ImportClassification {
@@ -277,6 +278,16 @@ function resolveName(name: string, names: Iterable<string>, fold: boolean): stri
   return hits.length === 1 ? (hits[0] ?? null) : null;
 }
 
+/** 配列内で 2 回目に現れた最初の要素 (重複が無ければ null)。 */
+function firstDuplicate(names: readonly string[]): string | null {
+  const seen = new Set<string>();
+  for (const n of names) {
+    if (seen.has(n)) return n;
+    seen.add(n);
+  }
+  return null;
+}
+
 /** 接続先の表記へ解決した関係か、最初の適用できない理由を返す。 */
 function resolveRelation(
   r: LogicalRelationInput,
@@ -301,6 +312,12 @@ function resolveRelation(
     if (hit === null) return { reason: { kind: "missingColumn", table: parent, column: c } };
     referencedColumns.push(hit);
   }
+  // 大文字小文字を無視した読み替えで別の列が同じ列に潰れると、Rust の validate が重複として拒否し
+  // 一括取り込みごと失敗する。その関係だけを適用できない扱いにする。
+  const dupChild = firstDuplicate(columns);
+  if (dupChild !== null) return { reason: { kind: "duplicateColumn", table: child, column: dupChild } };
+  const dupParent = firstDuplicate(referencedColumns);
+  if (dupParent !== null) return { reason: { kind: "duplicateColumn", table: parent, column: dupParent } };
   return {
     relation: { table: child, columns, referenced_table: parent, referenced_columns: referencedColumns },
   };
