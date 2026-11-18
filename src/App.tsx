@@ -203,7 +203,8 @@ import {
   type MaintenanceCommand,
   type MaintenanceKind,
 } from "./components/maintenanceCommands";
-import { mysqlAnalyzeFailure } from "./components/statsAdvisor";
+import { mysqlAnalyzeFailure, serverVersionSql } from "./components/statsAdvisor";
+import { CTE_BLOCK_KEYS, supportsCte } from "./cteRun";
 import type { StatsRunOutcome } from "./components/StatsAdvisorPanel";
 import {
   buildIdentitySyncSql,
@@ -1636,6 +1637,7 @@ export default function App() {
     () => ({
       run: shortcutBindings.run,
       runStatement: shortcutBindings.runStatement,
+      runCte: shortcutBindings.runCte,
       preview: shortcutBindings.preview,
       format: shortcutBindings.format,
       explain: shortcutBindings.explain,
@@ -1644,6 +1646,7 @@ export default function App() {
     [
       shortcutBindings.run,
       shortcutBindings.runStatement,
+      shortcutBindings.runCte,
       shortcutBindings.preview,
       shortcutBindings.format,
       shortcutBindings.explain,
@@ -2758,7 +2761,7 @@ export default function App() {
     sql: string;
     mode: "run" | "runNewTab" | "preview" | "explain";
     /** "run" 再開時に `runInTabWithGate` へ渡す指定 (スニペット実行の `newTab: false` など)。 */
-    runOpts?: { newTab?: boolean };
+    runOpts?: { newTab?: boolean; title?: string };
   } | null>(null);
 
   // The focused pane drives all the "active tab" handlers (sidebar inserts,
@@ -7207,7 +7210,7 @@ export default function App() {
   );
 
   const runInTabWithGate = useCallback(
-    (tab: Tab, sql: string, opts?: { newTab?: boolean; fresh?: boolean }) => {
+    (tab: Tab, sql: string, opts?: { newTab?: boolean; fresh?: boolean; title?: string }) => {
       // 子行影響の事前確認中 (ステータスに「確認中」) の再実行は無視する (#1767)。
       if (precheckingTabsRef.current.has(tab.id)) return;
       gateRunSeqRef.current.set(tab.id, (gateRunSeqRef.current.get(tab.id) ?? 0) + 1);
@@ -7230,7 +7233,10 @@ export default function App() {
           ...makeQueryTab(),
           sql,
           lastExecutedSql: sql,
-          title: deriveResultTabTitle(sql),
+          title: opts?.title ?? deriveResultTabTitle(sql),
+          // 「この CTE までを実行」(#2409) のように呼び出し側が名前を決めたタイトルは、再実行しても
+          // SQL 由来のタイトルに戻さない。
+          ...(opts?.title ? { titleManual: true } : {}),
         };
         addTab(newTab);
         target = newTab;
@@ -7507,7 +7513,7 @@ export default function App() {
       tab: Tab,
       sql: string,
       mode: "run" | "runNewTab" | "preview" | "explain",
-      runOpts?: { newTab?: boolean },
+      runOpts?: { newTab?: boolean; title?: string },
     ) => {
       // 習熟マップ (#2216): ユーザー起点の実行の入口。バッチ・トランザクション中の実行もここを通る。
       // EXPLAIN タブの再実行は EXPLAIN なので数えない。
@@ -7515,7 +7521,7 @@ export default function App() {
         markFeatureTried("helpRunTitle");
       if (mode === "preview") void previewQueryInTab(tab.id, sql);
       else if (mode === "explain") explainForTab(tab, sql);
-      else if (mode === "runNewTab") runInTabWithGate(tab, sql, { newTab: true });
+      else if (mode === "runNewTab") runInTabWithGate(tab, sql, { ...runOpts, newTab: true });
       else runInTabWithGate(tab, sql, runOpts);
     },
     [previewQueryInTab, explainForTab, runInTabWithGate],
@@ -7532,7 +7538,7 @@ export default function App() {
       tab: Tab,
       sql: string,
       mode: "run" | "runNewTab" | "preview" | "explain",
-      runOpts?: { newTab?: boolean },
+      runOpts?: { newTab?: boolean; title?: string },
     ) => {
       const driver = selectedProfile?.driver ?? "mysql";
       if (extractQueryParams(sql).length === 0 && extractNativeParams(sql, driver).length === 0) {
@@ -13917,7 +13923,33 @@ export default function App() {
         c.profile.driver === selectedProfile.driver &&
         !isSandboxProfileId(c.profile.id),
     );
+  // 「この CTE までを実行」(#2409): MySQL だけ接続ごとに `SELECT VERSION()` を 1 回引き、WITH 非対応
+  // (MySQL 5.x / MariaDB 10.2 未満) なら無効にする。取れない間・失敗時は塞がない (非対応ならサーバがエラーを返す)。
+  const [cteRunUnsupported, setCteRunUnsupported] = useState(false);
+  const cteDriver = selectedProfile?.driver;
+  useEffect(() => {
+    setCteRunUnsupported(false);
+    const sql = cteDriver ? serverVersionSql(cteDriver) : null;
+    if (!sessionId || cteDriver !== "mysql" || !sql) return;
+    let cancelled = false;
+    api
+      .runLookupQuery({ sessionId, sql, rowCap: 1, queryTimeoutSecs: 5 })
+      .then((res) => {
+        if (!cancelled) setCteRunUnsupported(!supportsCte("mysql", String(res.rows[0]?.[0] ?? "")));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId, cteDriver]);
+  const reportCteBlocked = useCallback(
+    (reason: keyof typeof CTE_BLOCK_KEYS) => toast.info(translate(CTE_BLOCK_KEYS[reason])),
+    [toast],
+  );
   const paneEnv: PaneEnv = {
+    cteRunUnsupported,
+    cteRunLimit: settings.autoLimitCount,
+    reportCteBlocked,
     completionSnippets,
     renamingTabId,
     store: tabPaneStore,

@@ -113,6 +113,8 @@ interface Props {
   rowSql?: RowInspectorSql;
   /** 1-based visible row number shown in the header. */
   rowNumber: number;
+  /** ヘッダの表示を「行 N」の代わりにこの文字列にする (参照先カードから開いたときのテーブル名など)。 */
+  title?: string;
   onClose: () => void;
   onPrev?: () => void;
   onNext?: () => void;
@@ -194,6 +196,7 @@ export function RowInspector({
   edit,
   rowSql,
   rowNumber,
+  title,
   onClose,
   onPrev,
   onNext,
@@ -517,7 +520,7 @@ export function RowInspector({
         <MotionDrawer
           key="row-inspector"
           role="dialog"
-          aria-label={t("gridRowInspectorTitle", { row: rowNumber })}
+          aria-label={title ?? t("gridRowInspectorTitle", { row: rowNumber })}
           initial={{ opacity: 0, x: 28, width: inspectorWidth(activeView) }}
           animate={{ opacity: 1, x: 0, width: inspectorWidth(activeView) }}
           exit={{ opacity: 0, x: 28 }}
@@ -545,7 +548,7 @@ export function RowInspector({
             flexShrink={0}
           >
             <chakra.span textStyle="subheading" flex="1">
-              {t("gridRowInspectorTitle", { row: rowNumber })}
+              {title ?? t("gridRowInspectorTitle", { row: rowNumber })}
             </chakra.span>
             {canEdit && !editing && (
               <InspectorIconButton

@@ -19,11 +19,22 @@
 
 import type { Tree } from "@lezer/common";
 import type { Diagnostic } from "@codemirror/lint";
+import {
+  buildColumnIndex,
+  ddlTargetTables,
+  indexLookup,
+  insertArityIssues,
+  scanInsertValues,
+  type ColumnIndex,
+  type InsertStatement,
+} from "./insertValues";
 
 /** 診断メッセージ (i18n 経由で注入)。`{name}` を対象の識別子に置き換える。 */
 export interface SqlSemanticMessages {
   unknownTable: string;
   unknownColumn: string;
+  /** INSERT の値の数の不一致 (#2424)。`{columns}` / `{values}` を置き換える。 */
+  valueCount: string;
 }
 
 /** セマンティック lint が参照するスキーマ。 */
@@ -35,6 +46,8 @@ export interface SemanticSchema {
   defaultDatabase: string | null;
   /** 列は不明だが存在するテーブル名 (小文字。マテビューなど)。 */
   extraTables: Set<string>;
+  /** INSERT の値の数の検査用: 表名 (小文字) → 定義順の列。大文字小文字違いの衝突は null (#2424)。 */
+  ordered: ColumnIndex;
 }
 
 /** `buildSemanticSchema` の入力。 */
@@ -77,6 +90,7 @@ export function buildSemanticSchema(input: SemanticSchemaInput): SemanticSchema 
     tables,
     defaultDatabase: input.defaultDatabase ? input.defaultDatabase.toLowerCase() : null,
     extraTables: new Set([...(input.extraTableNames ?? [])].map((n) => n.toLowerCase())),
+    ordered: buildColumnIndex(overview, input.schemaTable),
   };
 }
 
@@ -1153,6 +1167,54 @@ export function semanticDiagnostics(
       out.push(...kept);
     }
     return out;
+  } catch {
+    return [];
+  }
+}
+
+/** 値の数の検査 (#2424) を行う文書長の上限。これを超える巨大なダンプは検査しない。 */
+const MAX_ARITY_DOC_LENGTH = 2_000_000;
+
+/** 直前の走査結果のメモ。カーソル移動だけの再 lint で巨大な文書を読み直さない。 */
+let arityMemo: { doc: string; driver: string; stmts: InsertStatement[]; ddl: Set<string> } | null = null;
+
+function scanMemo(doc: string, driver: string) {
+  if (arityMemo && arityMemo.driver === driver && arityMemo.doc === doc) return arityMemo;
+  const stmts = scanInsertValues(doc, { driver });
+  arityMemo = { doc, driver, stmts, ddl: ddlTargetTables(doc) };
+  return arityMemo;
+}
+
+/**
+ * `INSERT ... VALUES` の各タプルの値の数が列数と合わないものを `warning` で返す (#2424)。
+ * 列リストが無い文は表の列数と比べる。`INSERT ... SELECT` / `DEFAULT VALUES` は解析対象外。
+ * 走査は `semanticDiagnostics` のトークン上限とは独立で、1 万行の INSERT でも読む。
+ */
+export function insertArityDiagnostics(
+  doc: string,
+  schema: SemanticSchema | null,
+  messages: SqlSemanticMessages,
+  options: SemanticOptions = {},
+): Diagnostic[] {
+  if (!schema || doc.length > MAX_ARITY_DOC_LENGTH) return [];
+  try {
+    const { stmts, ddl } = scanMemo(doc, schema.driver);
+    if (stmts.length === 0) return [];
+    return insertArityIssues(stmts, {
+      driver: schema.driver,
+      lookup: indexLookup(schema.ordered, schema.defaultDatabase, ddl),
+      cursor: options.cursor,
+    }).map((i) => ({
+      from: i.from,
+      to: i.to,
+      severity: "warning" as const,
+      message: messages.valueCount
+        .split("{columns}")
+        .join(String(i.columns))
+        .split("{values}")
+        .join(String(i.values)),
+      source: "sql-semantic",
+    }));
   } catch {
     return [];
   }

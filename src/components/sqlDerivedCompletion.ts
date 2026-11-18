@@ -171,10 +171,20 @@ function topView(s: string): string {
   return out.join("");
 }
 
-/** `open` の `(` に対応する `)` の位置。閉じていなければ -1。 */
-function matchClose(s: string, open: number): number {
+/**
+ * `open` の `(` に対応する `)` の位置。閉じていなければ -1。引用符付き識別子 (`"…"` / `` `…` `` と、
+ * `brackets` のとき SQLite の `[…]`) の中の括弧は構造として数えない。文字列はマスク済みで中身が空白。
+ */
+function matchClose(s: string, open: number, brackets = false): number {
   let depth = 0;
   for (let i = open; i < s.length; i++) {
+    const c = s[i];
+    if (c === '"' || c === "`" || (brackets && c === "[")) {
+      const end = s.indexOf(c === "[" ? "]" : c, i + 1);
+      if (end < 0) return -1;
+      i = end;
+      continue;
+    }
     if (s[i] === "(") depth++;
     else if (s[i] === ")") {
       depth--;
@@ -311,38 +321,118 @@ function columnsOf(info: SelectInfo | null, explicit: string[] | null): string[]
   return info.items.map((i) => i.name);
 }
 
-/** `WITH [RECURSIVE] name [(cols)] AS [NOT] [MATERIALIZED] (body), ...` を読む。 */
-function parseCtes(s: string, cursor: number): Source[] {
-  const head = /^\s*WITH(?:\s+RECURSIVE)?\b/i.exec(s);
-  if (!head) return [];
-  const out: Source[] = [];
+/** `WITH` 句の CTE 定義 1 つ分。位置はすべて渡したマスク済み文字列 (= 元の文と同長) のオフセット。 */
+export interface CteDef {
+  /** 引用符を外した名前。 */
+  name: string;
+  /** 引用符つきの元の綴り (`"My CTE"` など)。 */
+  rawName: string;
+  /** 名前の先頭位置 (直前の空白・カンマは含まない)。 */
+  start: number;
+  /** 本体を囲む `(` の位置。 */
+  open: number;
+  /** 本体を囲む `)` の位置。 */
+  close: number;
+  /** 定義の最後の文字の位置。PostgreSQL の `SEARCH` / `CYCLE` 句があればその末尾 (無ければ `close`)。 */
+  end: number;
+  /** `SEARCH` / `CYCLE` 句の直後に、読み取れない形が続いている (定義を正しく切り出せない)。 */
+  tailUnparsed: boolean;
+  /** 列リスト `(a, b)` が識別子だけで読めたときの列名。無い / 読めないときは null。 */
+  explicitColumns: string[] | null;
+}
+
+/**
+ * `WITH [RECURSIVE] name [(cols)] AS [NOT] [MATERIALIZED] (body), ...` の定義を先頭から読む
+ * (補完 #1419 と「この CTE までを実行」#2409 の共通の読み取り口)。`s` は文字列・コメントを
+ * マスクした 1 文。WITH で始まらない場合は null。閉じていない定義に当たったらそこで止める。
+ */
+export function parseCteDefs(
+  s: string,
+  driver?: string,
+): { recursive: boolean; defs: CteDef[]; complete: boolean } | null {
+  const head = /^\s*WITH(\s+RECURSIVE)?\b/i.exec(s);
+  if (!head) return null;
+  const defs: CteDef[] = [];
   const defRe = new RegExp(
     `\\s*(${IDENT})(?:\\s*\\(([^()]*)\\))?\\s*AS\\s*(?:NOT\\s+)?(?:MATERIALIZED\\s+)?\\(`,
     "iy",
   );
   const commaRe = /\s*,/y;
+  const brackets = driver === "sqlite";
+  // PostgreSQL の再帰 CTE の `SEARCH ... SET x` / `CYCLE ... SET x [TO .. DEFAULT ..] [USING p]`。
+  const idList = `${IDENT}(?:\\s*,\\s*${IDENT})*`;
+  const lit = `(?:'[^']*'|[\\w.]+)`;
+  const searchRe = new RegExp(
+    `\\s*SEARCH\\s+(?:DEPTH|BREADTH)\\s+FIRST\\s+BY\\s+${idList}\\s+SET\\s+${IDENT}`,
+    "iy",
+  );
+  const cycleRe = new RegExp(
+    `\\s*CYCLE\\s+${idList}\\s+SET\\s+${IDENT}(?:\\s+TO\\s+${lit}\\s+DEFAULT\\s+${lit})?(?:\\s+USING\\s+${IDENT})?`,
+    "iy",
+  );
+  const tailKwRe = /\s*(?:SEARCH|CYCLE)\b/iy;
+  let complete = false;
   let p = head[0].length;
   for (;;) {
     defRe.lastIndex = p;
     const m = defRe.exec(s);
     if (!m) break;
     const open = p + m[0].length - 1;
-    const close = matchClose(s, open);
-    // 閉じていない / カーソルを含む定義は、まだ確定していないので候補にしない。
-    if (close < 0 || (open < cursor && cursor <= close)) break;
-    const explicit = m[2] !== undefined ? explicitColumns(m[2]) : null;
+    const close = matchClose(s, open, brackets);
+    if (close < 0) break;
+    let end = close;
+    for (;;) {
+      searchRe.lastIndex = end + 1;
+      const a = searchRe.exec(s);
+      if (a) {
+        end += a[0].length;
+        continue;
+      }
+      cycleRe.lastIndex = end + 1;
+      const b = cycleRe.exec(s);
+      if (b) {
+        end += b[0].length;
+        continue;
+      }
+      break;
+    }
+    tailKwRe.lastIndex = end + 1;
+    const tailUnparsed = tailKwRe.test(s);
     const nm = named(m[1], false);
     if (nm) {
-      out.push({
+      defs.push({
         name: nm.name,
-        kind: "cte",
-        columns: columnsOf(selectInfo(s.slice(open + 1, close)), explicit),
+        rawName: m[1],
+        start: p + (m[0].length - m[0].trimStart().length),
+        open,
+        close,
+        end,
+        tailUnparsed,
+        explicitColumns: m[2] !== undefined ? explicitColumns(m[2]) : null,
       });
     }
-    commaRe.lastIndex = close + 1;
+    commaRe.lastIndex = end + 1;
     const c = commaRe.exec(s);
-    if (!c) break;
-    p = close + 1 + c[0].length;
+    if (!c) {
+      // 次がカンマでなければ WITH 句はここで終わり (= 全定義を読み切った)。
+      complete = !tailUnparsed;
+      break;
+    }
+    p = end + 1 + c[0].length;
+  }
+  return { recursive: !!head[1], defs, complete };
+}
+
+function parseCtes(s: string, cursor: number): Source[] {
+  const out: Source[] = [];
+  for (const d of parseCteDefs(s)?.defs ?? []) {
+    // カーソルを含む定義は、まだ確定していないので候補にしない (それ以降も読まない)。
+    if (d.open < cursor && cursor <= d.close) break;
+    out.push({
+      name: d.name,
+      kind: "cte",
+      columns: columnsOf(selectInfo(s.slice(d.open + 1, d.close)), d.explicitColumns),
+    });
   }
   return out;
 }
