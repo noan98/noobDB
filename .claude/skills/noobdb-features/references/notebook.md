@@ -39,3 +39,14 @@ SQL セルの結果をスナップショットとして `.noobnb` (JSON) に保�
   - エラー文のスナップショットは `redactErrorText` で資格情報リテラルを伏せてから残す。
   - 設定 `batchWrapInTransaction` には揃えていない (ノートブックはセルの結果を 1 文ずつ集めるため、`run_sql_batch` へ
     寄せると結果の取り扱いが変わる。複数文のセルは 1 文ずつ・失敗で停止、で従来どおり)。
+- **スナップショットと実行した SQL (#2420)**: `NotebookSnapshot` は実行時の `sql` 本文・実行した `connection` (`{ profileId, name }`)・
+  `database` を持つ (`buildSnapshot` / `buildErrorSnapshot` の `source` 引数。`runOne` が実行先の組 `pin` から渡す。
+  #2396 のセルの接続とは別に「実際に流した接続」を残す)。古い `.noobnb` には無いので `parseNotebook` は null (= 不明) で読み、
+  不明は古いとは判定しない (`unknown`)。判定は純関数 `snapshotFreshness` (`none` / `unknown` / `fresh` / `stale`):
+  `normalizeSqlForCompare` で空白 (リテラル・引用符つき識別子・コメントの外) と末尾セミコロンを無視して比べ、
+  セルが接続を明示しているときだけ「結果を得た接続と違う」も古い扱い (既定のセルは接続の切り替えで全部が古くならないよう比べない)。
+  UI: セルに `StaleNotice` (警告 Callout + 再実行 + `diffSqlLines` の行単位差分、結果は淡色化)、ヘッダに古いセル数。
+  書き出しは古いセルがあれば確認を出し、Markdown / HTML の本文にも注記する (`NotebookExportText.stale`)。
+  比較は `maskLiterals` (安全網と同じ字句規則。ドライバは `snapshotFreshness` / 書き出しの `driverOf` に渡す。不明は undefined = 保守的)
+  でリテラル・コメントの外の空白だけを潰す。行コメントの終端の改行・コメント内の `;` は区別する。
+  **データベース (`snapshot.database`) は比較しない** (表示用の記録。DB の切り替えだけでは古い扱いにしない設計)。

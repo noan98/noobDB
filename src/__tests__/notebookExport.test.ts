@@ -14,6 +14,7 @@ const text: NotebookExportText = {
   connection: (n) => `接続: ${n}`,
   autoLimit: (n) => `自動 LIMIT ${n}`,
   valuesTruncated: (n) => `${n} 文字で切り詰め`,
+  stale: (r) => `古い結果: ${r.join("+")}`,
 };
 
 function build() {
@@ -104,5 +105,39 @@ describe("書き出し (#2380)", () => {
     const plain = notebookToHtml(build(), text, "ja", new Date("2026-01-02T03:04:05Z"));
     expect(plain).not.toContain("自動 LIMIT");
     expect(plain).not.toContain("文字で切り詰め");
+  });
+});
+
+describe("古い結果の注記 (#2420)", () => {
+  function withStale(executed: string, current: string) {
+    const d = createEmptyNotebook(null);
+    const c = newSqlCell(current);
+    c.snapshot = buildSnapshot(
+      {
+        columns: [{ name: "n", type_name: "int" }],
+        rows: [[1]],
+        totalRows: 1,
+        rowsAffected: 0,
+        hasColumns: true,
+        elapsedMs: 1,
+      },
+      10,
+      { enabled: false, patterns: [] },
+      new Date("2026-01-02T03:04:05Z"),
+      { sql: executed, connection: null, database: null },
+    );
+    d.cells = [c];
+    return d;
+  }
+
+  it("SQL を変えた後の結果は Markdown / HTML の両方で古いと読み取れる", () => {
+    const d = withStale("SELECT 1", "SELECT 2");
+    expect(notebookToMarkdown(d, text)).toContain("古い結果: sql");
+    expect(notebookToHtml(d, text, "ja")).toContain('<p class="stale">古い結果: sql</p>');
+  });
+
+  it("同じ SQL (空白・末尾セミコロンの違いだけ) や実行時の SQL が不明な結果には注記しない", () => {
+    expect(notebookToMarkdown(withStale("SELECT 1", "SELECT 1;"), text)).not.toContain("古い結果");
+    expect(notebookToHtml(build(), text, "ja")).not.toContain("古い結果");
   });
 });

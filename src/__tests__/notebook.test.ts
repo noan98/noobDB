@@ -1,9 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildErrorSnapshot,
   buildSnapshot,
   checkNotebookLimits,
   cellHasWrites,
+  countStaleCells,
   createEmptyNotebook,
+  diffSqlLines,
+  normalizeSqlForCompare,
+  sameSql,
+  snapshotFreshness,
   DEFAULT_SNAPSHOT_ROW_LIMIT,
   insertCellAfter,
   MAX_CELL_TEXT_CHARS,
@@ -376,5 +382,221 @@ describe("セル単位の接続 (#2396)", () => {
     );
     expect(t).toMatchObject({ kind: "open", sessionId: "s" });
     expect(t.kind === "open" && t.profile.is_production).toBe(true);
+  });
+});
+
+describe("スナップショットと実行した SQL の結び付け (#2420)", () => {
+  const run = (
+    sql: string,
+    conn: { profileId: string; name: string } | null = { profileId: "p1", name: "dev" },
+  ) =>
+    buildSnapshot(
+      { columns: cols, rows: [[1, "a"]], totalRows: 1, rowsAffected: 0, hasColumns: true, elapsedMs: 1 },
+      200,
+      MASK_OFF,
+      new Date("2026-01-01T00:00:00Z"),
+      { sql, connection: conn, database: "app" },
+    );
+  const cellWith = (sql: string, executed: string) => {
+    const c = newSqlCell(sql);
+    c.snapshot = run(executed);
+    return c;
+  };
+
+  it("実行時の SQL・接続・データベースを記録する", () => {
+    const s = run("SELECT 1");
+    expect(s.sql).toBe("SELECT 1");
+    expect(s.connection).toEqual({ profileId: "p1", name: "dev" });
+    expect(s.database).toBe("app");
+  });
+
+  it("空白・改行・末尾セミコロンだけの違いは同一扱い", () => {
+    expect(sameSql("SELECT  1", "select 1")).toBe(false); // 大文字小文字は区別する
+    expect(sameSql("SELECT   1\n  FROM t", "SELECT 1 FROM t")).toBe(true);
+    expect(sameSql("SELECT 1;", "SELECT 1")).toBe(true);
+    expect(sameSql("SELECT 1 ; ;  \n", "  SELECT 1")).toBe(true);
+    expect(sameSql("SELECT 1", "SELECT 2")).toBe(false);
+    expect(sameSql("SELECT 1 WHERE a = 1", "SELECT 1 WHERE a = 2")).toBe(false);
+  });
+
+  it("文字列リテラル・引用符つき識別子の中の空白は意味があるので区別する", () => {
+    expect(sameSql("SELECT 'a  b'", "SELECT 'a b'")).toBe(false);
+    expect(sameSql('SELECT "a  b"', 'SELECT "a b"')).toBe(false);
+    expect(sameSql("SELECT `a  b`", "SELECT `a b`")).toBe(false);
+    expect(sameSql("SELECT 'it''s  ok'", "SELECT 'it''s ok'")).toBe(false);
+    // リテラル中のセミコロンは末尾扱いしない
+    expect(normalizeSqlForCompare("SELECT 'a;'")).toBe("SELECT 'a;'");
+    // コメントの中身の変更は区別する
+    expect(sameSql("SELECT 1 -- a", "SELECT 1 -- b")).toBe(false);
+  });
+
+  it("行コメントを終わらせる改行は意味があるので、潰して同一扱いにしない (-- と MySQL の #)", () => {
+    expect(sameSql("SELECT 1 -- c\nFROM t", "SELECT 1 -- c FROM t")).toBe(false);
+    expect(sameSql("SELECT 1 -- c\nFROM t", "SELECT 1 -- c\nFROM  t")).toBe(true);
+    expect(sameSql("SELECT 1 # c\nFROM t", "SELECT 1 # c FROM t", "mysql")).toBe(false);
+    expect(sameSql("SELECT 1 # c\nFROM t", "SELECT 1 # c FROM t")).toBe(false); // ドライバ不明は MySQL としても読む
+    // PostgreSQL / SQLite の # は行コメントではない (演算子) ので改行は普通の空白
+    expect(sameSql("SELECT 1 #\n2", "SELECT 1 # 2", "postgres")).toBe(true);
+  });
+
+  it("PostgreSQL のドル引用の中の空白は区別する", () => {
+    expect(sameSql("SELECT $$a  b$$", "SELECT $$a b$$", "postgres")).toBe(false);
+    expect(sameSql("SELECT $t$a  b$t$", "SELECT $t$a b$t$", "postgres")).toBe(false);
+    expect(sameSql("SELECT  $$a b$$ ;", "SELECT $$a b$$", "postgres")).toBe(true);
+  });
+
+  it("バックスラッシュはドライバ別 (PostgreSQL / SQLite では 'a\\' で文字列が閉じる)", () => {
+    // PG: 'a\\' は閉じているので、続く空白は外側 (collapse される)。MySQL ではエスケープで閉じない。
+    expect(sameSql("SELECT 'a\\'  FROM t", "SELECT 'a\\' FROM t", "postgres")).toBe(true);
+    expect(sameSql("SELECT 'a\\'  b'", "SELECT 'a\\' b'", "mysql")).toBe(false);
+  });
+
+  it("コメントの中の ; を末尾セミコロンとして削らない", () => {
+    expect(sameSql("SELECT 1 -- a;", "SELECT 1 -- a")).toBe(false);
+    expect(sameSql("SELECT 1 /* x; */", "SELECT 1 /* x */")).toBe(false);
+    expect(sameSql("SELECT 1; -- a", "SELECT 1 -- a")).toBe(false);
+  });
+
+  it("SQLite の [識別子] の中の空白は区別する", () => {
+    expect(sameSql("SELECT [a  b] FROM t", "SELECT [a b] FROM t", "sqlite")).toBe(false);
+    expect(sameSql("SELECT [a b]  FROM t", "SELECT [a b] FROM t", "sqlite")).toBe(true);
+  });
+
+  it("同じ SQL なら fresh、意味のある変更なら stale (SQL)", () => {
+    expect(snapshotFreshness(cellWith("SELECT 1;", "SELECT 1"))).toEqual({ kind: "fresh" });
+    expect(snapshotFreshness(cellWith("SELECT 2", "SELECT 1"))).toEqual({ kind: "stale", reasons: ["sql"] });
+    expect(snapshotFreshness(cellWith("SELECT 1 ", "SELECT 1"))).toEqual({ kind: "fresh" });
+  });
+
+  it("未実行は none、実行時の SQL が無い古いファイルの結果は unknown (古いとは判定しない)", () => {
+    expect(snapshotFreshness(newSqlCell("SELECT 1"))).toEqual({ kind: "none" });
+    const c = newSqlCell("SELECT 1");
+    c.snapshot = { ...run("x"), sql: null, connection: null, database: null };
+    expect(snapshotFreshness(c)).toEqual({ kind: "unknown" });
+  });
+
+  it("セルが接続を明示していて、結果を得た接続と違えば stale (接続)。既定のセルは接続では判定しない", () => {
+    const c = cellWith("SELECT 1", "SELECT 1");
+    c.connection = { profileId: "p2", name: "prod" };
+    expect(snapshotFreshness(c)).toEqual({ kind: "stale", reasons: ["connection"] });
+    c.sql = "SELECT 2";
+    expect(snapshotFreshness(c)).toEqual({ kind: "stale", reasons: ["sql", "connection"] });
+    c.connection = { profileId: "p1", name: "dev (renamed)" };
+    c.sql = "SELECT 1";
+    expect(snapshotFreshness(c)).toEqual({ kind: "fresh" });
+    c.connection = null; // 既定 = 現在の接続。接続の切り替えで全セルが古くはならない
+    expect(snapshotFreshness(c)).toEqual({ kind: "fresh" });
+  });
+
+  it("既定のセルに後から接続を指定すると、結果を得た接続と違えば stale (接続)", () => {
+    const c = cellWith("SELECT 1", "SELECT 1"); // 実行は p1 (既定のセルで流した)
+    expect(snapshotFreshness(c)).toEqual({ kind: "fresh" });
+    c.connection = { profileId: "p9", name: "other" };
+    expect(snapshotFreshness(c)).toEqual({ kind: "stale", reasons: ["connection"] });
+  });
+
+  it("古い結果のあるセルを数える", () => {
+    expect(
+      countStaleCells([
+        newMarkdownCell("x"),
+        cellWith("SELECT 2", "SELECT 1"),
+        cellWith("SELECT 1", "SELECT 1"),
+        newSqlCell("SELECT 3"),
+      ]),
+    ).toBe(1);
+  });
+
+  it("差分は行単位 (削除 -、追加 +、共通は空白 2 つ)", () => {
+    expect(diffSqlLines("SELECT 1\nFROM t\nWHERE a = 1", "SELECT 1\nFROM t\nWHERE a = 2")).toBe(
+      "  SELECT 1\n  FROM t\n- WHERE a = 1\n+ WHERE a = 2",
+    );
+    expect(diffSqlLines("a", "a;")).toBe("- a\n+ a;");
+    expect(diffSqlLines("a\n".repeat(5), "b", 3)).toBeNull();
+  });
+
+  it("保存 → 読み込みで実行時の SQL・接続・データベースが復元される", () => {
+    const d = createEmptyNotebook(null);
+    d.cells = [cellWith("SELECT 2", "SELECT 1")];
+    const parsed = parseNotebook(serializeNotebook(d, MASK_OFF));
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    const c = parsed.doc.cells[0];
+    expect(c.kind === "sql" && c.snapshot).toMatchObject({
+      sql: "SELECT 1",
+      connection: { profileId: "p1", name: "dev" },
+      database: "app",
+    });
+    expect(c.kind === "sql" && snapshotFreshness(c).kind).toBe("stale");
+  });
+
+  it("後方互換: #2420 以前のファイル (sql / connection / database が無いスナップショット) もエラーなく読め、unknown になる", () => {
+    const legacy = JSON.stringify({
+      format: "noobdb-notebook",
+      version: 1,
+      title: "旧",
+      database: null,
+      connection: null,
+      snapshotRowLimit: 200,
+      cells: [
+        {
+          id: "a",
+          kind: "sql",
+          sql: "SELECT 1",
+          collapsed: false,
+          view: "table",
+          chart: null,
+          snapshot: {
+            columns: [{ name: "x", type_name: "int" }],
+            rows: [[1]],
+            totalRows: 1,
+            truncated: false,
+            rowsAffected: 0,
+            hasColumns: true,
+            elapsedMs: 1,
+            executedAt: "2025-01-01T00:00:00Z",
+            error: null,
+            maskedColumns: [],
+            valuesTruncated: false,
+            appliedAutoLimit: null,
+          },
+        },
+      ],
+    });
+    const parsed = parseNotebook(legacy);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    const c = parsed.doc.cells[0];
+    expect(c.kind === "sql" && c.snapshot).toMatchObject({ sql: null, connection: null, database: null });
+    expect(c.kind === "sql" && snapshotFreshness(c)).toEqual({ kind: "unknown" });
+  });
+
+  it("壊れた値 (型違い) は null として読む", () => {
+    const parsed = parseNotebook(
+      JSON.stringify({
+        format: "noobdb-notebook",
+        version: 1,
+        cells: [
+          {
+            id: "a",
+            kind: "sql",
+            sql: "x",
+            snapshot: { columns: [], rows: [], sql: 5, connection: "p", database: 3 },
+          },
+        ],
+      }),
+    );
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    const c = parsed.doc.cells[0];
+    expect(c.kind === "sql" && c.snapshot).toMatchObject({ sql: null, connection: null, database: null });
+  });
+
+  it("エラーのスナップショットにも実行時の SQL が残る", () => {
+    const s = buildErrorSnapshot("boom", 3, new Date(), {
+      sql: "SELECT bad",
+      connection: null,
+      database: null,
+    });
+    expect(s.sql).toBe("SELECT bad");
   });
 });
