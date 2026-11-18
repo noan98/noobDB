@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 import type { TableStatRow } from "../components/tableSize";
 import {
   INDEX_HEAVY_MIN_BYTES,
+  TREEMAP_CHAR_W,
+  TREEMAP_PAD,
   TREEMAP_OTHER_ID,
   growthRate,
   isIndexHeavy,
+  layoutTileLabel,
   layoutTableTreemap,
   neighborTile,
   squarify,
@@ -206,5 +209,48 @@ describe("neighborTile", () => {
   it("その方向に無い・不明な id は null", () => {
     expect(neighborTile(tiles, "a", "left")).toBeNull();
     expect(neighborTile(tiles, "zzz", "left")).toBeNull();
+  });
+});
+
+describe("layoutTileLabel (名前と増加率が重ならない)", () => {
+  const textW = (n: number) => n * TREEMAP_CHAR_W;
+
+  it("広いタイルは名前を切らず、増加率の三角は右端の数字の左に置く", () => {
+    const l = layoutTileLabel("users", 300, "12%");
+    expect(l.name).toBe("users");
+    expect(l.growth).toBe("12%");
+    // 名前の右端 < 三角の左端、三角 + 数字は右の余白内に収まる。
+    expect(TREEMAP_PAD + textW("users".length)).toBeLessThanOrEqual(l.growthTriangleX);
+    expect(l.growthTriangleX + 10 + textW(3)).toBeLessThanOrEqual(300 - TREEMAP_PAD + 1);
+  });
+
+  it("増加率が長い (6 文字) ほど三角が左へ寄り、名前の切り詰め幅も狭まる", () => {
+    const short = layoutTileLabel("a_long_table_name_here", 200, "9%");
+    const long = layoutTileLabel("a_long_table_name_here", 200, "1234.5%");
+    expect(long.growthTriangleX).toBeLessThan(short.growthTriangleX);
+    expect(long.name.length).toBeLessThanOrEqual(short.name.length);
+    for (const l of [short, long]) {
+      expect(TREEMAP_PAD + textW(l.name.length)).toBeLessThanOrEqual(l.growthTriangleX);
+    }
+  });
+
+  it("名前を最低限残せない幅では増加率を省き、名前に全幅を使う", () => {
+    const l = layoutTileLabel("orders", 90, "100.0%");
+    expect(l.growth).toBe("");
+    expect(l.name).not.toBe("");
+  });
+
+  it("幅 90 未満・増加率なしでは増加率を出さない", () => {
+    expect(layoutTileLabel("t", 80, "5%").growth).toBe("");
+    expect(layoutTileLabel("users", 300, "").growth).toBe("");
+  });
+
+  it("どの幅でも、増加率を出すなら名前と重ならない", () => {
+    for (let w = 40; w <= 400; w += 7) {
+      const l = layoutTileLabel("customer_orders", w, "45%");
+      if (l.growth) {
+        expect(TREEMAP_PAD + textW(l.name.length)).toBeLessThanOrEqual(l.growthTriangleX);
+      }
+    }
   });
 });

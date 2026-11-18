@@ -11,8 +11,10 @@ import { elementToPngBlob, elementToSvgBytes } from "./imageExport";
 import { formatBytes, formatDelta, formatRowCount, type TableStatRow } from "./tableSize";
 import {
   layoutTableTreemap,
+  layoutTileLabel,
   neighborTile,
   TREEMAP_OTHER_ID,
+  TREEMAP_PAD,
   type TreemapDirection,
   type TreemapTile,
 } from "./tableTreemap";
@@ -31,9 +33,7 @@ import { Button } from "./ui";
 const VIEW_W = 960;
 const VIEW_H = 480;
 const TILE_GAP = 1;
-const PAD = 6;
-/** 1 文字あたりの概算幅 (viewBox 単位)。ラベルの切り詰めに使う。 */
-const CHAR_W = 7;
+const PAD = TREEMAP_PAD;
 /** 別枠に並べるボタン数の上限 (超えた分は件数で示す)。 */
 const STRIP_LIMIT = 30;
 
@@ -46,12 +46,6 @@ const barCss = {
   borderBottom: "1px solid var(--border-subtle)",
   fontSize: "var(--text-sm)",
 } as const;
-
-function clip(label: string, widthUnits: number): string {
-  const max = Math.floor((widthUnits - PAD * 2) / CHAR_W);
-  if (max < 2) return "";
-  return label.length <= max ? label : `${label.slice(0, max - 1)}…`;
-}
 
 function pct(share: number): string {
   const p = share * 100;
@@ -74,6 +68,8 @@ export function TableTreemapView({
   const svgRef = useRef<SVGSVGElement>(null);
   const [hoverId, setHoverId] = useState<string | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
+  /** フォーカス中のタイル。activeId (ロービング tabStop 用) は blur しても残るため別に持つ。 */
+  const [focusId, setFocusId] = useState<string | null>(null);
 
   const layout = useMemo(
     () => layoutTableTreemap(rows, { width: VIEW_W, height: VIEW_H }, Date.now()),
@@ -223,11 +219,15 @@ export function TableTreemapView({
               const topFill = other || split == null ? "var(--bg-muted)" : dataFill;
               const ink =
                 other || split == null ? "var(--text)" : readableInk(dataH >= rh / 2 ? dataFill : indexFill);
-              const emphasized = x.id === hoverId || x.id === activeId;
+              const emphasized = x.id === hoverId || x.id === focusId;
               const warn = x.bloated || x.indexHeavy;
-              const label = clip(nameOf(x), rw);
+              const growthSrc = x.growth != null && rh >= 24 ? `${pct(x.growth)}%` : "";
+              const {
+                name: label,
+                growth: growthText,
+                growthTriangleX,
+              } = layoutTileLabel(nameOf(x), rw, growthSrc);
               const labelY = split != null && dataH < rh / 2 ? ry + dataH + 14 : ry + 14;
-              const growthText = x.growth != null && rw >= 90 && rh >= 24 ? `${pct(x.growth)}%` : "";
               return (
                 <g
                   key={x.id}
@@ -247,8 +247,12 @@ export function TableTreemapView({
                   onFocus={() => {
                     setHoverId(x.id);
                     setActiveId(x.id);
+                    setFocusId(x.id);
                   }}
-                  onBlur={() => setHoverId(null)}
+                  onBlur={() => {
+                    setHoverId(null);
+                    setFocusId(null);
+                  }}
                 >
                   <motion.rect
                     initial={false}
@@ -281,6 +285,15 @@ export function TableTreemapView({
                     strokeWidth={emphasized || warn ? 2 : 1}
                     strokeDasharray={x.indexHeavy && !x.bloated && !emphasized ? "4 3" : undefined}
                   />
+                  {x.staleStats && rw >= 16 && rh >= 16 && (
+                    // 統計が古い表の目印 (左上の小さな info 色の三角)。詳細はホバーカード / aria-label。
+                    <path
+                      aria-hidden
+                      d={`M ${rx + 1} ${ry + 1} h 6 l -6 6 z`}
+                      fill={semanticColorVar("info", "solid")}
+                      style={{ pointerEvents: "none" }}
+                    />
+                  )}
                   {label && rh >= 18 && (
                     <text
                       x={rx + PAD}
@@ -291,7 +304,7 @@ export function TableTreemapView({
                       {label}
                     </text>
                   )}
-                  {label && rh >= 38 && (
+                  {label && rh >= 38 && labelY + 14 <= ry + rh - 2 && (
                     <text
                       x={rx + PAD}
                       y={labelY + 14}
@@ -304,7 +317,7 @@ export function TableTreemapView({
                   {growthText && (
                     <g aria-hidden style={{ pointerEvents: "none" }}>
                       {/* 前回取得からの増加を示す小さな上向き三角 (文字グリフではなく図形で描く)。 */}
-                      <path d={`M ${rx + rw - PAD - 44} ${labelY} l 4 -8 l 4 8 z`} fill={ink} />
+                      <path d={`M ${rx + growthTriangleX} ${labelY} l 4 -8 l 4 8 z`} fill={ink} />
                       <text
                         x={rx + rw - PAD}
                         y={labelY}

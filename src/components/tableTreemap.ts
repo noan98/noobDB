@@ -249,3 +249,47 @@ export function neighborTile(
   }
   return best ? best.id : null;
 }
+
+/** ラベル幅の概算に使う 1 文字あたりの幅 / タイル内側の余白 (viewBox 単位)。 */
+export const TREEMAP_CHAR_W = 7;
+export const TREEMAP_PAD = 6;
+/** 増加率 (▲ + NN%) を出すのに必要なタイル幅の下限。 */
+const GROWTH_MIN_WIDTH = 90;
+/** 増加率を並べても、名前をこの文字数 (名前が短ければその全長) は残す。 */
+const NAME_MIN_CHARS = 4;
+
+export interface TreemapLabelLayout {
+  /** 切り詰め済みのテーブル名 (入らなければ空)。 */
+  name: string;
+  /** 右上に出す増加率の文字 (例 "12%")。省いたら空。 */
+  growth: string;
+  /** 増加率の三角の左端 (タイル左端からの距離)。growth が空なら 0。 */
+  growthTriangleX: number;
+}
+
+/**
+ * タイル 1 枚のラベルの配置を決める純関数。増加率は名前と同じ行の右端に出るため、
+ * 名前の切り詰め幅から増加率の幅 (三角 + 数字) を引き、名前を `NAME_MIN_CHARS` 文字も
+ * 残せない狭いタイルでは増加率のほうを省く。これで名前と増加率が重ならない。
+ */
+export function layoutTileLabel(name: string, rw: number, growthText: string): TreemapLabelLayout {
+  const fit = (width: number): string => {
+    const max = Math.floor((width - TREEMAP_PAD * 2) / TREEMAP_CHAR_W);
+    if (max < 2) return "";
+    return name.length <= max ? name : `${name.slice(0, max - 1)}…`;
+  };
+  if (growthText && rw >= GROWTH_MIN_WIDTH) {
+    // 三角 (約 1 文字) + 数字 + 名前との隙間 1 文字。
+    const growthW = (growthText.length + 2) * TREEMAP_CHAR_W;
+    const clipped = fit(rw - growthW);
+    const need = Math.min(name.length, NAME_MIN_CHARS);
+    if (clipped.length >= need && clipped !== "") {
+      return {
+        name: clipped,
+        growth: growthText,
+        growthTriangleX: rw - TREEMAP_PAD - growthText.length * TREEMAP_CHAR_W - 10,
+      };
+    }
+  }
+  return { name: fit(rw), growth: "", growthTriangleX: 0 };
+}

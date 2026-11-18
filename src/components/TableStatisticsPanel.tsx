@@ -453,17 +453,20 @@ export function TableStatisticsPanel({
           <Checkbox checked={onlyNoPrimaryKey} onChange={(e) => setOnlyNoPrimaryKey(e.target.checked)} />
           {t("sizeFilterNoPk")}
         </chakra.label>
-        <chakra.label
-          display="flex"
-          alignItems="center"
-          gap="1.5"
-          fontSize="sm"
-          color="app.text"
-          cursor="pointer"
-        >
-          <Checkbox checked={onlyBloated} onChange={(e) => setOnlyBloated(e.target.checked)} />
-          {t("sizeFilterBloated")}
-        </chakra.label>
+        {/* 肥大判定は dead_rows (PostgreSQL の統計) が頼り。MySQL / SQLite では常に 0 件になるので出さない。 */}
+        {rows.some((r) => r.dead_rows != null) && (
+          <chakra.label
+            display="flex"
+            alignItems="center"
+            gap="1.5"
+            fontSize="sm"
+            color="app.text"
+            cursor="pointer"
+          >
+            <Checkbox checked={onlyBloated} onChange={(e) => setOnlyBloated(e.target.checked)} />
+            {t("sizeFilterBloated")}
+          </chakra.label>
+        )}
         {rows.length > 0 && (
           <chakra.span fontSize="sm" color="app.textMuted">
             {t("sizeFilterCount", { shown: sorted.length, total: rows.length })}
