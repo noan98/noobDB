@@ -3,6 +3,15 @@ import aiRs from "../../src-tauri/src/commands/ai.rs?raw";
 import cellBlobRs from "../../src-tauri/src/commands/cell_blob.rs?raw";
 import connectionRs from "../../src-tauri/src/commands/connection.rs?raw";
 import diffRs from "../../src-tauri/src/commands/diff.rs?raw";
+import resultRs from "../../src-tauri/src/commands/result.rs?raw";
+import scriptRs from "../../src-tauri/src/commands/script.rs?raw";
+import localRs from "../../src-tauri/src/commands/local.rs?raw";
+import advisorRs from "../../src-tauri/src/db/advisor.rs?raw";
+import broadcastDiffRs from "../../src-tauri/src/db/broadcast_diff.rs?raw";
+import pgListenRs from "../../src-tauri/src/db/pg_listen.rs?raw";
+import sqliteRs from "../../src-tauri/src/db/sqlite.rs?raw";
+import profileStoreRs from "../../src-tauri/src/profiles/store.rs?raw";
+import maintenanceRs from "../../src-tauri/src/tasks/maintenance.rs?raw";
 import cloneRowsRs from "../../src-tauri/src/db/clone_rows.rs?raw";
 import maskingRs from "../../src-tauri/src/db/masking.rs?raw";
 import sandboxRs from "../../src-tauri/src/db/sandbox.rs?raw";
@@ -12,6 +21,16 @@ import tasksRs from "../../src-tauri/src/tasks/mod.rs?raw";
 import timelapseRs from "../../src-tauri/src/timelapse/mod.rs?raw";
 import conversationTs from "../ai/conversation.ts?raw";
 import schemaDocTs from "../ai/schemaDoc.ts?raw";
+import advisorTs from "../components/advisor.ts?raw";
+import duplicateKeysTs from "../components/duplicateKeys.ts?raw";
+import localQueryTs from "../components/localQuery.ts?raw";
+import pgListenTs from "../components/pgListen.ts?raw";
+import sqliteAttachTs from "../components/sqliteAttach.ts?raw";
+import taskMaintenanceTs from "../components/taskMaintenance.ts?raw";
+import broadcastCompareTs from "../broadcastCompare.ts?raw";
+import openDatabaseTs from "../openDatabase.ts?raw";
+import scriptRunTs from "../scriptRun.ts?raw";
+import taskFormatTs from "../taskFormat.ts?raw";
 import blobIoTs from "../components/blobIo.ts?raw";
 import cloneRowsTs from "../components/cloneRows.ts?raw";
 import exportMaskingTs from "../components/exportMasking.ts?raw";
@@ -40,6 +59,16 @@ const SCHEMA_DOC_TS = src("ai/schemaDoc.ts", schemaDocTs);
 const CONVERSATION_TS = src("ai/conversation.ts", conversationTs);
 const BLOB_TS = src("components/blobIo.ts", blobIoTs);
 const MASKING_TS = src("components/exportMasking.ts", exportMaskingTs);
+const ADVISOR_TS = src("components/advisor.ts", advisorTs);
+const TASK_MAINTENANCE_TS = src("components/taskMaintenance.ts", taskMaintenanceTs);
+const DUPLICATE_KEYS_TS = src("components/duplicateKeys.ts", duplicateKeysTs);
+const PG_LISTEN_TS = src("components/pgListen.ts", pgListenTs);
+const TASK_FORMAT_TS = src("taskFormat.ts", taskFormatTs);
+const OPEN_DATABASE_TS = src("openDatabase.ts", openDatabaseTs);
+const SCRIPT_RUN_TS = src("scriptRun.ts", scriptRunTs);
+const BROADCAST_COMPARE_TS = src("broadcastCompare.ts", broadcastCompareTs);
+const LOCAL_QUERY_TS = src("components/localQuery.ts", localQueryTs);
+const SQLITE_ATTACH_TS = src("components/sqliteAttach.ts", sqliteAttachTs);
 
 const SUBSET_RS = src("db/subset.rs", subsetRs);
 const SANDBOX_RS = src("db/sandbox.rs", sandboxRs);
@@ -51,11 +80,58 @@ const AI_RS = src("commands/ai.rs", aiRs);
 const BACKUP_RS = src("profiles/backup.rs", backupRs);
 const BLOB_RS = src("commands/cell_blob.rs", cellBlobRs);
 const MASKING_RS = src("db/masking.rs", maskingRs);
+const ADVISOR_RS = src("db/advisor.rs", advisorRs);
+const TASK_MAINTENANCE_RS = src("tasks/maintenance.rs", maintenanceRs);
+const RESULT_RS = src("commands/result.rs", resultRs);
+const PG_LISTEN_RS = src("db/pg_listen.rs", pgListenRs);
+const PROFILE_STORE_RS = src("profiles/store.rs", profileStoreRs);
+const SCRIPT_RS = src("commands/script.rs", scriptRs);
+const BROADCAST_DIFF_RS = src("db/broadcast_diff.rs", broadcastDiffRs);
+const LOCAL_RS = src("commands/local.rs", localRs);
+const SQLITE_RS = src("db/sqlite.rs", sqliteRs);
 const CLONE_ROWS_TS = src("components/cloneRows.ts", cloneRowsTs);
 const CLONE_ROWS_RS = src("db/clone_rows.rs", cloneRowsRs);
 
 /** 対応表: [TS の定数名, Rust の定数名]。名前が違うものもあるので明示する。 */
 const PAIRS: { ts: Src; rs: Src; names: [string, string][] }[] = [
+  // #2412: コメントだけで揃えていた定数 (Rust 側だけの変更も検出する)。
+  {
+    ts: ADVISOR_TS,
+    rs: ADVISOR_RS,
+    names: [
+      ["SEQUENCE_METER_WARN_PERCENT", "SEQUENCE_WARN_PERCENT"],
+      ["SEQUENCE_METER_DANGER_PERCENT", "SEQUENCE_ERROR_PERCENT"],
+    ],
+  },
+  { ts: TASK_MAINTENANCE_TS, rs: TASK_MAINTENANCE_RS, names: [["MAX_MAINTENANCE_TARGETS", "MAX_TARGETS"]] },
+  {
+    ts: DUPLICATE_KEYS_TS,
+    rs: RESULT_RS,
+    names: [
+      ["DUPLICATE_INDEX_LIMIT", "DUPLICATE_INDEX_LIMIT"],
+      ["DUPLICATE_TOP_MAX", "DUPLICATE_TOP_MAX"],
+    ],
+  },
+  {
+    ts: PG_LISTEN_TS,
+    rs: PG_LISTEN_RS,
+    names: [
+      ["PG_LISTEN_MAX_CHANNELS", "MAX_CHANNELS"],
+      ["PG_LISTEN_MAX_CHANNEL_BYTES", "MAX_CHANNEL_BYTES"],
+    ],
+  },
+  { ts: TASK_FORMAT_TS, rs: TASKS_RS, names: [["ALL_WEEKDAYS_MASK", "ALL_WEEKDAYS"]] },
+  // 区切りが片側だけ変わると、派生プロファイルから元の ID (keyring の秘密の参照先) を引けなくなる。
+  { ts: OPEN_DATABASE_TS, rs: PROFILE_STORE_RS, names: [["DB_VARIANT_SEP", "DB_VARIANT_SEP"]] },
+  // Rust 側だけ変わると、ファイル変更後の再解析を促す判定 (isAnalysisStaleError) が効かなくなる。
+  { ts: SCRIPT_RUN_TS, rs: SCRIPT_RS, names: [["FILE_CHANGED_MARKER", "FILE_CHANGED_MARKER"]] },
+  {
+    ts: BROADCAST_COMPARE_TS,
+    rs: BROADCAST_DIFF_RS,
+    names: [["MAX_BROADCAST_COMPARE_ROWS", "MAX_BROADCAST_COMPARE_ROWS"]],
+  },
+  { ts: LOCAL_QUERY_TS, rs: LOCAL_RS, names: [["MAX_LOCAL_TABLE_ROWS", "MAX_LOCAL_TABLE_ROWS"]] },
+  { ts: SQLITE_ATTACH_TS, rs: SQLITE_RS, names: [["MAX_ATTACHED", "SQLITE_MAX_ATTACHED"]] },
   { ts: CLONE_ROWS_TS, rs: CLONE_ROWS_RS, names: [["CLONE_MAX_ROWS", "MAX_CLONE_ROWS"]] },
   {
     ts: SUBSET_TS,
@@ -130,7 +206,10 @@ function evalConstExpr(raw: string): number | string {
   const str = /^b?"((?:[^"\\]|\\.)*)"$/.exec(expr);
   if (str) return str[1];
   // 許可する文字を絞ってから評価する (ソースは自リポジトリのものだが、念のため)。
-  const cleaned = expr.replace(/(\d)_(?=\d)/g, "$1").replace(/(?<=\d)(u8|u16|u32|u64|usize|i32|i64)\b/g, "");
+  const cleaned = expr
+    .replace(/\b0b([01_]+)/g, (_, bits: string) => String(Number.parseInt(bits.replace(/_/g, ""), 2)))
+    .replace(/(\d)_(?=\d)/g, "$1")
+    .replace(/(?<=\d)(u8|u16|u32|u64|usize|i32|i64)\b/g, "");
   if (!/^[\d\s+\-*()<]+$/.test(cleaned)) throw new Error(`評価できない式: ${raw}`);
   const v = new Function(`return (${cleaned});`)();
   if (typeof v !== "number" || !Number.isSafeInteger(v)) throw new Error(`数値にならない式: ${raw}`);
@@ -169,6 +248,7 @@ describe("Rust ⇔ TS 定数パリティ (#2301): 抽出ヘルパ", () => {
     expect(evalConstExpr("1024 * 1024 // 1 GiB")).toBe(1048576);
     expect(evalConstExpr('"***"')).toBe("***");
     expect(evalConstExpr("5_000u64")).toBe(5000);
+    expect(evalConstExpr("0b111_1111")).toBe(127);
   });
 
   it("定数の宣言形 (pub / pub(crate) / 型注釈の有無) を拾う", () => {
@@ -196,7 +276,7 @@ describe("Rust ⇔ TS 定数パリティ (#2301): 対応表", () => {
 // 次の空行までに宣言された `const NAME` を集めて、各 NAME が対応表 (PAIRS) の TS 名か、定数単位の
 // EXEMPT にあることを確かめる (すでに対応表にあるファイルへ後から足した定数も検出できる)。
 const COMMENT_MARKER =
-  /(?:バックエンド|Rust)[^\n]*と(?:揃える|同じ値)|mirroring the backend (?:clamp|limit|bounds)/i;
+  /(?:バックエンド|Rust)[^\n]*と(?:揃える|同じ値)|mirroring the backend (?:clamp|limit|bounds)|(?:バックエンド|Rust)[^\n]*`[A-Z][A-Z0-9]*_[A-Z0-9_]+`/i;
 
 /** 対応表の外にある定数 ("ファイルパス:定数名" → 理由)。固定の仕組みが別にあるものだけ。 */
 const EXEMPT: Record<string, string> = {
@@ -206,6 +286,15 @@ const EXEMPT: Record<string, string> = {
     "新規タスクの UI 既定値で、Rust には対応する既定の定数が無い (Rust の既定は 0 = 無効)。上限は対応表で固定",
   "settings.ts:MIN_TIMELAPSE_MAX_GENERATIONS":
     "Rust は timelapse::clamp_max_generations で clamp(1, ..) とリテラルで書いていて定数が無い",
+  "components/pgListen.ts:PG_LISTEN_PREVIEW_CHARS":
+    "一覧の表示用の省略幅で UI だけの値。Rust に対応する定数は無い",
+  "components/sqliteAttach.ts:MAX_ATTACH_ALIAS_LENGTH":
+    "Rust は is_valid_attach_alias 内のリテラル (64) で定数が無い。上限数 MAX_ATTACHED は対応表で固定",
+  "dangerousSql.ts:ALTER_DROP_NON_COLUMN":
+    "集合の一致は共有ゴールデンベクタ (src/__tests__/fixtures) で固定する",
+  "dangerousSql.ts:SCHEMA_MUTATING_KEYWORDS":
+    "集合の一致は共有ゴールデンベクタ (schemaMutatingVectors.json) で固定する",
+  "taskFormat.ts:WORKDAYS_MASK": "Rust に対応する定数は無い (表示用の平日判定)。全曜日マスクは対応表で固定",
 };
 
 const sources = import.meta.glob(["../**/*.ts", "../**/*.tsx", "!../__tests__/**", "!../**/*.test.*"], {

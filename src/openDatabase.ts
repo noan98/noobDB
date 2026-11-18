@@ -6,7 +6,7 @@
  * **派生プロファイル** で新しいセッションを張る。派生プロファイルは保存せず (一覧には出ない)、
  * 同時接続レジストリでは元の接続とは別の接続として扱われる。
  *
- * 派生 ID の区切り (`::db::`) はバックエンド `profiles/secrets.rs` の `DB_VARIANT_SEP` と
+ * 派生 ID の区切り (`::db::`) はバックエンド `profiles/store.rs` の `DB_VARIANT_SEP` と
  * 同じ値。keyring の秘密は常に元のプロファイルのものを引くので、派生側に秘密は複製しない。
  */
 import type { ConnectionProfile } from "./api/tauri";
