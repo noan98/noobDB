@@ -126,3 +126,50 @@ describe("TableStatisticsPanel 前回取得からの増減 (#1621)", () => {
     expect(screen.getByText("fresh").closest("tr")?.querySelector("[data-testid=stat-delta]")).toBeNull();
   });
 });
+
+describe("TableStatisticsPanel treemap (#2408)", () => {
+  const stat = (name: string, total: number | null): TableStatistic => ({
+    name,
+    row_estimate: 10,
+    data_bytes: total == null ? null : Math.floor(total * 0.7),
+    index_bytes: total == null ? null : Math.floor(total * 0.3),
+    total_bytes: total,
+    column_count: 1,
+    index_count: 1,
+    has_primary_key: true,
+    foreign_key_count: 0,
+    previous: null,
+  });
+
+  it("切り替えると同じフィルタでツリーマップを描き、クリックでテーブルを開く。サイズ不明は別枠", async () => {
+    vi.mocked(api.tableStatistics).mockResolvedValueOnce([
+      stat("users", 100000),
+      stat("orders", 50000),
+      stat("legacy", null),
+    ]);
+    const onOpen = vi.fn();
+    renderWithProviders(
+      <TableStatisticsPanel sessionId="s1" database="testdb" onOpenTable={onOpen} onClose={() => {}} />,
+    );
+    await waitFor(() => expect(screen.getByText("users")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("radio", { name: t("sizeViewTreemap") }));
+    const tile = await waitFor(() => {
+      const el = document.querySelector('[data-treemap-id="users"]');
+      expect(el).not.toBeNull();
+      return el as Element;
+    });
+    expect(tile.getAttribute("aria-label")).toContain("users");
+    // サイズ不明の表はタイルにならず別枠のボタンになる。
+    expect(document.querySelector('[data-treemap-id="legacy"]')).toBeNull();
+    expect(screen.getByRole("button", { name: "legacy" })).toBeInTheDocument();
+
+    fireEvent.click(tile);
+    expect(onOpen).toHaveBeenCalledWith("users");
+
+    // 名前フィルタはツリーマップにも効く。
+    fireEvent.change(screen.getByPlaceholderText(t("sizeFilterName")), { target: { value: "orders" } });
+    await waitFor(() => expect(document.querySelector('[data-treemap-id="users"]')).toBeNull());
+    expect(document.querySelector('[data-treemap-id="orders"]')).not.toBeNull();
+  });
+});
