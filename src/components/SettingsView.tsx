@@ -89,6 +89,7 @@ import {
   RESULT_GRID_PAGE_SIZE_OPTIONS,
   SYNTAX_PRESET_ORDER,
   Density,
+  InsertColumnHintsMode,
   ResultGridMode,
   SyntaxColors,
   SyntaxPresetKey,
@@ -150,6 +151,7 @@ import {
   setEditorScrollMarkers,
   setSqlSemanticLintEnabled,
   setIdentifierHoverEnabled,
+  setInsertColumnHints,
   setActiveStatementHighlight,
   setPreflightImpactEnabled,
   setScanPreflightEnabled,
@@ -1707,6 +1709,24 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
                     id="settings-identifier-hover"
                     checked={settings.identifierHoverEnabled}
                     onChange={setIdentifierHoverEnabled}
+                  />
+                </SettingsToggleRow>
+                <SettingsToggleRow>
+                  <SettingsLabelWithInfo>
+                    <SettingsToggleLabel htmlFor="settings-insert-column-hints">
+                      {t("settingsInsertColumnHints")}
+                    </SettingsToggleLabel>
+                    <SettingsInfo>{t("settingsInsertColumnHintsHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <ListboxSelect
+                    id="settings-insert-column-hints"
+                    value={settings.insertColumnHints}
+                    options={[
+                      { value: "cursor", label: t("settingsInsertColumnHintsCursor") },
+                      { value: "always", label: t("settingsInsertColumnHintsAlways") },
+                      { value: "off", label: t("settingsInsertColumnHintsOff") },
+                    ]}
+                    onChange={(v) => setInsertColumnHints(v as InsertColumnHintsMode)}
                   />
                 </SettingsToggleRow>
               </SettingsSection>

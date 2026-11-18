@@ -2730,6 +2730,29 @@ body, #root {
 }
 .cm-editor.cm-jump-mod .cm-jump-link { color: var(--accent); }
 
+/* INSERT の VALUES の列名インレイヒント (#2424)。値より控えめな淡色の小さい文字。カーソルのある値のヒントだけ
+   アクセント色。出現は短いフェード。reduced-motion / ハイコントラストでは即時表示 (識別子ホバーと同じ抑制ルール)。 */
+.cm-editor .cm-insert-hint {
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  margin-right: var(--space-0-5);
+  pointer-events: none;
+  user-select: none;
+  animation: cm-insert-hint-in 0.12s var(--ease, ease) both;
+}
+.cm-editor .cm-insert-hint-active { color: var(--accent); }
+@keyframes cm-insert-hint-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion="full"]) .cm-editor .cm-insert-hint { animation: none; }
+}
+:root[data-motion="reduced"] .cm-editor .cm-insert-hint { animation: none; }
+@media (forced-colors: active) {
+  .cm-editor .cm-insert-hint { animation: none; }
+}
+
 /* エディタ内検索・置換パネル (#464、@codemirror/search)。ライト/ダーク・アクセント・
    シンタックステーマに追従させるためトークンで配色する。 */
 .cm-editor .cm-panels {

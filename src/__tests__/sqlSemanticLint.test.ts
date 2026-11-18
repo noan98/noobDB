@@ -3,11 +3,16 @@ import { MySQL, PostgreSQL, SQLite, type SQLDialect } from "@codemirror/lang-sql
 import { parseSqlTree } from "../components/sqlLint";
 import {
   buildSemanticSchema,
+  insertArityDiagnostics,
   semanticDiagnostics,
   type SqlSemanticMessages,
 } from "../components/sqlSemanticLint";
 
-const MSG: SqlSemanticMessages = { unknownTable: "table:{name}", unknownColumn: "column:{name}" };
+const MSG: SqlSemanticMessages = {
+  unknownTable: "table:{name}",
+  unknownColumn: "column:{name}",
+  valueCount: "count:{columns}/{values}",
+};
 
 const OVERVIEW = [
   { name: "users", columns: ["id", "name", "email", "created_at"] },
@@ -361,5 +366,24 @@ describe("semanticDiagnostics — レビュー指摘の偽陽性", () => {
     });
     const sql = "SELECT a, b FROM t";
     expect(semanticDiagnostics(parseSqlTree(sql, MySQL), sql, schema, MSG)).toEqual([]);
+  });
+});
+
+describe("insertArityDiagnostics (#2424)", () => {
+  const schema = buildSemanticSchema({
+    driver: "mysql",
+    databaseSchema: [{ name: "orders", columns: ["id", "user_id", "status"] }],
+    defaultDatabase: "app",
+  });
+  it("行ごとに値の数の不一致を警告する", () => {
+    const doc =
+      "INSERT INTO orders (id, user_id, status) VALUES (1, 2, 'a'), (3, 4);\nINSERT INTO orders VALUES (1);";
+    const d = insertArityDiagnostics(doc, schema, MSG);
+    expect(d.map((x) => x.message)).toEqual(["count:3/2", "count:3/1"]);
+    expect(d.every((x) => x.severity === "warning")).toBe(true);
+  });
+  it("INSERT ... SELECT は対象外、スキーマ未取得なら空", () => {
+    expect(insertArityDiagnostics("INSERT INTO orders (id) SELECT 1, 2", schema, MSG)).toEqual([]);
+    expect(insertArityDiagnostics("INSERT INTO orders (id) VALUES (1, 2)", null, MSG)).toEqual([]);
   });
 });

@@ -19,11 +19,14 @@
 
 import type { Tree } from "@lezer/common";
 import type { Diagnostic } from "@codemirror/lint";
+import { insertArityIssues, scanInsertValues, type ColumnLookup } from "./insertValues";
 
 /** 診断メッセージ (i18n 経由で注入)。`{name}` を対象の識別子に置き換える。 */
 export interface SqlSemanticMessages {
   unknownTable: string;
   unknownColumn: string;
+  /** INSERT の値の数の不一致 (#2424)。`{columns}` / `{values}` を置き換える。 */
+  valueCount: string;
 }
 
 /** セマンティック lint が参照するスキーマ。 */
@@ -1153,6 +1156,52 @@ export function semanticDiagnostics(
       out.push(...kept);
     }
     return out;
+  } catch {
+    return [];
+  }
+}
+
+/** 値の数の検査 (#2424) を行う文書長の上限。これを超える巨大なダンプは検査しない。 */
+const MAX_ARITY_DOC_LENGTH = 2_000_000;
+
+/** スキーマから `ColumnLookup` を作る (列の順序は集合の挿入順 = 定義順)。 */
+function schemaLookup(schema: SemanticSchema): ColumnLookup {
+  return (table, qualifier) => {
+    if (qualifier !== null && qualifier !== schema.defaultDatabase) return null;
+    const cols = schema.tables.get(table);
+    return cols ? [...cols] : null;
+  };
+}
+
+/**
+ * `INSERT ... VALUES` の各タプルの値の数が列数と合わないものを `warning` で返す (#2424)。
+ * 列リストが無い文は表の列数と比べる。`INSERT ... SELECT` / `DEFAULT VALUES` は解析対象外。
+ * 走査は `semanticDiagnostics` のトークン上限とは独立で、1 万行の INSERT でも読む。
+ */
+export function insertArityDiagnostics(
+  doc: string,
+  schema: SemanticSchema | null,
+  messages: SqlSemanticMessages,
+  options: SemanticOptions = {},
+): Diagnostic[] {
+  if (!schema || doc.length > MAX_ARITY_DOC_LENGTH) return [];
+  try {
+    const stmts = scanInsertValues(doc, { driver: schema.driver });
+    return insertArityIssues(stmts, {
+      driver: schema.driver,
+      lookup: schemaLookup(schema),
+      cursor: options.cursor,
+    }).map((i) => ({
+      from: i.from,
+      to: i.to,
+      severity: "warning" as const,
+      message: messages.valueCount
+        .split("{columns}")
+        .join(String(i.columns))
+        .split("{values}")
+        .join(String(i.values)),
+      source: "sql-semantic",
+    }));
   } catch {
     return [];
   }

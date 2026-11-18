@@ -677,6 +677,12 @@ const en = {
   settingsSqlLintEnabled: "Enable syntax check",
   settingsSqlLintEnabledHelp:
     "Flags misspelled keywords (SELEC, FRM, WHER), empty clauses (FROM WHERE), extra commas, GROUP / ORDER without BY, statements that end mid-clause, misordered clauses (e.g. WHERE after ORDER BY), unmatched brackets, and unterminated strings or comments, following the connected driver's dialect. Conservative by design: it prefers missing an error over a false positive.",
+  settingsInsertColumnHints: "Column names in INSERT values",
+  settingsInsertColumnHintsHelp:
+    "Shows the target column name in front of each value of INSERT ... VALUES so you can tell which column a value goes to (the table's column order is used when the column list is omitted). Display only; nothing is added to your SQL.",
+  settingsInsertColumnHintsCursor: "Cursor line only",
+  settingsInsertColumnHintsAlways: "Always",
+  settingsInsertColumnHintsOff: "Off",
   settingsIdentifierHoverEnabled: "Hover info for identifiers",
   settingsIdentifierHoverEnabledHelp:
     "Hover a table or column name in the editor to see its type and constraints, and underline the names that Ctrl/Cmd+click can jump to while the key is held. Ctrl/Cmd+click itself keeps working when this is off.",
@@ -1908,6 +1914,7 @@ const en = {
   editorLintIncomplete: "Statement ends unexpectedly — something is missing after this",
   editorLintUnknownTable: 'Table "{name}" was not found in the connected schema',
   editorLintUnknownColumn: 'Column "{name}" was not found in the tables of this query',
+  editorLintValueCount: "{values} values for {columns} columns",
 
   // Impact-row preflight badge (#737).
   editorPreflightImpact: "Affects ~{count} rows",
@@ -9650,6 +9657,12 @@ const ja: Dict = {
   settingsSqlLintEnabled: "構文チェックを有効化",
   settingsSqlLintEnabledHelp:
     "キーワードのタイポ (SELEC / FRM / WHER など)・中身が空の句 (FROM WHERE など)・余分なカンマ・BY の抜けた GROUP / ORDER・途中で終わった文・句の順序ミス (ORDER BY の後の WHERE など)・括弧の不整合・未終端の文字列やコメントを、接続中ドライバの方言に沿って検出します。誤検出より見逃しを優先する保守的な判定です。",
+  settingsInsertColumnHints: "INSERT の値に列名を表示",
+  settingsInsertColumnHintsHelp:
+    "INSERT ... VALUES の各値の手前に、入る列の名前を薄く表示します (列リストを省略した文はテーブルの列順を使います)。表示だけで、SQL には何も追加されません。",
+  settingsInsertColumnHintsCursor: "カーソルのある行のみ",
+  settingsInsertColumnHintsAlways: "常に表示",
+  settingsInsertColumnHintsOff: "オフ",
   settingsIdentifierHoverEnabled: "識別子のホバー情報",
   settingsIdentifierHoverEnabledHelp:
     "エディタでテーブル名・列名にホバーすると型や制約を表示し、Ctrl/Cmd を押している間はクリックで移動できる識別子に下線を引きます。オフでも Ctrl/Cmd+クリックの移動は使えます。",
@@ -10873,6 +10886,7 @@ const ja: Dict = {
   editorLintIncomplete: "文が途中で終わっています — この後に続きが必要です",
   editorLintUnknownTable: 'テーブル "{name}" は接続中のスキーマに見つかりません',
   editorLintUnknownColumn: '列 "{name}" はこのクエリのテーブルに見つかりません',
+  editorLintValueCount: "{columns} 列に対して {values} 値",
 
   // 影響行数プリフライトのバッジ (#737)。
   editorPreflightImpact: "影響: 約 {count} 行",
