@@ -45,6 +45,20 @@ Tauri の `#[tauri::command] async fn` は同一プロセス内で**並行実行
 - ユーザが選んだパスへ書き出すファイル (SQL 保存・バイナリ保存・プロファイル書き出し) は `atomic_write::write_atomic` (一時ファイル → `rename`。既存のパーミッションと symlink を維持)。アプリのデータディレクトリ内の JSON ストアは各ストアの `write_atomic`。
 - `{ "<key>": [...] }` 形式のストア (snippets / sandboxes) は `json_tolerant::parse_items` / `unparsable_raw` / `build_with_raw` で 1 件の不正を読み飛ばして書き戻す。トップレベルの形が違うときは `quarantine_if_unexpected_shape`、JSON 破損は `corrupt_backup_path` で `.corrupt-*` へ退避して空から再開する (assertions / tasks も同じ)。
 
+## プロファイル削除時の付随ストア掃除 (#2422)
+
+- `profile_id` をキーに持つアプリ側ストアは、`delete_profile` で自動では消えない。掃除対象は
+  `src-tauri/src/profiles/cleanup.rs` の `PROFILE_SCOPED_STORES` (1 か所) に**ストアごとの
+  `profile_ids()` / `delete_profile_data(id)` を載せて**登録する。`delete_profile` は本体の削除後に
+  `cleanup_profile` を呼ぶ (ベストエフォート + `tracing::warn!`。派生接続 `<id>::db::<名>` のぶんも消す)。
+- 意図的に残すストア (実行履歴・フライトレコーダー・タスク・アサーション・サンドボックスなど) は
+  `RETAINED_STORES` に**理由付き**で載せる。
+- **新しい永続ストア (`JsonStore::new` / `store_lock::acquire` / `OnceCell<SqlitePool>`) が `profile_id`
+  を持つのに、どちらにも載せないとメタテスト `every_profile_scoped_store_is_registered_for_cleanup` が落ちる。**
+- 起動時に `sweep_orphans_once` が、既に孤立しているデータを一度だけ掃除する (マーカー
+  `profile_data_sweep_v1.done`)。プロファイル一覧が空・読めない・ID 不明の読み飛ばしがあるときは
+  誤削除を避けるため何もしない。
+
 ## 論理リレーション (`logical_relations.json`, #2356)
 
 - `logical_relations.rs` が持つ `json_store::JsonStore` (data_dir)。FK 制約を張らない DB の「子.列 → 親.列」を

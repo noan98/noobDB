@@ -1948,6 +1948,9 @@ pub fn run() {
         // ディスク上のみに持つため、AppState への追加は不要。
         .setup(|app| {
             tasks::scheduler::spawn(app.handle().clone());
+            // 削除済みプロファイルが残した付随データを一度だけ掃除する (#2422)。
+            // `.setup` は Tokio ランタイム外なので `tauri::async_runtime::spawn` を使う。
+            tauri::async_runtime::spawn(profiles::cleanup::sweep_orphans_once());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

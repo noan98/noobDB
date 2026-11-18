@@ -199,6 +199,24 @@ pub fn new_snippet_id() -> String {
         .collect()
 }
 
+/// 特定プロファイル専用のスコープを持つスニペットが参照しているプロファイル ID
+/// (起動時の孤立データ掃除用)。
+pub fn scoped_profile_ids() -> Result<Vec<String>> {
+    let _guard = lock_store()?;
+    Ok(scoped_ids_in(&load_all_locked()?))
+}
+
+fn scoped_ids_in(all: &[Snippet]) -> Vec<String> {
+    let set: std::collections::BTreeSet<&str> = all
+        .iter()
+        .filter_map(|s| match &s.scope {
+            super::SnippetScope::Profile { profile_id } => Some(profile_id.as_str()),
+            _ => None,
+        })
+        .collect();
+    set.into_iter().map(str::to_string).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -356,5 +374,32 @@ mod release_scope_tests {
         assert_eq!(all[0].scope, SnippetScope::Any);
         assert_ne!(all[1].scope, SnippetScope::Any);
         assert_ne!(all[2].scope, SnippetScope::Any);
+    }
+
+    #[test]
+    fn scoped_ids_lists_only_profile_scopes_without_duplicates() {
+        let all = vec![
+            snip(
+                "a",
+                SnippetScope::Profile {
+                    profile_id: "p2".into(),
+                },
+            ),
+            snip(
+                "b",
+                SnippetScope::Profile {
+                    profile_id: "p1".into(),
+                },
+            ),
+            snip(
+                "c",
+                SnippetScope::Profile {
+                    profile_id: "p2".into(),
+                },
+            ),
+            snip("d", SnippetScope::Group { group: "g".into() }),
+            snip("e", SnippetScope::Any),
+        ];
+        assert_eq!(scoped_ids_in(&all), vec!["p1", "p2"]);
     }
 }
