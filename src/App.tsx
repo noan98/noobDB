@@ -1504,6 +1504,10 @@ function emptyPreview(): PreviewResult {
  * `handleConnect` がこの id を特別扱いして `api.createLocalSession` を呼ぶことで、
  * 複数同時接続の切替・タブ復元など既存のセッション管理をそのまま再利用する
  * (ローカル専用の別経路を新設しない)。
+ *
+ * `profiles/cleanup.rs` の `LOCAL_PROFILE_ID` と同じ値にする。起動時の孤立データ掃除がこの ID を
+ * 「存在しないプロファイル」と見なして消さないための除外キーで、片側だけ変えるとローカル接続の
+ * プラン監視やインポートテンプレートが黙って削除される (`constantParity.test.ts` が固定)。
  */
 const LOCAL_PROFILE_ID = "__local__";
 
