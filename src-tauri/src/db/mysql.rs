@@ -48,6 +48,9 @@ pub struct MySqlConn {
     /// `information_schema.INNODB_LOCK_WAITS` が無いと分かったら立てる (#1417)。MySQL 8.0 で
     /// 削除済みなので、`performance_schema` が使えない 8.x で毎ポーリング失敗する照会を投げない。
     innodb_lock_waits_missing: std::sync::atomic::AtomicBool,
+    /// `performance_schema.data_lock_waits` が無いと分かったら立てる (#2447)。MySQL 5.7 / MariaDB で
+    /// ポーリングのたびに失敗する照会を投げないため。
+    data_lock_waits_missing: std::sync::atomic::AtomicBool,
     /// stage 計測器が無効かの判定結果と取得時刻 (#2269)。ポーリングごとに設定照会を投げないよう
     /// [`STAGE_CHECK_TTL`] の間は使い回す。
     stage_check: std::sync::Mutex<Option<(std::time::Instant, bool)>>,
@@ -129,6 +132,7 @@ impl MySqlConn {
             tx_backend_id: Default::default(),
             _iam_refresh: iam_refresh,
             innodb_lock_waits_missing: std::sync::atomic::AtomicBool::new(false),
+            data_lock_waits_missing: std::sync::atomic::AtomicBool::new(false),
             stage_check: std::sync::Mutex::new(None),
         })
     }
@@ -322,8 +326,11 @@ impl MySqlConn {
         if id == 0 {
             return Ok(None);
         }
-        let pairs = self.list_lock_waits(true, false).await;
-        Ok(Some(super::tx_blocking::count_blocked_by(&pairs, id)))
+        // 行ロック待ちを読めなかったら 0 件ではなく「不明」(None) を返す (#2447)。
+        Ok(self
+            .row_lock_waits(true)
+            .await
+            .map(|pairs| super::tx_blocking::count_blocked_by(&pairs, id)))
     }
 
     /// Runs `sql` inside a transaction that is always rolled back. Captures
@@ -1813,16 +1820,6 @@ impl MySqlConn {
     /// `performance_schema` が使えない (`perf_schema_ok = false`) ときは `performance_schema`
     /// 側の照会を省く。いずれの照会も失敗したら (権限不足など) 空へ縮退し、エラーにしない。
     async fn list_lock_waits(&self, perf_schema_ok: bool, may_wait_mdl: bool) -> Vec<(i64, i64)> {
-        use std::sync::atomic::Ordering;
-        const DATA_LOCK_WAITS: &str = "SELECT rt.PROCESSLIST_ID, bt.PROCESSLIST_ID \
-             FROM performance_schema.data_lock_waits w \
-             JOIN performance_schema.threads rt ON rt.THREAD_ID = w.REQUESTING_THREAD_ID \
-             JOIN performance_schema.threads bt ON bt.THREAD_ID = w.BLOCKING_THREAD_ID \
-             WHERE rt.PROCESSLIST_ID IS NOT NULL AND bt.PROCESSLIST_ID IS NOT NULL";
-        const INNODB_LOCK_WAITS: &str = "SELECT rt.trx_mysql_thread_id, bt.trx_mysql_thread_id \
-             FROM information_schema.INNODB_LOCK_WAITS w \
-             JOIN information_schema.INNODB_TRX rt ON rt.trx_id = w.requesting_trx_id \
-             JOIN information_schema.INNODB_TRX bt ON bt.trx_id = w.blocking_trx_id";
         const METADATA_LOCK_WAITS: &str = "SELECT rt.PROCESSLIST_ID, gt.PROCESSLIST_ID, \
                     p.LOCK_TYPE, g.LOCK_TYPE, p.OBJECT_TYPE, g.LOCK_STATUS \
              FROM performance_schema.metadata_locks p \
@@ -1837,22 +1834,7 @@ impl MySqlConn {
              WHERE p.LOCK_STATUS = 'PENDING' \
                AND rt.PROCESSLIST_ID IS NOT NULL AND gt.PROCESSLIST_ID IS NOT NULL";
         let mut pairs = Vec::new();
-        let mut row_locks: Option<Vec<(i64, i64)>> = None;
-        if perf_schema_ok {
-            row_locks = self.query_id_pairs(DATA_LOCK_WAITS).await;
-        }
-        if row_locks.is_none() && !self.innodb_lock_waits_missing.load(Ordering::Relaxed) {
-            match self.query_id_pairs_checked(INNODB_LOCK_WAITS).await {
-                Ok(v) => row_locks = Some(v),
-                // テーブルが存在しないときだけ恒久的に諦める。プール枯渇や
-                // 権限不足などの一過性の失敗では次回以降も再試行する (#1519)。
-                Err(e) if is_missing_table_error(&e) => {
-                    self.innodb_lock_waits_missing
-                        .store(true, Ordering::Relaxed);
-                }
-                Err(_) => {}
-            }
-        }
+        let row_locks = self.row_lock_waits(perf_schema_ok).await;
         pairs.extend(row_locks.unwrap_or_default());
         if perf_schema_ok && may_wait_mdl {
             if let Ok(rows) = sqlx::query(METADATA_LOCK_WAITS).fetch_all(&self.pool).await {
@@ -1881,12 +1863,48 @@ impl MySqlConn {
         pairs
     }
 
-    /// 2 列 (id, id) を返す照会を実行する。失敗 (テーブル無し・権限不足) は `None`。
-    async fn query_id_pairs(&self, sql: &'static str) -> Option<Vec<(i64, i64)>> {
-        self.query_id_pairs_checked(sql).await.ok()
+    /// 行ロック待ちの `(待つ側, ブロッカー)` の組。MySQL 8 は `performance_schema.data_lock_waits`、
+    /// 取れなければ (5.7 / MariaDB) `information_schema.INNODB_LOCK_WAITS`。**どちらも読めなかった**
+    /// (権限不足・テーブル無し) ときは `None` (空と区別できる、#2447)。
+    async fn row_lock_waits(&self, perf_schema_ok: bool) -> Option<Vec<(i64, i64)>> {
+        use std::sync::atomic::Ordering;
+        const DATA_LOCK_WAITS: &str = "SELECT rt.PROCESSLIST_ID, bt.PROCESSLIST_ID \
+             FROM performance_schema.data_lock_waits w \
+             JOIN performance_schema.threads rt ON rt.THREAD_ID = w.REQUESTING_THREAD_ID \
+             JOIN performance_schema.threads bt ON bt.THREAD_ID = w.BLOCKING_THREAD_ID \
+             WHERE rt.PROCESSLIST_ID IS NOT NULL AND bt.PROCESSLIST_ID IS NOT NULL";
+        const INNODB_LOCK_WAITS: &str = "SELECT rt.trx_mysql_thread_id, bt.trx_mysql_thread_id \
+             FROM information_schema.INNODB_LOCK_WAITS w \
+             JOIN information_schema.INNODB_TRX rt ON rt.trx_id = w.requesting_trx_id \
+             JOIN information_schema.INNODB_TRX bt ON bt.trx_id = w.blocking_trx_id";
+        if perf_schema_ok && !self.data_lock_waits_missing.load(Ordering::Relaxed) {
+            match self.query_id_pairs_checked(DATA_LOCK_WAITS).await {
+                Ok(v) => return Some(v),
+                // テーブルが無いときだけ恒久的に諦める。一過性の失敗は次回も試す。
+                Err(e) if is_missing_table_error(&e) => {
+                    self.data_lock_waits_missing.store(true, Ordering::Relaxed);
+                }
+                Err(_) => {}
+            }
+        }
+        if self.innodb_lock_waits_missing.load(Ordering::Relaxed) {
+            return None;
+        }
+        match self.query_id_pairs_checked(INNODB_LOCK_WAITS).await {
+            Ok(v) => Some(v),
+            // テーブルが存在しないときだけ恒久的に諦める。プール枯渇や
+            // 権限不足などの一過性の失敗では次回以降も再試行する (#1519)。
+            Err(e) => {
+                if is_missing_table_error(&e) {
+                    self.innodb_lock_waits_missing
+                        .store(true, Ordering::Relaxed);
+                }
+                None
+            }
+        }
     }
 
-    /// [`Self::query_id_pairs`] の失敗理由を保つ版。
+    /// 2 列 (id, id) を返す照会を実行する。失敗 (テーブル無し・権限不足) は `Err`。
     async fn query_id_pairs_checked(
         &self,
         sql: &'static str,

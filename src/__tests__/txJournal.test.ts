@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   TX_JOURNAL_MAX_ENTRIES,
-  TX_WARN_AFTER_MS,
   appendTxEntry,
+  batchResultToTxOutcome,
   formatTxElapsed,
   isTxStale,
   makeTxEntry,
@@ -30,17 +30,35 @@ describe("formatTxElapsed", () => {
 });
 
 describe("stale threshold", () => {
-  it("production is shorter than other", () => {
-    expect(TX_WARN_AFTER_MS.production).toBeLessThan(TX_WARN_AFTER_MS.other);
-    expect(txWarnThresholdMs(true)).toBe(TX_WARN_AFTER_MS.production);
-    expect(txWarnThresholdMs(false)).toBe(TX_WARN_AFTER_MS.other);
+  const warn = { production: 3, other: 10 };
+  it("uses minutes per environment", () => {
+    expect(txWarnThresholdMs(true, warn)).toBe(180_000);
+    expect(txWarnThresholdMs(false, warn)).toBe(600_000);
   });
   it("warns exactly at the threshold", () => {
-    const p = TX_WARN_AFTER_MS.production;
-    expect(isTxStale(p - 1, true)).toBe(false);
-    expect(isTxStale(p, true)).toBe(true);
-    expect(isTxStale(p, false)).toBe(false);
-    expect(isTxStale(TX_WARN_AFTER_MS.other, false)).toBe(true);
+    expect(isTxStale(179_999, true, warn)).toBe(false);
+    expect(isTxStale(180_000, true, warn)).toBe(true);
+    expect(isTxStale(180_000, false, warn)).toBe(false);
+    expect(isTxStale(600_000, false, warn)).toBe(true);
+    expect(isTxStale(60_000, true, { production: 1, other: 1 })).toBe(true);
+  });
+});
+
+describe("batchResultToTxOutcome", () => {
+  it("skips skipped statements and maps errors", () => {
+    expect(batchResultToTxOutcome({ status: "skipped" })).toBeNull();
+    expect(batchResultToTxOutcome({ status: "error" })).toEqual({ ok: false });
+  });
+  it("maps a result set and an affected count", () => {
+    expect(
+      batchResultToTxOutcome({ status: "ok", columns: [{}], rows: [[1], [2]], totalRows: 50, elapsedMs: 3 }),
+    ).toEqual({ ok: true, returnedRows: 50, affectedRows: 0, elapsedMs: 3 });
+    expect(batchResultToTxOutcome({ status: "ok", rowsAffected: 4, elapsedMs: 2 })).toEqual({
+      ok: true,
+      returnedRows: 0,
+      affectedRows: 4,
+      elapsedMs: 2,
+    });
   });
 });
 

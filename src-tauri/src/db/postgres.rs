@@ -371,7 +371,7 @@ impl PostgresConn {
 
     /// 開いているトランザクションにブロックされている他セッション数 (#2447)。
     /// 保持接続の pid を `pg_blocking_pids()` に含むセッションを、プールの別接続から数える。
-    /// Lock 待ちの行だけ `pg_blocking_pids` を呼ぶ (全行呼ぶと lock manager に負荷をかける)。
+    /// `pg_stat_activity` の `wait_event_type` は権限が無いと NULL になるため、`pg_locks` の未取得ロックを使う。
     pub async fn tx_blocked_sessions(&self) -> Result<Option<u32>> {
         let pid = self.tx_backend_id.load(std::sync::atomic::Ordering::SeqCst);
         let Ok(pid) = i32::try_from(pid) else {
@@ -381,8 +381,8 @@ impl PostgresConn {
             return Ok(None);
         }
         let n: i64 = sqlx::query_scalar(
-            "SELECT count(*)::int8 FROM pg_stat_activity \
-             WHERE wait_event_type = 'Lock' AND $1::int4 = ANY(pg_blocking_pids(pid))",
+            "SELECT count(DISTINCT pid)::int8 FROM pg_locks \
+             WHERE NOT granted AND $1::int4 = ANY(pg_blocking_pids(pid))",
         )
         .bind(pid)
         .fetch_one(&self.pool)

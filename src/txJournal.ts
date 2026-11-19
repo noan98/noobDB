@@ -26,16 +26,19 @@ export interface TxMeta {
 /** 一覧に残す最大件数。超えたら古いものから捨てる (長時間のトランザクションでメモリを増やさない)。 */
 export const TX_JOURNAL_MAX_ENTRIES = 200;
 
-/** 放置警告のしきい値 (ms)。本番は短め。設定には出さず定数で持つ。 */
-export const TX_WARN_AFTER_MS = { production: 3 * 60_000, other: 10 * 60_000 } as const;
+/** 放置警告のしきい値 (分)。設定 `txWarnMinutesProduction` / `txWarnMinutesOther` から渡す。 */
+export interface TxWarnMinutes {
+  production: number;
+  other: number;
+}
 
-export function txWarnThresholdMs(isProduction: boolean): number {
-  return isProduction ? TX_WARN_AFTER_MS.production : TX_WARN_AFTER_MS.other;
+export function txWarnThresholdMs(isProduction: boolean, warn: TxWarnMinutes): number {
+  return (isProduction ? warn.production : warn.other) * 60_000;
 }
 
 /** 経過時間が警告しきい値に達したか (しきい値ちょうどで警告)。 */
-export function isTxStale(elapsedMs: number, isProduction: boolean): boolean {
-  return elapsedMs >= txWarnThresholdMs(isProduction);
+export function isTxStale(elapsedMs: number, isProduction: boolean, warn: TxWarnMinutes): boolean {
+  return elapsedMs >= txWarnThresholdMs(isProduction, warn);
 }
 
 /** 経過時間の表示。1 時間未満は `m:ss`、以上は `h:mm:ss`。負の値は 0 扱い。 */
@@ -75,6 +78,25 @@ export function makeTxEntry(
         at,
       }
     : { sql, write, ok: false, rows: null, elapsedMs: null, at };
+}
+
+/** バッチ実行 (複数文) の 1 文ぶんの結果。`status: "skipped"` は実行していないので記録しない (null)。 */
+export function batchResultToTxOutcome(r: {
+  status: "ok" | "error" | "skipped";
+  columns?: unknown[];
+  rows?: unknown[][];
+  rowsAffected?: number;
+  elapsedMs?: number;
+  totalRows?: number;
+}): Parameters<typeof makeTxEntry>[2] | null {
+  if (r.status === "skipped") return null;
+  if (r.status === "error") return { ok: false };
+  return {
+    ok: true,
+    returnedRows: r.totalRows ?? r.rows?.length ?? 0,
+    affectedRows: Number(r.rowsAffected ?? 0),
+    elapsedMs: r.elapsedMs ?? 0,
+  };
 }
 
 /** 記録を末尾へ足す。上限を超えたら古いものから捨てる。 */

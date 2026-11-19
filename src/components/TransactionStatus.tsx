@@ -1,8 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { Box, Flex, chakra } from "@chakra-ui/react";
 import { api } from "../api/tauri";
 import { useT } from "../i18n";
+import { useReturnFocus } from "../keyboardNav";
+import { useSettings } from "../settings";
 import { semanticColorToken } from "../semanticColors";
 import {
   formatTxElapsed,
@@ -23,6 +25,13 @@ const BLOCKING_POLL_MS = 5000;
 
 /** 放置警告 / ブロック通知を 1 つのトランザクションにつき 1 回だけ出すための既出キー。 */
 const notified = new Set<string>();
+
+/** トランザクションが終わった / 破棄されたとき、その接続の既出キーを消す (Set を増やし続けない)。 */
+export function forgetTxNotifications(sessionId: string): void {
+  for (const k of [...notified]) {
+    if (k.startsWith(`stale:${sessionId}:`) || k.startsWith(`blocking:${sessionId}:`)) notified.delete(k);
+  }
+}
 
 function clock(at: number): string {
   const d = new Date(at);
@@ -90,10 +99,11 @@ export function TransactionStatus({ sessionId, driver, isProduction, meta }: Pro
   const startedAt = meta?.startedAt ?? 0;
   const entries = meta?.entries ?? [];
   const [now, setNow] = useState(() => Date.now());
-  const [blocked, setBlocked] = useState<number | null>(null);
+  const settings = useSettings();
+  // undefined = 初回の取得待ち (非表示)、null = 取得できない (「不明」と表示)。
+  const [blocked, setBlocked] = useState<number | null | undefined>(undefined);
   const [open, setOpen] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
-  const panelRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
   const supportsBlocking = supportsTxBlockingCount(driver);
   const key = `${sessionId}:${startedAt}`;
@@ -104,7 +114,10 @@ export function TransactionStatus({ sessionId, driver, isProduction, meta }: Pro
   }, []);
 
   const elapsed = startedAt > 0 ? now - startedAt : 0;
-  const stale = isTxStale(elapsed, isProduction);
+  const stale = isTxStale(elapsed, isProduction, {
+    production: settings.txWarnMinutesProduction,
+    other: settings.txWarnMinutesOther,
+  });
   const elapsedLabel = formatTxElapsed(elapsed);
 
   // 放置の通知は 1 つのトランザクションにつき 1 回。
@@ -120,11 +133,13 @@ export function TransactionStatus({ sessionId, driver, isProduction, meta }: Pro
     });
   }, [stale, key, elapsedLabel, toast, t]);
 
-  // ブロック中セッション数の定期更新。接続を切り替えたら取り直す。
+  // ブロック中セッション数の定期更新。前回の応答を待ってから次を予約する (setTimeout の連鎖)。
+  // 接続を切り替えたら取り直す。
   useEffect(() => {
-    setBlocked(null);
+    setBlocked(undefined);
     if (!supportsBlocking) return;
     let cancelled = false;
+    let timer: number | undefined;
     const poll = () => {
       api
         .transactionBlockedSessions(sessionId)
@@ -133,18 +148,20 @@ export function TransactionStatus({ sessionId, driver, isProduction, meta }: Pro
         })
         .catch(() => {
           if (!cancelled) setBlocked(null);
+        })
+        .finally(() => {
+          if (!cancelled) timer = window.setTimeout(poll, BLOCKING_POLL_MS);
         });
     };
     poll();
-    const id = window.setInterval(poll, BLOCKING_POLL_MS);
     return () => {
       cancelled = true;
-      window.clearInterval(id);
+      window.clearTimeout(timer);
     };
   }, [sessionId, supportsBlocking]);
 
   useEffect(() => {
-    if (blocked === null || blocked <= 0) return;
+    if (blocked == null || blocked <= 0) return;
     const k = `blocking:${key}`;
     if (notified.has(k)) return;
     notified.add(k);
@@ -164,28 +181,6 @@ export function TransactionStatus({ sessionId, driver, isProduction, meta }: Pro
     if (r) setPos({ top: r.bottom + 4, right: Math.max(8, window.innerWidth - r.right) });
     setOpen(true);
   };
-
-  // 外側クリック / Escape で閉じる。
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      const el = e.target as Node;
-      if (panelRef.current?.contains(el) || buttonRef.current?.contains(el)) return;
-      setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setOpen(false);
-        buttonRef.current?.focus();
-      }
-    };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
 
   const summaryLabel = useTxSummaryLabel(entries);
   const summary = summarizeTxJournal(entries);
@@ -222,7 +217,13 @@ export function TransactionStatus({ sessionId, driver, isProduction, meta }: Pro
         </chakra.span>
       </Tooltip>
       {supportsBlocking ? (
-        blocked === null ? null : (
+        blocked === undefined ? null : blocked === null ? (
+          <Tooltip label={t("txBlockingUnknownHelp")} focusableWrapper>
+            <Box data-testid="tx-blocking">
+              <ToneChip tone="muted">{t("txBlockingUnknown")}</ToneChip>
+            </Box>
+          </Tooltip>
+        ) : (
           <Tooltip label={t("txBlockingHelp")} focusableWrapper>
             <Box data-testid="tx-blocking">
               <ToneChip tone={blocked > 0 ? "danger" : "muted"}>
@@ -249,43 +250,87 @@ export function TransactionStatus({ sessionId, driver, isProduction, meta }: Pro
       >
         {summaryLabel}
       </Button>
-      {open &&
-        pos &&
-        createPortal(
-          <Box
-            ref={panelRef}
-            role="dialog"
-            aria-label={t("txChangesTitle")}
-            data-testid="tx-changes-popover"
-            position="fixed"
-            zIndex="popover"
-            top={`${pos.top}px`}
-            right={`${pos.right}px`}
-            w="min(560px, calc(100vw - 16px))"
-            maxH="min(420px, 70vh)"
-            overflowY="auto"
-            bg="app.surface"
-            border="1px solid"
-            borderColor="app.border"
-            borderRadius="lg"
-            shadow="elevationPopover"
-            p="3"
-          >
-            <chakra.p textStyle="caption" fontWeight={600} color="app.text" mb="2">
-              {t("txChangesTitle")}
-            </chakra.p>
-            <TxJournalList entries={entries} />
-            {summary.failed > 0 && (
-              <chakra.p textStyle="caption" color="app.textMuted" mt="2">
-                {t("txChangesFailedNote", { count: summary.failed })}
-              </chakra.p>
-            )}
-            <chakra.p textStyle="caption" color="app.textMuted" mt="2">
-              {t("txChangesNote")}
-            </chakra.p>
-          </Box>,
-          document.body,
-        )}
+      {open && pos && (
+        <TxChangesPopover
+          pos={pos}
+          entries={entries}
+          failed={summary.failed}
+          anchorRef={buttonRef}
+          onClose={() => setOpen(false)}
+        />
+      )}
     </>
+  );
+}
+
+/** 実行した文の一覧ポップオーバー。外側クリック / Esc で閉じ、閉じたら呼び出したボタンへフォーカスを戻す。 */
+function TxChangesPopover({
+  pos,
+  entries,
+  failed,
+  anchorRef,
+  onClose,
+}: {
+  pos: { top: number; right: number };
+  entries: readonly TxJournalEntry[];
+  failed: number;
+  anchorRef: RefObject<HTMLButtonElement | null>;
+  onClose: () => void;
+}) {
+  const t = useT();
+  const panelRef = useRef<HTMLDivElement>(null);
+  useReturnFocus();
+  useEffect(() => {
+    panelRef.current?.focus();
+    const onDown = (e: MouseEvent) => {
+      const el = e.target as Node;
+      if (panelRef.current?.contains(el) || anchorRef.current?.contains(el)) return;
+      onClose();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [anchorRef, onClose]);
+  return createPortal(
+    <Box
+      ref={panelRef}
+      role="dialog"
+      tabIndex={-1}
+      aria-label={t("txChangesTitle")}
+      data-testid="tx-changes-popover"
+      position="fixed"
+      zIndex="popover"
+      top={`${pos.top}px`}
+      right={`${pos.right}px`}
+      w="min(560px, calc(100vw - 16px))"
+      maxH="min(420px, 70vh)"
+      overflowY="auto"
+      bg="app.surface"
+      border="1px solid"
+      borderColor="app.border"
+      borderRadius="lg"
+      shadow="elevationPopover"
+      p="3"
+    >
+      <chakra.p textStyle="caption" fontWeight={600} color="app.text" mb="2">
+        {t("txChangesTitle")}
+      </chakra.p>
+      <TxJournalList entries={entries} />
+      {failed > 0 && (
+        <chakra.p textStyle="caption" color="app.textMuted" mt="2">
+          {t("txChangesFailedNote", { count: failed })}
+        </chakra.p>
+      )}
+      <chakra.p textStyle="caption" color="app.textMuted" mt="2">
+        {t("txChangesNote")}
+      </chakra.p>
+    </Box>,
+    document.body,
   );
 }

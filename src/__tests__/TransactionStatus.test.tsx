@@ -77,6 +77,14 @@ describe("TransactionStatus (#2447)", () => {
     expect(blockedMock).toHaveBeenCalledWith("s1");
   });
 
+  it("ブロック数を取得できない (null) ときは非表示でなく「不明」と出す", async () => {
+    blockedMock.mockResolvedValue(null);
+    renderWithProviders(
+      <TransactionStatus sessionId="s1" driver="mysql" isProduction={false} meta={meta(1000)} />,
+    );
+    await waitFor(() => expect(screen.getByTestId("tx-blocking").textContent).toBe(t("txBlockingUnknown")));
+  });
+
   it("SQLite は照会せず「対象外」と明示する", () => {
     renderWithProviders(
       <TransactionStatus sessionId="s1" driver="sqlite" isProduction={false} meta={meta(1000, "sqlite")} />,

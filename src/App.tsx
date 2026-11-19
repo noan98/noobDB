@@ -297,9 +297,10 @@ import { useConfirm, type ConfirmControls } from "./components/ConfirmDialog";
 import { SqlPreview } from "./components/SqlPreview";
 import { ContextMenu, type ContextMenuEntry } from "./components/ContextMenu";
 import { SavepointControl } from "./components/SavepointControl";
-import { TransactionStatus, TxJournalList } from "./components/TransactionStatus";
+import { TransactionStatus, TxJournalList, forgetTxNotifications } from "./components/TransactionStatus";
 import {
   appendTxEntry,
+  batchResultToTxOutcome,
   makeTxEntry,
   shouldReviewBeforeCommit,
   summarizeTxJournal,
@@ -2616,6 +2617,7 @@ export default function App() {
   const [txTick, setTxTick] = useState(0);
   const forgetTxState = useCallback((sid: string) => {
     txBySessionRef.current.delete(sid);
+    forgetTxNotifications(sid);
     setTxTick((n) => n + 1);
   }, []);
   // 未確定の TX を保持している接続のプロファイル id (接続一覧の「TX」バッジ用, #1536)。
@@ -2657,6 +2659,7 @@ export default function App() {
     [],
   );
   const resetTxFor = useCallback((sid: string) => {
+    forgetTxNotifications(sid);
     if (txOwnerRef.current === sid) {
       setSavepoints([]);
       savepointCounterRef.current = 0;
@@ -6842,7 +6845,8 @@ export default function App() {
       const outCtx = outputCtxFor(sessionId);
       // 全体を 1 つのトランザクションで包む (#1626): 設定がオン、停止モード、明示トランザクションなし。
       // 包む実行ではバックエンドが BEGIN / COMMIT などを読み飛ばす (結果が届かない) ので、エディタのマーカーへも伝える (#2331)。
-      const wrapInTransaction = settings.batchWrapInTransaction && stopOnError && !txActiveRef.current;
+      const inTx = txActiveRef.current;
+      const wrapInTransaction = settings.batchWrapInTransaction && stopOnError && !inTx;
       patchTab(tabId, (tt) => ({
         ...tt,
         title: autoTitleOnRun(tt, sql, translate("tabUntitledQuery")) ?? tt.title,
@@ -6905,6 +6909,11 @@ export default function App() {
             for (const r of incoming) {
               recordOutput(toBatchOutputInput(r), tab.database ?? null, outCtx);
               results.push(toBatchResult(r));
+              // 明示トランザクション中のバッチは、文ごとの結果を TX の記録へ足す (#2447)。
+              if (inTx) {
+                const outcome = batchResultToTxOutcome(r);
+                if (outcome) recordTxEntry(sessionId, r.sql, outcome);
+              }
             }
             // 進捗を反映 (途中経過を見せる)。バックエンドが間引いた単位で 1 回だけ更新する。
             patchTab(tabId, (tt) => ({ ...tt, batchResults: [...results] }));
@@ -6976,6 +6985,7 @@ export default function App() {
       outputCtxFor,
       toast,
       selectedProfile?.driver,
+      recordTxEntry,
       settings.batchWrapInTransaction,
       settings.flightRecorderEnabled,
       settings.flightRecorderRowCap,
