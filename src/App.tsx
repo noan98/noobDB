@@ -4733,20 +4733,25 @@ export default function App() {
   // `inTransaction` のときは「中途半端なコミットを避けて再接続しなかった」旨を示す。
   // 放置トランザクションの自動切断 (#2464) を知らせる。確定 (サーバのエラー) と推定で文言を分ける。
   const announceIdleTxDisconnect = useCallback(
-    (kind: IdleTxDisconnectKind, name: string) => {
-      setStatus({
-        kind: "key",
-        key: kind === "confirmed" ? "statusIdleTxDisconnected" : "statusIdleTxDisconnectedLikely",
-        error: true,
-      });
-      toast.notify({
-        message: translate(
-          kind === "confirmed" ? "toastIdleTxDisconnected" : "toastIdleTxDisconnectedLikely",
-          { name },
-        ),
-        tone: "info",
-        severity: "warning",
-      });
+    (kind: IdleTxDisconnectKind, name: string, sessionClosed: boolean) => {
+      // セッションごと閉じる経路と、TX だけ終わって接続は使える経路 (COMMIT / ROLLBACK の失敗) で文言を分ける。
+      const confirmed = kind === "confirmed";
+      const statusKey = sessionClosed
+        ? confirmed
+          ? "statusIdleTxDisconnected"
+          : "statusIdleTxDisconnectedLikely"
+        : confirmed
+          ? "statusIdleTxRolledBack"
+          : "statusIdleTxRolledBackLikely";
+      const toastKey = sessionClosed
+        ? confirmed
+          ? "toastIdleTxDisconnected"
+          : "toastIdleTxDisconnectedLikely"
+        : confirmed
+          ? "toastIdleTxRolledBack"
+          : "toastIdleTxRolledBackLikely";
+      setStatus({ kind: "key", key: statusKey, error: true });
+      toast.notify({ message: translate(toastKey, { name }), tone: "info", severity: "warning" });
     },
     [toast],
   );
@@ -4792,7 +4797,7 @@ export default function App() {
       setErrorProfileId(lostProfileId);
       if (opts?.idleTxDisconnect) {
         // 放置トランザクションの自動切断 (#2464): サーバがロールバック済み。TX 状態は上で破棄している。
-        announceIdleTxDisconnect(opts.idleTxDisconnect, profile?.name ?? "");
+        announceIdleTxDisconnect(opts.idleTxDisconnect, profile?.name ?? "", true);
       } else if (opts?.inTransaction) {
         setStatus({ kind: "key", key: "statusReconnectTx", error: true });
       } else if (opts?.gaveUpAfter != null && profile) {
@@ -7169,7 +7174,10 @@ export default function App() {
           outCtx,
         );
         // 放置トランザクションの自動切断など、TX 接続が落ちた失敗 (#2464)。TX 状態を破棄して知らせる。
-        if (errorKindOf(e) === "connectionLost") void handleConnectionLostRef.current(String(e));
+        // 失敗した間に別の接続へ切り替えていたら、今の接続は触らない (ノートブックの経路と同じ)。
+        if (errorKindOf(e) === "connectionLost" && sessionIdRef.current === sessionId) {
+          void handleConnectionLostRef.current(String(e));
+        }
       }
     },
     [
@@ -7336,7 +7344,7 @@ export default function App() {
         // バックエンドは失敗時もトランザクションを終了扱いにする (接続は破棄/ロールバック済み)。
         resetTxFor(sessionId);
         if (idleKind) {
-          announceIdleTxDisconnect(idleKind, selectedProfile?.name ?? "");
+          announceIdleTxDisconnect(idleKind, selectedProfile?.name ?? "", false);
           return;
         }
         toast.error(

@@ -1414,6 +1414,14 @@ const en = {
     "The connection dropped during a transaction left open past the auto-disconnect time, so the server most likely ended the abandoned transaction (idle-in-transaction timeout) and rolled it back. The session was closed — please reconnect and re-run the transaction.",
   toastIdleTxDisconnectedLikely:
     "{name}: the transaction was most likely disconnected by the server for being left idle, and rolled back. Reconnect and re-run it.",
+  statusIdleTxRolledBack:
+    "The server disconnected an abandoned transaction (idle-in-transaction timeout) and rolled it back. The connection is still usable — please re-run the transaction.",
+  statusIdleTxRolledBackLikely:
+    "The transaction was most likely disconnected by the server for being left idle (idle-in-transaction timeout) and rolled back. The connection is still usable — please re-run the transaction.",
+  toastIdleTxRolledBack:
+    "{name}: the server disconnected an abandoned transaction and rolled it back. Re-run it.",
+  toastIdleTxRolledBackLikely:
+    "{name}: the transaction was most likely disconnected by the server for being left idle, and rolled back. Re-run it.",
   toastIdleTxDisconnected:
     "{name}: the server disconnected an abandoned transaction and rolled it back. Reconnect and re-run it.",
   statusDismiss: "Close this message",
@@ -10722,6 +10730,14 @@ const ja: Dict = {
     "自動切断の時間を過ぎて開いたままだったトランザクションの途中で接続が切れました。放置によりサーバが切断し (idle-in-transaction タイムアウト)、ロールバックした可能性が高いです。セッションは閉じられました。再接続してトランザクションをやり直してください。",
   toastIdleTxDisconnectedLikely:
     "{name}: 放置されたトランザクションをサーバが切断し、ロールバックした可能性が高いです。再接続してやり直してください。",
+  statusIdleTxRolledBack:
+    "放置されたトランザクションをサーバが切断し (idle-in-transaction タイムアウト)、ロールバックしました。接続はそのまま使えます。トランザクションをやり直してください。",
+  statusIdleTxRolledBackLikely:
+    "放置されたトランザクションをサーバが切断し (idle-in-transaction タイムアウト)、ロールバックした可能性が高いです。接続はそのまま使えます。トランザクションをやり直してください。",
+  toastIdleTxRolledBack:
+    "{name}: 放置されたトランザクションをサーバが切断し、ロールバックしました。やり直してください。",
+  toastIdleTxRolledBackLikely:
+    "{name}: 放置されたトランザクションをサーバが切断し、ロールバックした可能性が高いです。やり直してください。",
   toastIdleTxDisconnected:
     "{name}: 放置されたトランザクションをサーバが切断し、ロールバックしました。再接続してやり直してください。",
   statusDismiss: "このメッセージを閉じる",

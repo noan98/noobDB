@@ -204,19 +204,19 @@ export function oneLineSql(sql: string, max = 120): string {
  */
 export function isIdleInTxTimeoutError(raw: string | null | undefined): boolean {
   if (!raw) return false;
-  return /idle-in-transaction timeout|idle_in_transaction_session_timeout|\b25P03\b/i.test(raw);
+  return /idle-in-transaction timeout|\b25P03\b/i.test(raw);
 }
 
 /**
- * トランザクションで最後に成功した動きの時刻 (epoch ms)。成功した文が無ければ BEGIN の時刻。
- * 失敗した文は数えない (接続断で失敗した文が「今動いた」ことにして推定を外さないため)。
+ * トランザクションで最後に動きがあった時刻 (epoch ms)。文を実行していなければ BEGIN の時刻。
+ * 失敗した文もサーバのアイドル計時をリセットするので数えるが、末尾の 1 件が失敗なら除く
+ * (接続断で失敗した文が「今動いた」ことになり、推定を外すため)。
  */
 export function txLastActivityAt(meta: TxMeta): number {
-  for (let i = meta.entries.length - 1; i >= 0; i -= 1) {
-    const e = meta.entries[i];
-    if (e.ok) return Math.max(meta.startedAt, e.at);
-  }
-  return meta.startedAt;
+  const entries = meta.entries;
+  const last = entries[entries.length - 1];
+  const prev = last && !last.ok ? entries[entries.length - 2] : last;
+  return prev ? Math.max(meta.startedAt, prev.at) : meta.startedAt;
 }
 
 /** `confirmed` = サーバがそう返した (エラー文)、`likely` = 設定と経過時間からの推定。 */

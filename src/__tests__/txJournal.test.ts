@@ -223,12 +223,33 @@ describe("放置トランザクションの自動切断 (#2464)", () => {
     expect(isIdleInTxTimeoutError(undefined)).toBe(false);
   });
 
-  it("最後の動きは最後に成功した文の時刻、無ければ BEGIN の時刻 (失敗した文は数えない)", () => {
+  it("パラメータ名を含むだけの非接続断エラーは確定扱いにしない", () => {
+    expect(
+      isIdleInTxTimeoutError('unrecognized configuration parameter "idle_in_transaction_session_timeout"'),
+    ).toBe(false);
+    expect(
+      idleTxDisconnectKind({
+        error: 'invalid value for parameter "idle_in_transaction_session_timeout"',
+        inTransaction: true,
+        connectionLost: false,
+        timeoutMin: null,
+        lastActivityAt: null,
+        now: 0,
+      }),
+    ).toBeNull();
+  });
+
+  it("最後の動きは最後の文の時刻 (末尾の失敗 1 件だけ除く)、無ければ BEGIN の時刻", () => {
     expect(txLastActivityAt(newTxMeta(500))).toBe(500);
     const met = recordTxMeta(newTxMeta(500), ok("UPDATE t SET a = 1", 1));
     expect(txLastActivityAt(met)).toBe(1000);
     const failed = recordTxMeta(met, makeTxEntry("SELECT 1", "postgres", { ok: false }, 9_000_000));
     expect(txLastActivityAt(failed)).toBe(1000);
+    // 途中の失敗はサーバのアイドル計時をリセットするので動きとして数える。
+    let onlyFailed = newTxMeta(100);
+    onlyFailed = recordTxMeta(onlyFailed, makeTxEntry("SELECT 1", "postgres", { ok: false }, 5000));
+    onlyFailed = recordTxMeta(onlyFailed, makeTxEntry("SELECT 2", "postgres", { ok: false }, 9000));
+    expect(txLastActivityAt(onlyFailed)).toBe(5000);
   });
 
   const base = { inTransaction: true, connectionLost: true, timeoutMin: 10, lastActivityAt: 0, now: 0 };

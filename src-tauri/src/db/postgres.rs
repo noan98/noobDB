@@ -294,9 +294,19 @@ impl PostgresConn {
             .as_mut()
             .ok_or_else(|| AppError::InvalidInput("no active transaction".into()))?;
         let started = Instant::now();
-        let rows: Vec<PgRow> = sqlx::query(sqlx::AssertSqlSafe(sql))
+        let rows: Vec<PgRow> = match sqlx::query(sqlx::AssertSqlSafe(sql))
             .fetch_all(&mut **conn)
-            .await?;
+            .await
+        {
+            Ok(rows) => rows,
+            Err(e) => {
+                let e = AppError::from(e);
+                if e.is_connection_lost() {
+                    self.drop_dead_tx(&mut guard);
+                }
+                return Err(e);
+            }
+        };
         let columns = columns_of(&rows);
         let rows_out = rows.iter().map(row_to_values).collect();
         Ok(QueryResult {
@@ -333,7 +343,16 @@ impl PostgresConn {
                 SqlBind::Bytes(v) => q.bind(v.clone()),
             };
         }
-        let rows: Vec<PgRow> = q.fetch_all(&mut **conn).await?;
+        let rows: Vec<PgRow> = match q.fetch_all(&mut **conn).await {
+            Ok(rows) => rows,
+            Err(e) => {
+                let e = AppError::from(e);
+                if e.is_connection_lost() {
+                    self.drop_dead_tx(&mut guard);
+                }
+                return Err(e);
+            }
+        };
         let columns = columns_of(&rows);
         let rows_out = rows.iter().map(row_to_values).collect();
         Ok(QueryResult {
