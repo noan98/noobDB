@@ -1101,6 +1101,8 @@ const en = {
     "SQLite has no server, so the number of blocked sessions is not available. Only the elapsed time is shown.",
   txChangesSummary: "Changes ({statements} stmts / {rows} rows)",
   txChangesTitle: "Statements run in this transaction",
+  txJournalOmitted:
+    "The oldest {count} statement(s) are omitted from this list. The totals still include them.",
   txChangesEmpty: "No statements have been run in this transaction yet.",
   txChangesNote:
     "Only statements run from the editor or notebook while the transaction is open are listed. Reads are shown but not counted as changes. Statements undone by ROLLBACK TO SAVEPOINT stay in this list and the totals.",
@@ -10352,6 +10354,7 @@ const ja: Dict = {
     "SQLite はサーバが無いため、ブロック中のセッション数は取得できません (表示は経過時間のみ)。",
   txChangesSummary: "変更 ({statements} 文 / {rows} 行)",
   txChangesTitle: "このトランザクションで実行した文",
+  txJournalOmitted: "古い {count} 文は一覧から省略しています (集計には含まれます)。",
   txChangesEmpty: "このトランザクションではまだ文を実行していません。",
   txChangesNote:
     "トランザクション中にエディタ / ノートブックから実行した文を表示します。読み取りは一覧に出ますが、変更には数えません。ROLLBACK TO SAVEPOINT で取り消した文も一覧と集計に残ります。",

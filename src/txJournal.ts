@@ -21,7 +21,33 @@ export interface TxJournalEntry {
 export interface TxMeta {
   /** BEGIN した時刻 (epoch ms)。 */
   startedAt: number;
+  /** 表示用の一覧。上限 (`TX_JOURNAL_MAX_ENTRIES`) を超えたら古いものから捨てる。 */
   entries: readonly TxJournalEntry[];
+  /** 累計 (捨てた分も含む)。状態表示と COMMIT 確認はこちらを使う。 */
+  totals: TxJournalSummary;
+  /** 上限を超えて一覧から省いた古い文の数。 */
+  omitted: number;
+}
+
+/** BEGIN 直後の空の記録。 */
+export function newTxMeta(startedAt: number): TxMeta {
+  return { startedAt, entries: [], totals: { statements: 0, rows: 0, failed: 0 }, omitted: 0 };
+}
+
+/** 1 文を記録へ足す。一覧は上限で切り詰めるが、累計は捨てずに足し込む。 */
+export function recordTxMeta(meta: TxMeta, entry: TxJournalEntry): TxMeta {
+  const entries = appendTxEntry(meta.entries, entry);
+  const delta = summarizeTxJournal([entry]);
+  return {
+    ...meta,
+    entries,
+    omitted: meta.omitted + (meta.entries.length + 1 - entries.length),
+    totals: {
+      statements: meta.totals.statements + delta.statements,
+      rows: meta.totals.rows + delta.rows,
+      failed: meta.totals.failed + delta.failed,
+    },
+  };
 }
 
 /** 一覧に残す最大件数。超えたら古いものから捨てる (長時間のトランザクションでメモリを増やさない)。 */

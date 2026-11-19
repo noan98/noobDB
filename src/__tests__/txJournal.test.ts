@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   TX_JOURNAL_MAX_ENTRIES,
   appendTxEntry,
+  newTxMeta,
+  recordTxMeta,
   batchResultToTxOutcome,
   createBatchTxRecorder,
   formatTxElapsed,
@@ -181,5 +183,25 @@ describe("batchResultToTxOutcome truncated", () => {
     ).toMatchObject({
       returnedRows: null,
     });
+  });
+});
+
+describe("recordTxMeta (一覧の上限と累計)", () => {
+  it("UPDATE のあと SELECT を 201 文流しても、累計は UPDATE を保つ", () => {
+    let m = newTxMeta(0);
+    m = recordTxMeta(m, ok("UPDATE t SET a = 1", 5));
+    for (let i = 0; i < 201; i += 1) m = recordTxMeta(m, ok("SELECT 1", 1));
+    expect(m.entries).toHaveLength(TX_JOURNAL_MAX_ENTRIES);
+    expect(m.omitted).toBe(2);
+    expect(m.entries.some((e) => e.write)).toBe(false);
+    expect(m.totals).toEqual({ statements: 1, rows: 5, failed: 0 });
+  });
+
+  it("上限未満なら省略なし、失敗も累計に数える", () => {
+    let m = newTxMeta(0);
+    m = recordTxMeta(m, ok("UPDATE t SET a = 1", 2));
+    m = recordTxMeta(m, makeTxEntry("DELETE FROM t", "mysql", { ok: false }, 1));
+    expect(m.omitted).toBe(0);
+    expect(m.totals).toEqual({ statements: 1, rows: 2, failed: 1 });
   });
 });

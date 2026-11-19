@@ -10,7 +10,7 @@ import {
   formatTxElapsed,
   isTxStale,
   oneLineSql,
-  summarizeTxJournal,
+  type TxJournalSummary,
   supportsTxBlockingCount,
   type TxJournalEntry,
   type TxMeta,
@@ -40,7 +40,14 @@ function clock(at: number): string {
 }
 
 /** 記録の一覧。ポップオーバーと COMMIT 確認ダイアログで共有する。新しいものを下に並べる。 */
-export function TxJournalList({ entries }: { entries: readonly TxJournalEntry[] }) {
+export function TxJournalList({
+  entries,
+  omitted = 0,
+}: {
+  entries: readonly TxJournalEntry[];
+  /** 上限を超えて一覧から省いた古い文の数。 */
+  omitted?: number;
+}) {
   const t = useT();
   if (entries.length === 0) {
     return (
@@ -50,36 +57,42 @@ export function TxJournalList({ entries }: { entries: readonly TxJournalEntry[] 
     );
   }
   return (
-    <chakra.ol listStyleType="none" m="0" p="0" display="flex" flexDirection="column" gap="1">
-      {entries.map((e, i) => (
-        <Flex key={i} as="li" align="baseline" gap="2" minW="0" data-testid="tx-journal-entry">
-          <chakra.span textStyle="caption" color="app.textMuted" flexShrink={0}>
-            {clock(e.at)}
-          </chakra.span>
-          <chakra.code flex="1" minW="0" fontFamily="mono" textStyle="caption" truncate>
-            {oneLineSql(e.sql)}
-          </chakra.code>
-          {e.ok ? (
-            <chakra.span textStyle="numeric" color="app.textMuted" flexShrink={0}>
-              {e.write
-                ? t("txEntryAffected", { rows: e.rows ?? 0 })
-                : e.rows === null
-                  ? "—"
-                  : t("txEntryRead", { rows: e.rows })}
+    <>
+      {omitted > 0 && (
+        <chakra.p textStyle="caption" color="app.textMuted" mb="1" data-testid="tx-journal-omitted">
+          {t("txJournalOmitted", { count: omitted })}
+        </chakra.p>
+      )}
+      <chakra.ol listStyleType="none" m="0" p="0" display="flex" flexDirection="column" gap="1">
+        {entries.map((e, i) => (
+          <Flex key={i} as="li" align="baseline" gap="2" minW="0" data-testid="tx-journal-entry">
+            <chakra.span textStyle="caption" color="app.textMuted" flexShrink={0}>
+              {clock(e.at)}
             </chakra.span>
-          ) : (
-            <ToneChip tone="danger">{t("txEntryFailed")}</ToneChip>
-          )}
-        </Flex>
-      ))}
-    </chakra.ol>
+            <chakra.code flex="1" minW="0" fontFamily="mono" textStyle="caption" truncate>
+              {oneLineSql(e.sql)}
+            </chakra.code>
+            {e.ok ? (
+              <chakra.span textStyle="numeric" color="app.textMuted" flexShrink={0}>
+                {e.write
+                  ? t("txEntryAffected", { rows: e.rows ?? 0 })
+                  : e.rows === null
+                    ? "—"
+                    : t("txEntryRead", { rows: e.rows })}
+              </chakra.span>
+            ) : (
+              <ToneChip tone="danger">{t("txEntryFailed")}</ToneChip>
+            )}
+          </Flex>
+        ))}
+      </chakra.ol>
+    </>
   );
 }
 
 /** 「N 文 / 合計 M 行」の要約文。 */
-export function useTxSummaryLabel(entries: readonly TxJournalEntry[]): string {
+export function useTxSummaryLabel(s: TxJournalSummary): string {
   const t = useT();
-  const s = summarizeTxJournal(entries);
   return t("txChangesSummary", { statements: s.statements, rows: s.rows });
 }
 
@@ -185,8 +198,8 @@ export function TransactionStatus({ sessionId, driver, isProduction, meta }: Pro
     setOpen(true);
   };
 
-  const summaryLabel = useTxSummaryLabel(entries);
-  const summary = summarizeTxJournal(entries);
+  const summary = meta?.totals ?? { statements: 0, rows: 0, failed: 0 };
+  const summaryLabel = useTxSummaryLabel(summary);
 
   const badgeTone = stale ? ("danger" as const) : ("warning" as const);
   const badgeHelp = [
@@ -258,6 +271,7 @@ export function TransactionStatus({ sessionId, driver, isProduction, meta }: Pro
           pos={pos}
           entries={entries}
           failed={summary.failed}
+          omitted={meta?.omitted ?? 0}
           anchorRef={buttonRef}
           onClose={closePopover}
         />
@@ -271,12 +285,14 @@ function TxChangesPopover({
   pos,
   entries,
   failed,
+  omitted,
   anchorRef,
   onClose,
 }: {
   pos: { top: number; right: number };
   entries: readonly TxJournalEntry[];
   failed: number;
+  omitted: number;
   anchorRef: RefObject<HTMLButtonElement | null>;
   onClose: () => void;
 }) {
@@ -327,7 +343,7 @@ function TxChangesPopover({
       <chakra.p textStyle="caption" fontWeight={600} color="app.text" mb="2">
         {t("txChangesTitle")}
       </chakra.p>
-      <TxJournalList entries={entries} />
+      <TxJournalList entries={entries} omitted={omitted} />
       {failed > 0 && (
         <chakra.p textStyle="caption" color="app.textMuted" mt="2">
           {t("txChangesFailedNote", { count: failed })}

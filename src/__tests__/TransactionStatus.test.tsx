@@ -12,21 +12,25 @@ vi.mock("../api/tauri", async (importOriginal) => {
 });
 
 import { TransactionStatus } from "../components/TransactionStatus";
-import { makeTxEntry, type TxMeta } from "../txJournal";
+import { makeTxEntry, newTxMeta, recordTxMeta, type TxMeta } from "../txJournal";
 
 const NOW = Date.now();
-const meta = (ageMs: number, driver = "mysql"): TxMeta => ({
-  startedAt: NOW - ageMs,
-  entries: [
+const meta = (ageMs: number, driver = "mysql"): TxMeta => {
+  let m = newTxMeta(NOW - ageMs);
+  m = recordTxMeta(
+    m,
     makeTxEntry(
       "UPDATE t SET a = 1",
       driver,
       { ok: true, returnedRows: 0, affectedRows: 3, elapsedMs: 4 },
       NOW,
     ),
+  );
+  return recordTxMeta(
+    m,
     makeTxEntry("SELECT * FROM t", driver, { ok: true, returnedRows: 9, affectedRows: 0, elapsedMs: 4 }, NOW),
-  ],
-});
+  );
+};
 
 describe("TransactionStatus (#2447)", () => {
   beforeEach(() => {
@@ -59,6 +63,26 @@ describe("TransactionStatus (#2447)", () => {
     fireEvent.click(screen.getByTestId("tx-changes-button"));
     expect(screen.getByTestId("tx-changes-popover")).toBeInTheDocument();
     expect(screen.getAllByTestId("tx-journal-entry")).toHaveLength(2);
+  });
+
+  it("一覧が上限を超えても、累計と省略の表示は古い UPDATE を落とさない", () => {
+    let m = meta(1000);
+    for (let i = 0; i < 201; i += 1) {
+      m = recordTxMeta(
+        m,
+        makeTxEntry("SELECT 1", "mysql", { ok: true, returnedRows: 1, affectedRows: 0, elapsedMs: 1 }, NOW),
+      );
+    }
+    expect(m.entries.length).toBeLessThan(m.entries.length + m.omitted);
+    expect(m.omitted).toBeGreaterThan(0);
+    renderWithProviders(<TransactionStatus sessionId="s1" driver="mysql" isProduction={false} meta={m} />);
+    expect(screen.getByTestId("tx-changes-button").textContent).toBe(
+      t("txChangesSummary", { statements: 1, rows: 3 }),
+    );
+    fireEvent.click(screen.getByTestId("tx-changes-button"));
+    expect(screen.getByTestId("tx-journal-omitted").textContent).toBe(
+      t("txJournalOmitted", { count: m.omitted }),
+    );
   });
 
   it("MySQL / PostgreSQL ではブロック数を取得して表示する", async () => {

@@ -299,11 +299,11 @@ import { ContextMenu, type ContextMenuEntry } from "./components/ContextMenu";
 import { SavepointControl } from "./components/SavepointControl";
 import { TransactionStatus, TxJournalList, forgetTxNotifications } from "./components/TransactionStatus";
 import {
-  appendTxEntry,
+  newTxMeta,
+  recordTxMeta,
   createBatchTxRecorder,
   makeTxEntry,
   shouldReviewBeforeCommit,
-  summarizeTxJournal,
   type TxMeta,
 } from "./txJournal";
 import {
@@ -2652,7 +2652,7 @@ export default function App() {
       const entry = makeTxEntry(sql, driver, outcome, Date.now());
       txBySessionRef.current.set(sid, {
         ...saved,
-        meta: { ...saved.meta, entries: appendTxEntry(saved.meta.entries, entry) },
+        meta: recordTxMeta(saved.meta, entry),
       });
       setTxTick((n) => n + 1);
     },
@@ -2698,7 +2698,7 @@ export default function App() {
       txBySessionRef.current.set(owner, {
         savepoints,
         counter: savepointCounterRef.current,
-        meta: prev?.meta ?? { startedAt: Date.now(), entries: [] },
+        meta: prev?.meta ?? newTxMeta(Date.now()),
       });
     } else {
       txBySessionRef.current.delete(owner);
@@ -7131,7 +7131,7 @@ export default function App() {
         txBySessionRef.current.set(sessionId, {
           savepoints: [],
           counter: 0,
-          meta: { startedAt: Date.now(), entries: [] },
+          meta: newTxMeta(Date.now()),
         });
         setTxTick((n) => n + 1);
         toast.info(translate("txBegun"));
@@ -7143,7 +7143,7 @@ export default function App() {
       txBySessionRef.current.set(sessionId, {
         savepoints: [],
         counter: 0,
-        meta: { startedAt: Date.now(), entries: [] },
+        meta: newTxMeta(Date.now()),
       });
       setTxActive(true);
       toast.info(translate("txBegun"));
@@ -7227,8 +7227,10 @@ export default function App() {
       // 本番 + confirm_writes の COMMIT は、このトランザクションで実行した文を見せてから確定する (#2447)。
       // UI レベルの誤操作防止のみ。
       if (commit && selectedProfile && shouldReviewBeforeCommit(selectedProfile)) {
-        const entries = txBySessionRef.current.get(sessionId)?.meta.entries ?? [];
-        const sum = summarizeTxJournal(entries);
+        const txMeta = txBySessionRef.current.get(sessionId)?.meta;
+        const entries = txMeta?.entries ?? [];
+        // 一覧は上限で切り詰められるので、件数・行数は累計を使う。
+        const sum = txMeta?.totals ?? { statements: 0, rows: 0, failed: 0 };
         const ok = await confirm({
           title: translate("txCommitConfirmTitle"),
           message: (
@@ -7237,7 +7239,7 @@ export default function App() {
                 {translate("txCommitConfirmBody", { statements: sum.statements, rows: sum.rows })}
               </chakra.p>
               <Box maxH="40vh" overflowY="auto" data-testid="tx-commit-journal">
-                <TxJournalList entries={entries} />
+                <TxJournalList entries={entries} omitted={txMeta?.omitted ?? 0} />
               </Box>
             </Box>
           ),
