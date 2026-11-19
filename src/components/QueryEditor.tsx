@@ -146,7 +146,9 @@ import { Icon, ICON_SIZES, ICON_STROKE } from "./Icon";
 import { Spinner } from "./Spinner";
 import { Switch } from "./Switch";
 import { Button } from "./ui";
-import { Tooltip } from "./Tooltip";
+import { Tooltip, TooltipBubble } from "./Tooltip";
+import { type RunTip, refreshRunAffordances, runAffordances } from "./runAffordances";
+import type { CteRunRecord } from "../cteRunBadge";
 import { MultiStateBadge, type BadgeState } from "./MultiStateBadge";
 import { initialHistoryNav, navigateNewer, navigateOlder, type HistoryNavState } from "./queryHistoryNav";
 
@@ -366,6 +368,8 @@ export interface ActiveTable {
   name: string;
 }
 
+const NO_CTE_RUNS: readonly CteRunRecord[] = [];
+
 interface Props {
   onRun: (sql: string) => void;
   /**
@@ -386,6 +390,8 @@ interface Props {
   cteRunUnsupported?: boolean;
   /** 再帰 CTE の末尾に付ける LIMIT の行数 (自動 LIMIT の設定値)。 */
   cteRunLimit?: number | null;
+  /** 開いているタブにある CTE 単体実行の直近の結果。CTE 名の横の行数バッジに使う (#2450)。 */
+  cteRuns?: readonly CteRunRecord[];
   /** `runNewTab` の解決済みコンボ (メニュー項目のキー表記用)。 */
   runNewTabCombo?: string;
   /** True while this tab's Run is streaming — flips the Run badge to its `running` state. */
@@ -851,6 +857,7 @@ export const QueryEditor = memo(
       onCteRunBlocked,
       cteRunUnsupported,
       cteRunLimit,
+      cteRuns,
       runNewTabCombo,
       running,
       previewRunning,
@@ -954,6 +961,28 @@ export const QueryEditor = memo(
           gutter: false,
           onEdit: "drop",
           renderTooltip: (m) => renderRuntimeErrorTip(m.data?.error ?? "", aiTipRef.current),
+        }),
+      [],
+    );
+
+    // ガターの実行ボタン・CTE 名の横の「CTE まで ▶」と行数バッジ (#2450)。実行は下の既存の関数へ委譲する。
+    const [runTip, setRunTip] = useState<RunTip | null>(null);
+    const runAffordRef = useRef<{
+      runStatement: (view: EditorView) => void;
+      runCte: (view: EditorView, offset: number) => void;
+    } | null>(null);
+    const runAffordExt = useMemo(
+      () =>
+        runAffordances({
+          getDriver: () => driverRef.current,
+          isBandEnabled: () => activeStatementHighlightRef.current,
+          isCteEnabled: () => !!onRunCteRef.current,
+          isCteUnsupported: () => !!cteRunUnsupportedRef.current,
+          getCteLimit: () => cteRunLimitRef.current,
+          getCteRuns: () => cteRunsRef.current,
+          runStatement: (v) => runAffordRef.current?.runStatement(v),
+          runCte: (v, at) => runAffordRef.current?.runCte(v, at),
+          onTip: setRunTip,
         }),
       [],
     );
@@ -1341,6 +1370,8 @@ export const QueryEditor = memo(
     cteRunUnsupportedRef.current = cteRunUnsupported;
     const cteRunLimitRef = useRef(cteRunLimit);
     cteRunLimitRef.current = cteRunLimit;
+    const cteRunsRef = useRef(cteRuns ?? NO_CTE_RUNS);
+    cteRunsRef.current = cteRuns ?? NO_CTE_RUNS;
     const onPreflightImpactRef = useRef(onPreflightImpact);
     onPreflightImpactRef.current = onPreflightImpact;
     const onAiSqlActionRef = useRef(onAiSqlAction);
@@ -1452,6 +1483,11 @@ export const QueryEditor = memo(
       resetHistoryNav();
       run({ sql: plan.sql, title: plan.title });
       return true;
+    };
+
+    runAffordRef.current = {
+      runStatement: (v) => void runStatementUnderCursor(v),
+      runCte: (v, at) => void runCteUnderCursor(v, at),
     };
 
     // 再割り当て可能なエディタアクション (#557) のキーマップを、解決済みコンボから
@@ -1598,6 +1634,7 @@ export const QueryEditor = memo(
             runtimeErrorLayer.extension,
             batchLayer.extension,
             batchErrorLayer.extension,
+            runAffordExt,
             scrollMarkers({
               layers: scrollMarkerLayers,
               isEnabled: () => scrollMarkersEnabledRef.current,
@@ -2104,6 +2141,12 @@ export const QueryEditor = memo(
       if (!view) return;
       view.dispatch({ effects: refreshActiveStatement.of(null) });
     }, [activeStatementEnabled, driver]);
+
+    // CTE 単体実行の結果 (行数バッジ) や WITH 対応可否が変わったら、CTE 名の横のウィジェットを作り直す (#2450)。
+    // biome-ignore lint/correctness/useExhaustiveDependencies: 値は ref 越しに読まれるので、変化を契機に再計算させるためだけに依存へ載せる
+    useEffect(() => {
+      viewRef.current?.dispatch({ effects: refreshRunAffordances.of(null) });
+    }, [cteRuns, cteRunUnsupported, !!onRunCte]);
 
     // 設定のオン・オフで、スクロールバー横の帯 (#2382) を計算し直す (オフなら計算も止まる)。
     const scrollMarkersEnabled = settings.editorScrollMarkers;
@@ -2819,6 +2862,7 @@ export const QueryEditor = memo(
           bg="app.surface"
           onContextMenu={openEditorMenu}
         />
+        {runTip && <TooltipBubble label={runTip.label} anchor={runTip.rect} />}
         <ScrollMarkerStrip
           host={scrollMarkerHost}
           snapshot={scrollMarkerSnapshot}

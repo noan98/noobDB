@@ -4007,3 +4007,75 @@ td.is-find-current::after {
   :root:not([data-motion="full"]) .th-dist-bin-fill,
   :root:not([data-motion="full"]) .th-dist-seg { transition: none; }
 }
+
+/* ガターの実行ボタンと CTE 名の横の実行ウィジェット (#2450)。ガターの ▶ は帯 (#2354) の文の先頭行に出し、
+   ホバー / フォーカスで不透明度を上げる。CTE バッジは実行後の行数で、編集後は薄くする (stale)。
+   動きは reduced-motion (OS 設定 / モーション量コントロール #787) で止め、即時に切り替える。 */
+.cm-editor .cm-run-gutter .cm-gutterElement { padding: 0 var(--space-1); }
+.cm-editor .cm-run-gutter-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  opacity: 0.55;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+.cm-editor .cm-run-gutter-btn:hover,
+.cm-editor .cm-run-gutter-btn:focus-visible { opacity: 1; }
+.cm-editor .cm-run-gutter-glyph {
+  display: inline-block;
+  width: 1.1em;
+  text-align: center;
+  font-size: var(--text-2xs);
+  line-height: 1;
+}
+.cm-editor .cm-run-gutter-glyph::before { content: "\25B6\FE0E"; }
+.cm-editor .cm-cte-run {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-left: var(--space-2);
+  vertical-align: baseline;
+  font-family: var(--font-sans, inherit);
+  font-size: var(--text-3xs);
+  user-select: none;
+}
+.cm-editor .cm-cte-run-btn {
+  padding: 0 var(--space-1-5);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease);
+}
+.cm-editor .cm-cte-run-btn::after { content: " \25B6\FE0E"; }
+.cm-editor .cm-cte-run-btn:hover,
+.cm-editor .cm-cte-run-btn:focus-visible { opacity: 1; background: color-mix(in srgb, var(--accent) 20%, transparent); }
+.cm-editor .cm-cte-run-btn-disabled { color: var(--text-muted); border-color: var(--border); background: transparent; cursor: not-allowed; }
+.cm-editor .cm-cte-run-btn-disabled:hover { opacity: 0.7; background: transparent; }
+.cm-editor .cm-cte-badge {
+  padding: 0 var(--space-1-5);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--text-muted);
+  white-space: nowrap;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+.cm-editor .cm-cte-badge-stale { opacity: 0.45; }
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion="full"]) .cm-editor .cm-run-gutter-btn,
+  :root:not([data-motion="full"]) .cm-editor .cm-cte-run-btn,
+  :root:not([data-motion="full"]) .cm-editor .cm-cte-badge { transition: none; }
+}
+:root[data-motion="reduced"] .cm-editor .cm-run-gutter-btn,
+:root[data-motion="reduced"] .cm-editor .cm-cte-run-btn,
+:root[data-motion="reduced"] .cm-editor .cm-cte-badge { transition: none; }
