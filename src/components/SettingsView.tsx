@@ -138,6 +138,7 @@ import {
   setResultGridPageSize,
   setRichCellRendering,
   setColumnDistribution,
+  setTreeGuides,
   setColumnNullBars,
   setColumnMaskEnabled,
   setColumnMaskPatterns,
@@ -2092,6 +2093,15 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
                     checked={settings.columnDistribution}
                     onChange={setColumnDistribution}
                   />
+                </SettingsToggleRow>
+                <SettingsToggleRow>
+                  <SettingsLabelWithInfo>
+                    <SettingsToggleLabel htmlFor="settings-tree-guides">
+                      {t("settingsTreeGuides")}
+                    </SettingsToggleLabel>
+                    <SettingsInfo>{t("settingsTreeGuidesHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Switch id="settings-tree-guides" checked={settings.treeGuides} onChange={setTreeGuides} />
                 </SettingsToggleRow>
               </SettingsSection>
 

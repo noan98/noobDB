@@ -1,5 +1,5 @@
 import { chakra } from "@chakra-ui/react";
-import type { ComponentProps, ReactNode } from "react";
+import type { ComponentProps, CSSProperties, ReactNode } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { transitions, variants } from "../motion";
 import { ICON_SIZES, Icon } from "./Icon";
@@ -30,6 +30,49 @@ const TREE_FOCUS_RING = "var(--focus-ring)";
  * グループ見出し行で共有する。
  */
 export const TREE_GROUP_HEADING_PY = "calc(var(--density-tree-py) * 1.5)";
+
+/**
+ * インデントのガイド線 (#2452) の共通部品。線そのものは App.css の `.tree-guide-*` が描く
+ * (疑似要素と既存の入れ子の枠線だけで、DOM は増えない)。ここでは行へ渡す属性と、平らなリストで
+ * 「選択行の祖先の枝」にあたる段数を求める純関数を提供する。
+ */
+
+/**
+ * 平らな (深さ付きの) 行リストで、各行の「アクセントにする線の本数」を求める。
+ * 段 k の線は「深さ k の祖先の子孫」の行に引かれる。選択行 `selected` の祖先は深さ 0..sd-1 なので、
+ * 行 r と選択行の間にある行の最小の深さ (= 2 行が共有する祖先の数) が、先頭から数えて
+ * アクセントにする本数になる。選択行自身は祖先すべて (sd 本)。`selected` が範囲外なら全行 0。
+ * 深さが負の値の行 (見出しなど) は枝の切れ目として 0 に丸める。
+ */
+export function guideAccentLevels(depths: readonly number[], selected: number): number[] {
+  const out = new Array<number>(depths.length).fill(0);
+  if (selected < 0 || selected >= depths.length) return out;
+  const sd = Math.max(0, depths[selected]);
+  out[selected] = sd;
+  let min = sd;
+  for (let r = selected - 1; r >= 0; r--) {
+    min = Math.min(min, depths[r]);
+    out[r] = Math.max(0, min);
+  }
+  min = sd;
+  for (let r = selected + 1; r < depths.length; r++) {
+    min = Math.min(min, depths[r]);
+    out[r] = Math.max(0, min);
+  }
+  return out;
+}
+
+/**
+ * 平らなリストの行 (`TreeRow`) にガイド線を描かせる属性。`level` 本の線を引き、先頭 `accent` 本を
+ * アクセント色にする。`className` は `TreeRow` へそのまま渡す。
+ */
+export function treeGuideRowProps(level: number, accent: number) {
+  return {
+    className: "tree-guide-row",
+    "data-guide-accent": accent > 0 ? "" : undefined,
+    style: { "--tree-level": level, "--tree-accent": Math.min(accent, level) } as CSSProperties,
+  };
+}
 
 export const TreePane = chakra("div", {
   base: { display: "flex", flexDirection: "column", overflow: "hidden", flex: 1 },

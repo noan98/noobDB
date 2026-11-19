@@ -143,6 +143,7 @@ import {
   TreeChevronButton,
   TreeMoreButton,
   TreeCollapse,
+  guideAccentLevels,
   TreeIcon,
   TreeLabel,
   TreeNode,
@@ -279,8 +280,9 @@ const TreeChildren = chakra("div", {
     flexDirection: "column",
     pl: "3",
     ml: "3.5",
-    borderLeft: "1px dashed",
-    borderColor: "app.border",
+    // ガイド線 (#2452): 色は App.css の `.tree-guide-branch` (`--tree-guide*`) が決める。
+    // 選択行の祖先の枝だけ `data-guide-accent` でアクセントになる。
+    borderLeft: "1px solid",
   },
 });
 
@@ -1776,10 +1778,16 @@ const ENTER_CLASS_LIFETIME_MS = 400;
 const NO_KEYS: ReadonlySet<string> = new Set();
 const EMPTY_REFS: readonly TableRef[] = [];
 
-/** 破線インデントを `depth` 段ぶん重ねる (行ごとに入れ子の `TreeChildren` を再現する)。 */
-function Indent({ depth, children }: { depth: number; children: React.ReactNode }) {
+/** ガイド線付きのインデントを `depth` 段ぶん重ねる (行ごとに入れ子の `TreeChildren` を再現する)。
+ *  外側から数えて先頭 `accent` 段が、選択行の祖先の枝としてアクセント色になる (#2452)。 */
+function Indent({ depth, accent, children }: { depth: number; accent: number; children: React.ReactNode }) {
   let node = children;
-  for (let i = 0; i < depth; i++) node = <TreeChildren>{node}</TreeChildren>;
+  for (let i = depth - 1; i >= 0; i--)
+    node = (
+      <TreeChildren className="tree-guide-branch" data-guide-accent={i < accent ? "" : undefined}>
+        {node}
+      </TreeChildren>
+    );
   return <>{node}</>;
 }
 
@@ -1834,6 +1842,8 @@ const SchemaRowList = memo(function SchemaRowList({
   // Tab で止まる行 (roving tabindex) も窓の外へ出さない。フォーカス移動のたびに購読して
   // 更新するが、再レンダーされるのはこのリストの枠だけ (行は `memo`)。
   const tabStopKey = useSyncExternalStore(store.subscribe, store.get);
+  // リスト内にフォーカスがあるか (ガイド線の強調の起点を切り替える, #2452)。
+  const [focusWithin, setFocusWithin] = useState(false);
 
   const keyIndex = useMemo(() => {
     const m = new Map<string, number>();
@@ -2026,6 +2036,22 @@ const SchemaRowList = memo(function SchemaRowList({
     return () => clearTimeout(timer);
   }, [rows]);
 
+  // 選択 (Tab で止まる / フォーカス中) の行の祖先の枝だけガイド線をアクセントにする (#2452)。
+  const guideAccent = useMemo(() => {
+    // フォーカス中は Tab で止まる行、フォーカスが無いときは現在地 (結果パネルに開いているテーブル) を起点にする。
+    const first = focusWithin ? tabStopKey : activeKey;
+    const second = focusWithin ? activeKey : tabStopKey;
+    const find = (k: string | null | undefined) => (k ? keyIndex.get(k) : undefined);
+    const i = find(first) ?? find(second);
+    return {
+      levels: guideAccentLevels(
+        rows.map((r) => r.depth),
+        i ?? -1,
+      ),
+      hasSelection: i !== undefined,
+    };
+  }, [rows, keyIndex, tabStopKey, activeKey, focusWithin]);
+
   const renderRow = (row: ExplorerRow, index: number, measure?: (el: Element | null) => void) => (
     <div
       key={row.key}
@@ -2034,7 +2060,7 @@ const SchemaRowList = memo(function SchemaRowList({
       data-kind={row.kind}
       className={enterKeys.current.has(row.key) ? "tree-row-enter" : undefined}
     >
-      <Indent depth={row.depth}>
+      <Indent depth={row.depth} accent={guideAccent.levels[index] ?? 0}>
         <SchemaRowContent
           row={row}
           level={level}
@@ -2071,7 +2097,16 @@ const SchemaRowList = memo(function SchemaRowList({
   // `overflow-anchor: none`: ブラウザのスクロールアンカリングが、窓の移動で変わるスペーサーの
   // 高さに反応してスクロール位置をずらさないようにする。
   return (
-    <div ref={listRef} style={{ overflowAnchor: "none" }}>
+    <div
+      ref={listRef}
+      style={{ overflowAnchor: "none" }}
+      // 選択行がこのリストにあるとき、外側の接続の枝もアクセントにする (App.css の `.tree-guide-branch:has(...)`)。
+      data-guide-selected={guideAccent.hasSelection ? "" : undefined}
+      onFocus={() => setFocusWithin(true)}
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocusWithin(false);
+      }}
+    >
       {content}
     </div>
   );
@@ -4813,7 +4848,7 @@ export const ConnectionList = memo(
           </TabStop>
 
           <TreeCollapse open={!!(isOpen && isActive && sessionId)}>
-            <TreeChildren>
+            <TreeChildren className="tree-guide-branch">
               {isActive && sessionId && (
                 <SchemaRetryContext.Provider value={retrySchemaLoad}>
                   <SchemaRowList

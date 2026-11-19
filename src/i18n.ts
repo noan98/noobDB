@@ -7898,6 +7898,9 @@ const en = {
   settingsColumnNullBars: "Column NULL rate mini bars",
   settingsColumnNullBarsHelp:
     "Show a thin always-on bar under each result grid column header indicating what share of the loaded rows is NULL. Display-only, computed from the rows already fetched (no extra query). Turn off for the most compact header row.",
+  settingsTreeGuides: "Tree indent guide lines",
+  settingsTreeGuidesHelp:
+    "Draw thin vertical guide lines for each indent level in the schema tree, the JSON tree and the hierarchy view. The branches above the selected row are highlighted in the accent color. Display-only; turn off for a flatter look.",
   settingsColumnDistribution: "Column header mini distributions",
   settingsColumnDistributionHelp:
     "Show a small distribution under each result grid column header: a histogram for numbers and dates, the top 3 values for text and booleans, and a unique badge when every row differs. Display-only, computed from the rows already fetched (no extra query) in idle time. Clicking a numeric bin filters the grid to that range. Turn off for the most compact header row.",
@@ -17061,6 +17064,9 @@ const ja: Dict = {
   settingsColumnNullBars: "列ヘッダの NULL 率ミニバー",
   settingsColumnNullBarsHelp:
     "結果グリッドの各列ヘッダ下端に、取得済み行のうち NULL が占める割合を示す細いバーを常時表示します。表示専用で、取得済みの行だけから計算します (追加のクエリは発行しません)。オフにするとヘッダ行を最もコンパクトにできます。",
+  settingsTreeGuides: "ツリーのインデントガイド線",
+  settingsTreeGuidesHelp:
+    "スキーマツリー・JSON ツリー・階層ビューで、字下げの段ごとに細い縦のガイド線を引きます。選択中の行へ至る枝だけアクセント色で強調します。表示専用です。オフにすると平らな見た目に戻ります。",
   settingsColumnDistribution: "列ヘッダのミニ分布",
   settingsColumnDistributionHelp:
     "結果グリッドの各列ヘッダの下に小さな分布を表示します: 数値・日付はヒストグラム、文字列・真偽値は上位 3 値、全行が一意の列には「unique」バッジ。表示専用で、取得済みの行だけからアイドル時間に計算します (追加のクエリは発行しません)。数値のビンをクリックするとその範囲に絞り込みます。オフにするとヘッダ行を最もコンパクトにできます。",
