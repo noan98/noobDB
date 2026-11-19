@@ -364,6 +364,7 @@ export function finishDistribution(acc: DistributionAccumulator): ColumnDistribu
 /**
  * 列 `colIdx` の分布を `rows` から一括で計算する (テスト・小さい結果用)。
  * 大きい結果は `advanceDistribution` で分割して進める。
+ * @public 本番の createDistributionAccumulator / advanceDistribution / finishDistribution を一括で回す薄いラッパー (テスト用)
  */
 export function computeColumnDistribution(
   rows: readonly (readonly CellValue[])[],
@@ -377,7 +378,7 @@ export function computeColumnDistribution(
   return finishDistribution(acc);
 }
 
-/** 非 NULL のうち、分布に載った (解釈できた) 件数。 */
+/** 非 NULL のうち、分布に載った (解釈できた) 件数。 @public 純ロジックを単体テストするために公開。本番の呼び出し元は無い (#2445 のトリアージで削除せず許可。不要と確認できれば削除する) */
 export function binnedTotal(d: ColumnDistribution): number {
   return d.bins.reduce((s, b) => s + b.count, 0);
 }

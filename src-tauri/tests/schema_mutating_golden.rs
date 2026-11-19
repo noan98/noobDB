@@ -1,12 +1,10 @@
 //! スキーマ変更検出のフロント/バック整合性ゴールデンテスト — バック側 (#1221)。
 //!
-//! フロント (`src/dangerousSql.ts` の `isSchemaMutatingSql`) とバック
-//! (`src-tauri/src/db/mod.rs` の `sql_may_change_schema`、Schema Cache の invalidate
-//! 判定) は独立に二重実装されている。両者が**同一の共有ベクタ**
-//! (`src/__tests__/fixtures/schemaMutatingVectors.json`) を読み、各 SQL の判定が
-//! 期待値と一致することを検証することで、片方だけ変えてズレた場合に即座に検出する。
-//! フロント側は同じ JSON を import して `src/__tests__/schemaMutatingGolden.test.ts`
-//! で対になる検証を行う。
+//! バックの `sql_may_change_schema` (`src-tauri/src/db/mod.rs`、Schema Cache の invalidate
+//! 判定) を共有ベクタ (`src/__tests__/fixtures/schemaMutatingVectors.json`) で固定する。
+//! フロントは `schemaMayChange` をバックから受け取るだけで判定を持たない (#2445 で
+//! 本番から参照されない TS 側の二重実装 `isSchemaMutatingSql` を削除した)。したがって
+//! このテストが判定の唯一の守りになる。
 //!
 //! ベクタは**ドライバ次元**を持つ (#852): `schemaMutates` はバックスラッシュを文字列
 //! エスケープと見なさない標準解釈 (PostgreSQL / SQLite) での期待値で、MySQL だけ判定が
@@ -43,7 +41,7 @@ fn load() -> Vectors {
 fn schema_mutating_golden_matches_shared_vectors() {
     let vectors = load();
 
-    // 取りこぼし防止: フロント側 (schemaMutatingGolden.test.ts) と同じ下限を要求する。
+    // 取りこぼし防止: ベクタが痩せないよう下限を要求する。
     assert!(
         vectors.cases.len() >= 40,
         "expected at least 40 shared vectors, got {}",

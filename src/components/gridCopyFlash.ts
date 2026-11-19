@@ -26,7 +26,7 @@ export function buildCopyFlashRange(
   return { rowIndices: new Set(rowIndices), colIndices: new Set(colIndices) };
 }
 
-/** 指定したセルがコピー対象範囲に含まれるか。 */
+/** 指定したセルがコピー対象範囲に含まれるか。 @public 純ロジックを単体テストするために公開。本番の呼び出し元は無い (#2445 のトリアージで削除せず許可。不要と確認できれば削除する) */
 export function isCellInCopyFlashRange(
   range: CopyFlashRange | null | undefined,
   rowIdx: number,

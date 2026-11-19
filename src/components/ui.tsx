@@ -7,7 +7,6 @@ import {
   headingRecipe,
   inputRecipe,
   radioRecipe,
-  sectionLabelRecipe,
   selectableCardRecipe,
   textareaRecipe,
 } from "../theme";
@@ -95,7 +94,7 @@ export { Switch } from "./Switch";
  * ここ経由で役割を指定すること。
  *
  * `Dialog.Title` のように DOM タグを差し替えられないコンポーネントに同じ役割を
- * 適用したい場合は、`Heading`/`SectionLabel` を経由せず `textStyle="heading"` /
+ * 適用したい場合は、`Heading` を経由せず `textStyle="heading"` /
  * `textStyle="overline"` を対象要素へ直接渡せばよい (textStyles はどの Chakra
  * 要素からも参照できる)。
  */
@@ -104,11 +103,6 @@ export { Switch } from "./Switch";
  *  ウェルカム画面などの最大見出しは `role="display"`、fieldset の legend など
  *  サブ見出しは `role="subheading"` を渡す。 */
 export const Heading = chakra("h2", headingRecipe);
-
-/** 上付きの小見出し (overline / eyebrow)。全 CAPS + 広めの字間 + muted color を
- *  単一ソース化する。ツリーのグループヘッダーやグリッドのカラムヘッダーなど、
- *  「本文より小さく、地味だが構造を示す」ラベルに使う。 */
-export const SectionLabel = chakra("span", sectionLabelRecipe);
 
 /**
  * クリック可能なサーフェスカード (#1161)。「面全体がボタンになっている

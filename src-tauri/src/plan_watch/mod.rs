@@ -8,8 +8,9 @@
 //! 「何件変化したか」だけを返す。
 //!
 //! このモジュールの純関数部分 (パース・正規化・フィンガープリント・比較) は
-//! `src/components/explainPlan.ts` / `planDiff.ts` の移植で、Rust とフロントの二重実装は
-//! 共有ゴールデンベクタ (`src/__tests__/fixtures/plan_watch.json`) で固定している。
+//! `src/components/explainPlan.ts` / `planDiff.ts` の移植で、パース・正規化・比較は Rust と
+//! フロントの二重実装を共有ゴールデンベクタ (`src/__tests__/fixtures/planWatchVectors.json`) で
+//! 固定している。フィンガープリントは Rust だけが持つ (フロント側は #2445 で削除)。
 //! 計画ウォッチパネルの 2 面比較・変化点リストは引き続きフロントの `planDiff.ts` が
 //! 保存済みペイロードから描画する (表示専用)。
 //!
@@ -596,7 +597,7 @@ pub fn rows_magnitude(rows: Option<f64>) -> Option<i64> {
 }
 
 /// 計画の同一判定に使うフィンガープリント (構造・アクセス方式・インデックス・結合方式
-/// と推定行数の**桁**のみ)。`planDiff.planFingerprint` と同じ JSON 文字列。
+/// と推定行数の**桁**のみ)。JSON 文字列で、フロントには対応する実装が無い (#2445 で削除)。
 pub fn plan_fingerprint(ops: &[PlanOp]) -> String {
     let rows: Vec<_> = ops
         .iter()

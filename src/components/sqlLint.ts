@@ -716,6 +716,7 @@ export function parseSqlTree(doc: string, dialect: SQLDialect): Tree {
 
 /**
  * `doc` を `dialect` でパースして診断を返す便宜関数 (テスト用 / フォールバック)。
+ * @public 本番の parseSqlTree + diagnosticsFromTree の薄いラッパー (テスト用)
  */
 export function computeSqlDiagnostics(
   doc: string,

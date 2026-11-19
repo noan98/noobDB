@@ -1889,7 +1889,7 @@ export function writeStoredColumnState(storageKey: string | undefined, state: Pe
  * structured value is stored as the TanStack column filter value and read back
  * by `columnFilter` (the `filterFn`) and the header popup.
  */
-export type { ColumnFilter, FilterNullMode, FilterOp, NumberFilterOp, TextFilterOp };
+export type { ColumnFilter, FilterNullMode, FilterOp };
 export { isColumnFilterActive };
 const TEXT_FILTER_OPS: { op: TextFilterOp; key: I18nKey }[] = [
   { op: "contains", key: "gridFilterOpContains" },

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BackendError, errorKindOf, normalizeBackendError } from "../api/tauri";
+import { BackendError, errorKindOf, normalizeBackendError } from "../api/invoke";
 
 // invoke ラッパーが reject 値を正規化する BackendError (#683) の単体テスト。
 // バックの構造化エラー ({kind, message})・旧形式の素文字列・その他の値をすべて

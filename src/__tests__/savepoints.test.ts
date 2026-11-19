@@ -3,7 +3,6 @@ import {
   isMissingSavepointError,
   afterRelease,
   afterRollbackTo,
-  isValidSavepointName,
   pushSavepoint,
   savepointName,
 } from "../savepoints";
@@ -11,14 +10,8 @@ import {
 describe("savepoints", () => {
   it("generates valid names", () => {
     expect(savepointName(3)).toBe("sp_3");
-    expect(isValidSavepointName(savepointName(12))).toBe(true);
-  });
-
-  it("rejects unsafe names", () => {
-    for (const n of ["", "1a", "a b", 'a"b', "a`b", "a;b", "日本", "a".repeat(64)]) {
-      expect(isValidSavepointName(n)).toBe(false);
-    }
-    expect(isValidSavepointName("a".repeat(63))).toBe(true);
+    // バックエンドの規則 (英数字と `_`、先頭は英字か `_`、63 文字まで) を満たす。
+    expect(savepointName(12)).toMatch(/^[A-Za-z_][A-Za-z0-9_]{0,62}$/);
   });
 
   it("push appends and moves duplicates to the end", () => {

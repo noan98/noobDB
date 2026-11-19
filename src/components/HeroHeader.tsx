@@ -15,7 +15,7 @@ interface Props {
 /** セッション内でヒーロー面のシグネチャ・アニメを再生済みか (Welcome → Profile の遷移でも 2 回目は静止)。 */
 let heroAnimationPlayed = false;
 
-/** テスト用: 再生済みフラグを戻す。 */
+/** テスト用: 再生済みフラグを戻す。 @public テスト間でモジュール状態を初期化するテスト専用フック */
 export function resetHeroAnimationForTest() {
   heroAnimationPlayed = false;
 }

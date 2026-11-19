@@ -379,8 +379,6 @@ const EXEMPT: Record<string, string> = {
     "Rust は is_valid_attach_alias 内のリテラル (64) で定数が無い。境界は sqliteAttachVectors.json で固定。上限数 MAX_ATTACHED は対応表で固定",
   "dangerousSql.ts:ALTER_DROP_NON_COLUMN":
     "集合の一致は共有ゴールデンベクタ dangerousSqlVectors.json (Rust は db/script_analysis.rs の alter_drop_kind) で固定する",
-  "dangerousSql.ts:SCHEMA_MUTATING_KEYWORDS":
-    "集合の一致は共有ゴールデンベクタ (schemaMutatingVectors.json) で固定する",
   "dangerousSql.ts:LOCKING_CLAUSES":
     "ロック句の語彙は共有ゴールデンベクタ autoLimitVectors.json (Rust は db/mod.rs の LOCKING_CLAUSES / has_locking_clause) で固定する",
   "dangerousSql.ts:LOCKING_TABLE_HINTS":

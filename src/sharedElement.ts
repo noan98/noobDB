@@ -110,7 +110,7 @@ export function useTabOpenFlightFor(database: string, table: string): string | n
   );
 }
 
-/** テスト用: 状態を初期化する。 */
+/** テスト用: 状態を初期化する。 @public テスト間でモジュール状態を初期化するテスト専用フック */
 export function resetTabOpenFlightForTest(): void {
   if (timer) clearTimeout(timer);
   timer = null;
