@@ -9,8 +9,9 @@
  * - 短いタイムアウト ({@link FK_PEEK_TIMEOUT_SECS}) を掛ける。
  * - 呼び出し側の `signal` が abort されたら (カードを閉じた・別セルへ移った) `cancel_stream` で
  *   サーバ側の文を止める。
- * - 同時に走るのは常に 1 本。新しい取得が来たら前の取得を中止し、その中止が済んでから走り出す。
- * - `autoRefresh: true` で、バックエンドが読み取り専用ガードを掛け、履歴にも残さない。
+ * - 同時に走るのは常に 1 本。新しい取得が来たら前の取得を中止し、その停止要求を出してから走り出す。
+ * - `autoRefresh: true` を選んだ理由: 履歴をスキップでき、サーバ側でも READ ONLY で実行される
+ *   (#2243。書き込む関数を `SELECT f()` で呼ぶ抜け道を塞ぐ)。参照先カードは SELECT しか流さない。
  */
 import { api, listenQueryStream } from "./api/tauri";
 import type { CellValue, Column, QueryResult } from "./api/tauri";
@@ -19,15 +20,23 @@ import type { CellValue, Column, QueryResult } from "./api/tauri";
 export const FK_PEEK_TIMEOUT_SECS = 5;
 
 interface InFlight {
-  /** 取得を中止する (クライアント側を即座に reject し、サーバ側の停止を要求する)。完了待ちの Promise。 */
+  /** 取得を中止する (クライアント側を即座に reject し、サーバ側の停止を要求する)。何度呼んでも同じ Promise。 */
   abort: () => Promise<void>;
+}
+
+/** 取得が中止された (カードを閉じた・別の取得に切り替わった)。カードは専用の文言で表示する。 */
+export class PeekCancelledError extends Error {
+  constructor() {
+    super("cancelled");
+    this.name = "PeekCancelledError";
+  }
 }
 
 let current: InFlight | null = null;
 let seq = 0;
 
 function abortError(): Error {
-  return new Error("cancelled");
+  return new PeekCancelledError();
 }
 
 export interface RunPeekParams {
@@ -41,8 +50,9 @@ export interface RunPeekParams {
 /** ホバー取得を 1 本に絞って流し、結果を `QueryResult` にまとめて返す。失敗・中止は reject。 */
 export async function runPeekQuery(p: RunPeekParams): Promise<QueryResult> {
   // 前の取得があれば中止し、サーバ側の停止要求を出し終えてから自分を始める (同時 1 本)。
-  const prev = current;
-  if (prev) await prev.abort();
+  // 3 本以上が重なっても追跡外の取得が並走しないよう、枠が空くまで確かめ直し、
+  // 空いたら await を挟まずに同期的に枠を取る。
+  while (current) await current.abort();
   if (p.signal?.aborted) throw abortError();
 
   seq += 1;
@@ -64,12 +74,17 @@ export async function runPeekQuery(p: RunPeekParams): Promise<QueryResult> {
       () => {},
       () => {},
     );
+  let abortP: Promise<void> | null = null;
   const entry: InFlight = {
-    abort: async () => {
-      if (aborted) return;
-      aborted = true;
-      settle(abortError());
-      await cancelServer();
+    abort: () => {
+      abortP ??= (async () => {
+        aborted = true;
+        settle(abortError());
+        await cancelServer();
+        // 停止要求が済んだら枠を空ける (後続の待ち手が進める)。
+        if (current === entry) current = null;
+      })();
+      return abortP;
     },
   };
   current = entry;

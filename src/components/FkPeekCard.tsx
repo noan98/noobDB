@@ -32,6 +32,7 @@ import { useSettings } from "../settings";
 import { classifyTypeName } from "./cellTypeMeta";
 import { MASK_PLACEHOLDER, resolveMaskedColumns } from "./columnMask";
 import { Icon, ICON_SIZES } from "./Icon";
+import { PeekCancelledError } from "../fkPeekRun";
 import { Callout } from "./Callout";
 import { ErrorNote } from "./modalForm";
 import { Button } from "./ui";
@@ -158,7 +159,15 @@ export function FkPeekCard({
         cache.meta.set(metaKey, meta);
         state = { kind: "done", result, meta };
       } catch (e) {
-        state = { kind: "error", message: e instanceof Error ? e.message : String(e) };
+        state = {
+          kind: "error",
+          message:
+            e instanceof PeekCancelledError
+              ? t("fkPeekCancelled")
+              : e instanceof Error
+                ? e.message
+                : String(e),
+        };
       }
       if (!cancelled) setFetched({ sql, state });
     })();

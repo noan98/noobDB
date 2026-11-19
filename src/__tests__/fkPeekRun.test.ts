@@ -100,4 +100,56 @@ describe("runPeekQuery (#2444)", () => {
     handlersById.get(id)?.onError?.({ error: "timed out", timedOut: true });
     expect((await p).message).toBe("timed out");
   });
+
+  it("signal で先に中止した直後に次を呼んでも、cancelStream が解決するまで runQueryStream は呼ばれない", async () => {
+    let release: () => void = () => {};
+    cancelStream.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve({ cancelled: true, deliveredRows: 0 });
+        }),
+    );
+    const ac = new AbortController();
+    const first = runPeekQuery({ sessionId: "s", database: null, sql: "SELECT 1", signal: ac.signal }).catch(
+      (e) => e,
+    );
+    await flush();
+    ac.abort(); // カードのクリーンアップ
+    const second = runPeekQuery({ sessionId: "s", database: null, sql: "SELECT 2" });
+    await flush();
+    expect(runQueryStream).toHaveBeenCalledTimes(1);
+    release();
+    await flush();
+    expect(runQueryStream).toHaveBeenCalledTimes(2);
+    handlersById.get(runQueryStream.mock.calls[1][0].streamId)?.onDone?.(doneMsg);
+    await second;
+    expect((await first) instanceof Error).toBe(true);
+  });
+
+  it("3 本が重なっても同時に走るのは 1 本まで", async () => {
+    let active = 0;
+    let maxActive = 0;
+    runQueryStream.mockImplementation(async () => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+    });
+    cancelStream.mockImplementation(async () => {
+      await flush();
+      active = Math.max(0, active - 1);
+      return { cancelled: true, deliveredRows: 0 };
+    });
+    const a = runPeekQuery({ sessionId: "s", database: null, sql: "SELECT 1" }).catch((e) => e);
+    await flush();
+    const b = runPeekQuery({ sessionId: "s", database: null, sql: "SELECT 2" }).catch((e) => e);
+    const c = runPeekQuery({ sessionId: "s", database: null, sql: "SELECT 3" });
+    for (let i = 0; i < 10; i++) await flush();
+    // 生き残るのは最後の 1 本だけ。
+    const last = runQueryStream.mock.calls.at(-1)?.[0].streamId;
+    expect(last).toBeDefined();
+    handlersById.get(last)?.onDone?.(doneMsg);
+    await c;
+    expect(String(await a)).toContain("cancelled");
+    expect(String(await b)).toContain("cancelled");
+    expect(maxActive).toBe(1);
+  });
 });
