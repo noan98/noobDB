@@ -1842,6 +1842,8 @@ const SchemaRowList = memo(function SchemaRowList({
   // Tab で止まる行 (roving tabindex) も窓の外へ出さない。フォーカス移動のたびに購読して
   // 更新するが、再レンダーされるのはこのリストの枠だけ (行は `memo`)。
   const tabStopKey = useSyncExternalStore(store.subscribe, store.get);
+  // リスト内にフォーカスがあるか (ガイド線の強調の起点を切り替える, #2452)。
+  const [focusWithin, setFocusWithin] = useState(false);
 
   const keyIndex = useMemo(() => {
     const m = new Map<string, number>();
@@ -2036,12 +2038,19 @@ const SchemaRowList = memo(function SchemaRowList({
 
   // 選択 (Tab で止まる / フォーカス中) の行の祖先の枝だけガイド線をアクセントにする (#2452)。
   const guideAccent = useMemo(() => {
-    const i = keyIndex.get(tabStopKey ?? "") ?? (activeKey ? keyIndex.get(activeKey) : undefined);
-    return guideAccentLevels(
-      rows.map((r) => r.depth),
-      i ?? -1,
-    );
-  }, [rows, keyIndex, tabStopKey, activeKey]);
+    // フォーカス中は Tab で止まる行、フォーカスが無いときは現在地 (結果パネルに開いているテーブル) を起点にする。
+    const first = focusWithin ? tabStopKey : activeKey;
+    const second = focusWithin ? activeKey : tabStopKey;
+    const find = (k: string | null | undefined) => (k ? keyIndex.get(k) : undefined);
+    const i = find(first) ?? find(second);
+    return {
+      levels: guideAccentLevels(
+        rows.map((r) => r.depth),
+        i ?? -1,
+      ),
+      hasSelection: i !== undefined,
+    };
+  }, [rows, keyIndex, tabStopKey, activeKey, focusWithin]);
 
   const renderRow = (row: ExplorerRow, index: number, measure?: (el: Element | null) => void) => (
     <div
@@ -2051,7 +2060,7 @@ const SchemaRowList = memo(function SchemaRowList({
       data-kind={row.kind}
       className={enterKeys.current.has(row.key) ? "tree-row-enter" : undefined}
     >
-      <Indent depth={row.depth} accent={guideAccent[index] ?? 0}>
+      <Indent depth={row.depth} accent={guideAccent.levels[index] ?? 0}>
         <SchemaRowContent
           row={row}
           level={level}
@@ -2088,7 +2097,16 @@ const SchemaRowList = memo(function SchemaRowList({
   // `overflow-anchor: none`: ブラウザのスクロールアンカリングが、窓の移動で変わるスペーサーの
   // 高さに反応してスクロール位置をずらさないようにする。
   return (
-    <div ref={listRef} style={{ overflowAnchor: "none" }}>
+    <div
+      ref={listRef}
+      style={{ overflowAnchor: "none" }}
+      // 選択行がこのリストにあるとき、外側の接続の枝もアクセントにする (App.css の `.tree-guide-branch:has(...)`)。
+      data-guide-selected={guideAccent.hasSelection ? "" : undefined}
+      onFocus={() => setFocusWithin(true)}
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocusWithin(false);
+      }}
+    >
       {content}
     </div>
   );

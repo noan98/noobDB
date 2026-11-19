@@ -3301,7 +3301,8 @@ td.is-find-current::after {
   border-left-color: var(--tree-guide);
   transition: border-color var(--dur-fast) var(--ease);
 }
-.tree-guide-branch[data-guide-accent] {
+.tree-guide-branch[data-guide-accent],
+.tree-guide-branch:has(> [data-guide-selected]) {
   border-left-color: var(--tree-guide-accent);
 }
 /* reduced-motion では色を即時に切り替える (下の Reduced motion の節と同じ 2 ブロック構成)。 */

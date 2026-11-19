@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { fireEvent, renderWithProviders, screen, within } from "./testUtils";
+import { HierarchyView } from "../components/HierarchyView";
+import type { QueryResult } from "../api/tauri";
 import { CellValueViewer } from "../components/CellValueViewer";
 import { guideAccentLevels, treeGuideRowProps } from "../components/tree";
 import { DEFAULT_TREE_GUIDES, getSettings } from "../settings";
@@ -57,5 +59,47 @@ describe("JSON ツリーのガイド線 (#2452)", () => {
     const accent = tree.querySelectorAll(".tree-guide-group[data-guide-accent]");
     expect(accent.length).toBe(3);
     expect(tree.querySelectorAll(".tree-guide-group").length).toBe(3);
+  });
+});
+
+describe("階層ビューのガイド線の結線 (#2452)", () => {
+  const result: QueryResult = {
+    columns: [
+      { name: "id", type_name: "INT" },
+      { name: "parent_id", type_name: "INT" },
+      { name: "name", type_name: "VARCHAR" },
+    ],
+    rows: [
+      [1, null, "root"],
+      [2, 1, "child"],
+      [3, 2, "grandchild"],
+    ],
+    rows_affected: 3,
+    elapsed_ms: 1,
+  };
+
+  it("選択行の祖先の枝の本数を --tree-accent と data-guide-accent で渡す", () => {
+    renderWithProviders(
+      <HierarchyView
+        result={result}
+        driver="sqlite"
+        table="cats"
+        columnMeta={[]}
+        sourceSql="SELECT * FROM cats"
+        onChangeView={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByText(t("hierarchyExpandAll")));
+    const rowOf = (label: string) =>
+      screen.getByText(label).closest<HTMLElement>("[data-hrow]") as HTMLElement;
+    const accent = (el: HTMLElement) => el.style.getPropertyValue("--tree-accent");
+    expect(rowOf("grandchild").style.getPropertyValue("--tree-level")).toBe("2");
+    expect(rowOf("grandchild")).not.toHaveAttribute("data-guide-accent");
+    fireEvent.click(rowOf("grandchild"));
+    expect(rowOf("grandchild")).toHaveAttribute("data-guide-accent");
+    expect(accent(rowOf("grandchild"))).toBe("2");
+    // 祖先の行は、自分より上の段だけが枝。
+    expect(accent(rowOf("child"))).toBe("1");
+    expect(rowOf("root")).not.toHaveAttribute("data-guide-accent");
   });
 });

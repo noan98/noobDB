@@ -209,7 +209,6 @@ export function HierarchyView({
     [entries],
   );
 
-  // 選択行が全折りたたみなどで隠れたら、先頭の行を Tab / 矢印キーの入口にする。
   // 選択行の祖先の枝だけアクセントにするガイド線の本数 (#2452)。見出しは枝の切れ目 (深さ -1)。
   const guideAccent = useMemo(
     () =>
@@ -220,6 +219,7 @@ export function HierarchyView({
     [entries, selected],
   );
 
+  // 選択行が全折りたたみなどで隠れたら、先頭の行を Tab / 矢印キーの入口にする。
   const selectedVisible = selected !== null && visibleRows.some((r) => r.row === selected);
 
   const toggle = useCallback(
