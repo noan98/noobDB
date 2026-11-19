@@ -27,6 +27,16 @@ describe("toggleFavorite", () => {
     expect(isFavorite(s2, ref("db", "users"))).toBe(false);
   });
 
+  it("removes only the toggled favorite and keeps the others in order", () => {
+    let s = toggleFavorite(EMPTY_QUICK_ACCESS, ref("db", "a"));
+    s = toggleFavorite(s, ref("db", "b"));
+    s = toggleFavorite(s, ref("db", "c"));
+    const s2 = toggleFavorite(s, ref("db", "b"));
+    expect(s2.favorites.map((f) => f.table)).toEqual(
+      s.favorites.map((f) => f.table).filter((t) => t !== "b"),
+    );
+  });
+
   it("does not touch recent", () => {
     const s = recordRecent(EMPTY_QUICK_ACCESS, ref("db", "a"));
     const s2 = toggleFavorite(s, ref("db", "b"));
