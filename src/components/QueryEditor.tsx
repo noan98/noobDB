@@ -95,7 +95,8 @@ import { snippetCompletionSource } from "./sqlSnippetCompletion";
 import { snippetHasFields, snippetToCodeMirrorTemplate } from "../snippetTemplate";
 import { t, useT } from "../i18n";
 import { markFeatureTried, useSettings } from "../settings";
-import { springs } from "../motion";
+import { reducedMotionActive, springs } from "../motion";
+import { prefersStaticMotion } from "./revealOrigin";
 import { statementAtOffset, statementsFromOffset } from "../sqlScript";
 import { insertHints, insertHintsRefresh } from "./insertHintsExtension";
 import { identifierHover, type IdentifierHoverLabels } from "./identifierHoverExtension";
@@ -251,19 +252,9 @@ const insertFlashField = StateField.define<DecorationSet>({
   provide: (f) => EditorView.decorations.from(f),
 });
 
-/** 光らせない設定か (reduced-motion / モーション抑制 / hc-* プリセット)。スクロールは常に行う。 */
+/** 光らせない設定か (reduced-motion / モーション抑制 / hc-* / forced-colors)。スクロールは常に行う。 */
 function insertFlashSuppressed(): boolean {
-  try {
-    const root = document.documentElement;
-    const theme = root.getAttribute("data-theme") ?? "";
-    if (theme.startsWith("hc-")) return true;
-    const motion = root.getAttribute("data-motion");
-    if (motion === "reduced") return true;
-    if (motion === "full") return false;
-    return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
-  } catch {
-    return false;
-  }
+  return reducedMotionActive() || prefersStaticMotion();
 }
 
 /** 挿入済みの範囲 (挿入後の座標) を見える位置へ寄せ、光らせる effect 群。 */
@@ -276,15 +267,24 @@ function insertLandingEffects(from: number, length: number): StateEffect<unknown
   return effects;
 }
 
+// 連続挿入で前回のタイマーが今回のフラッシュを早く消さないよう、view ごとに 1 本へ保つ。
+const insertFlashTimers = new WeakMap<EditorView, number>();
+
 /** 光らせた場合に少し後で装飾をクリアする。view 破棄済みなら無視。 */
 function clearInsertFlashLater(view: EditorView) {
-  window.setTimeout(() => {
-    try {
-      view.dispatch({ effects: insertFlashEffect.of(null) });
-    } catch {
-      // view が破棄済みなら無視。
-    }
-  }, 650);
+  const prev = insertFlashTimers.get(view);
+  if (prev !== undefined) window.clearTimeout(prev);
+  insertFlashTimers.set(
+    view,
+    window.setTimeout(() => {
+      insertFlashTimers.delete(view);
+      try {
+        view.dispatch({ effects: insertFlashEffect.of(null) });
+      } catch {
+        // view が破棄済みなら無視。
+      }
+    }, 650),
+  );
 }
 
 // スキーマツリーのテーブル / 列行をドラッグしている間 (#1414)、挿入予定位置に出す
@@ -2305,7 +2305,14 @@ export const QueryEditor = memo(
         return;
       }
       const sel = view.state.selection.main;
+      const before = view.state.doc.length;
       snippet(snippetToCodeMirrorTemplate(text))(view, null, sel.from, sel.to);
+      // 展開後の増分 + 置き換えた長さ = 挿入されたテキストの長さ。着地点を寄せて光らせる (#2451)。
+      const len = view.state.doc.length - before + (sel.to - sel.from);
+      if (len > 0) {
+        view.dispatch({ effects: insertLandingEffects(sel.from, len) });
+        clearInsertFlashLater(view);
+      }
       view.focus();
     };
 
