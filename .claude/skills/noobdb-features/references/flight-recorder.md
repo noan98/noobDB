@@ -54,7 +54,13 @@
   `run_query_transaction` で作り、成功したときだけ本操作に進む (失敗は `ErrorNote`、本操作は実行しない)。
   生成列は除外、本番は既定オン、推定 50 万行超で警告、MySQL は暗黙コミットで 2 段階 (UI に明記)。
   実行後のトーストに復元用 SQL (DROP は `RENAME`、TRUNCATE / DELETE は `INSERT ... SELECT`) のコピーを出す。
-  `read_only` 接続では出さない (退避も書き込み)。
+  `read_only` 接続では出さない (退避も書き込み)。SQLite の退避先は FK の句を落とす (親行の CASCADE で退避が消えない)。
+  エディタの文は `backupTargetFor` が元の文の字句から表名を読み (PostgreSQL の引用符なしは小文字化)、スキーマ省略時は
+  `resolveBackupDatabase` (PostgreSQL は `to_regclass`、SQLite は main の実在) で実体を特定し、できなければオプションを出さない。
+  表が見つからないときは `DROP TABLE IF EXISTS` 以外は ErrorNote で中止。戻らないもの (CASCADE で消えた子行・依存オブジェクト・
+  トリガ・権限) はダイアログに明記。共有ベクタ `backupVectors.json` (`backupGolden.test.ts` が生成、
+  `UPDATE_BACKUP_VECTORS=1` で更新) を Rust `tests/backup_before_destructive_integration.rs` が実 DB で流す
+  (SQLite 常時、MySQL / PostgreSQL は環境変数ゲート)。
 - トリガー・カスケードなどサーバ側の二次的な副作用は記録されません。ドライバが
   報告した「その文が直接触った行」だけが対象です。
 - Undo は通常の書き込みと同じ `run_query_transaction` の all-or-nothing 経路を

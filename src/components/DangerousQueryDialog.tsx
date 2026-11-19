@@ -121,9 +121,21 @@ export function DangerousQueryDialog({
   rowPreview,
   backup,
   onConfirm: onConfirmDone,
-  onCancel,
+  onCancel: onCancelRaw,
 }: Props) {
   const t = useT();
+  // 退避の実行中にキャンセル / Esc / × / アンマウントされたら、完了しても実行しない。
+  const abandonedRef = useRef(false);
+  useEffect(() => {
+    abandonedRef.current = false;
+    return () => {
+      abandonedRef.current = true;
+    };
+  }, []);
+  const onCancel = () => {
+    abandonedRef.current = true;
+    onCancelRaw();
+  };
   const [backupBusy, setBackupBusy] = useState(false);
   const [backupError, setBackupError] = useState<string | null>(null);
   const onConfirm = async () => {
@@ -137,6 +149,7 @@ export function DangerousQueryDialog({
       } catch (e) {
         err = String(e);
       }
+      if (abandonedRef.current) return;
       setBackupBusy(false);
       if (err) {
         setBackupError(err);

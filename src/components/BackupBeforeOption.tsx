@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { chakra } from "@chakra-ui/react";
 import { api } from "../api/tauri";
-import { BACKUP_LARGE_ROWS, backupDefaultEnabled, backupTableName } from "../backupBeforeDestructive";
+import { backupDefaultEnabled, backupTableName } from "../backupBeforeDestructive";
+import { LARGE_COPY_ROWS } from "../tableClone";
 import { useT } from "../i18n";
 import { Callout } from "./Callout";
 import { Checkbox } from "./ui";
@@ -69,10 +70,11 @@ export function BackupBeforeOption({ sessionId, driver, database, tables, isProd
           {t("backupRowEstimate", { rows: formatRowCount(rows) })}
         </chakra.span>
       )}
-      {enabled && rows !== null && rows >= BACKUP_LARGE_ROWS && (
+      {enabled && rows !== null && rows >= LARGE_COPY_ROWS && (
         <Callout tone="warning">{t("backupLargeData", { rows: formatRowCount(rows) })}</Callout>
       )}
-      {enabled && driver === "mysql" && <Callout tone="info">{t("backupMysqlNote")}</Callout>}
+      {enabled && <Callout tone="info">{t("backupStepsNote")}</Callout>}
+      {enabled && <chakra.span textStyle="caption">{t("backupNotCovered")}</chakra.span>}
     </chakra.div>
   );
 }

@@ -8,7 +8,7 @@ import {
   buildRestoreSql,
   isBackupTableName,
 } from "../backupBeforeDestructive";
-import { runBackup, type BackupApi } from "../backupRun";
+import { resolveBackupDatabase, runBackup, type BackupApi } from "../backupRun";
 
 const NOW = new Date(2026, 10, 19, 9, 5);
 
@@ -124,6 +124,32 @@ describe("buildBackupPlan", () => {
       'INSERT INTO "orders" ("id", "price") SELECT "id", "price" FROM "orders_bak_202611190905";',
     );
   });
+  it("SQLite: インライン FK と制約の FK を退避先から落とす (CASCADE で退避の行が消えない)", () => {
+    const ddl = `CREATE TABLE "orders" (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INT NOT NULL CONSTRAINT fk_u REFERENCES users(id) ON DELETE CASCADE ON UPDATE SET NULL DEFERRABLE INITIALLY DEFERRED,
+  parent_id INT REFERENCES orders (id),
+  note TEXT DEFAULT 'a, REFERENCES x',
+  CONSTRAINT fk_p FOREIGN KEY (parent_id) REFERENCES orders(id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES users(id)
+)`;
+    const p = buildBackupPlan({
+      driver: "sqlite",
+      database: "main",
+      table: "orders",
+      kind: "drop",
+      now: NOW,
+      ddl,
+      columns: ["id", "user_id", "parent_id", "note"],
+    });
+    expect(p.errors).toEqual([]);
+    const create = p.statements[0];
+    expect(create).not.toMatch(/FOREIGN|CONSTRAINT|ON DELETE|DEFERR/i);
+    expect(create.replace(/'a, REFERENCES x'/, "")).not.toMatch(/REFERENCES/i);
+    expect(create).toContain("'a, REFERENCES x'");
+    expect(create).toContain("user_id INT NOT NULL");
+    expect(create).toContain("parent_id INT");
+  });
   it("クオートが必要な名前でも壊れない", () => {
     const p = buildBackupPlan({
       driver: "mysql",
@@ -169,26 +195,90 @@ describe("buildRestoreSql", () => {
 
 describe("backupTargetFor", () => {
   it("単一テーブルの DROP / TRUNCATE / WHERE なし DELETE", () => {
-    expect(backupTargetFor("DROP TABLE IF EXISTS shop.orders;", "shop.orders", "mysql")).toEqual({
+    expect(backupTargetFor("DROP TABLE IF EXISTS shop.orders;", "mysql")).toEqual({
       kind: "drop",
       database: "shop",
       table: "orders",
+      ifExists: true,
     });
-    expect(backupTargetFor("truncate table `orders`", "orders", "mysql")).toEqual({
+    expect(backupTargetFor("truncate table `orders`", "mysql")).toEqual({
       kind: "truncate",
       database: null,
       table: "orders",
+      ifExists: false,
     });
-    expect(backupTargetFor('DELETE FROM "orders"', "orders", "postgres")?.kind).toBe("deleteNoWhere");
+    expect(backupTargetFor('DELETE FROM "orders"', "postgres")?.kind).toBe("deleteNoWhere");
+    expect(backupTargetFor("  /* c */ DROP TABLE t -- x\n;", "sqlite")?.table).toBe("t");
+  });
+  it("PostgreSQL は引用符なしを小文字に畳み、引用符付きは保つ", () => {
+    expect(backupTargetFor("DROP TABLE Users", "postgres")?.table).toBe("users");
+    expect(backupTargetFor('DROP TABLE "Users"', "postgres")?.table).toBe("Users");
+    expect(backupTargetFor('DROP TABLE Public."Users"', "postgres")).toMatchObject({
+      database: "public",
+      table: "Users",
+    });
+    // MySQL / SQLite は畳まない (実在名との照合は大小無視)
+    expect(backupTargetFor("DROP TABLE Users", "mysql")?.table).toBe("Users");
+  });
+  it('引用符内の . や "" エスケープを正しく扱う', () => {
+    expect(backupTargetFor('DROP TABLE "my.table"', "postgres")).toMatchObject({
+      database: null,
+      table: "my.table",
+    });
+    expect(backupTargetFor('DROP TABLE "Odd""Name"', "postgres")?.table).toBe('Odd"Name');
+    expect(backupTargetFor("DROP TABLE `a``b`.`c.d`", "mysql")).toMatchObject({
+      database: "a`b",
+      table: "c.d",
+    });
+    // MySQL の "..." は文字列であって識別子ではない
+    expect(backupTargetFor('DROP TABLE "t"', "mysql")).toBeNull();
   });
   it("退避だけでは戻しきれない形は対象外", () => {
-    expect(backupTargetFor("DROP TABLE a, b", "a", "mysql")).toBeNull();
-    expect(backupTargetFor("DROP DATABASE shop", "shop", "mysql")).toBeNull();
-    expect(backupTargetFor("TRUNCATE orders CASCADE", "orders", "postgres")).toBeNull();
-    expect(backupTargetFor("DELETE FROM t RETURNING id", "t", "postgres")).toBeNull();
-    expect(backupTargetFor("DELETE FROM t LIMIT 5", "t", "mysql")).toBeNull();
-    expect(backupTargetFor("DROP TABLE t; DROP TABLE u", "t", "mysql")).toBeNull();
-    expect(backupTargetFor("DROP TABLE t", null, "mysql")).toBeNull();
+    expect(backupTargetFor("DROP TABLE a, b", "mysql")).toBeNull();
+    expect(backupTargetFor("DROP DATABASE shop", "mysql")).toBeNull();
+    expect(backupTargetFor("TRUNCATE orders CASCADE", "postgres")).toBeNull();
+    expect(backupTargetFor("DELETE FROM t RETURNING id", "postgres")).toBeNull();
+    expect(backupTargetFor("DELETE FROM t LIMIT 5", "mysql")).toBeNull();
+    expect(backupTargetFor("DROP TABLE t; DROP TABLE u", "mysql")).toBeNull();
+    expect(backupTargetFor("DROP TABLE a.b.c", "postgres")).toBeNull();
+  });
+});
+
+describe("resolveBackupDatabase", () => {
+  const base = { sessionId: "s", table: "users", explicit: null, tabDatabase: null, profileDatabase: null };
+  it("文にスキーマがあればそのまま", async () => {
+    expect(await resolveBackupDatabase({} as BackupApi, { ...base, driver: "postgres", explicit: "x" })).toBe(
+      "x",
+    );
+  });
+  it("PostgreSQL: to_regclass で実体のスキーマを引く (public 決め打ちにしない)", async () => {
+    let sql = "";
+    const api = {
+      runLookupQuery: async (p: { sql: string }) => {
+        sql = p.sql;
+        return { rows: [["app"]] };
+      },
+    } as unknown as BackupApi;
+    expect(await resolveBackupDatabase(api, { ...base, driver: "postgres", table: "Odd'N" })).toBe("app");
+    expect(sql).toContain("to_regclass('\"Odd''N\"')");
+  });
+  it("PostgreSQL: 見つからなければ null (オプションを出さない)", async () => {
+    const api = { runLookupQuery: async () => ({ rows: [] }) } as unknown as BackupApi;
+    expect(await resolveBackupDatabase(api, { ...base, driver: "postgres" })).toBeNull();
+  });
+  it("MySQL: タブ → 接続の既定、無ければ null", async () => {
+    const api = {} as BackupApi;
+    expect(
+      await resolveBackupDatabase(api, { ...base, driver: "mysql", tabDatabase: "t", profileDatabase: "p" }),
+    ).toBe("t");
+    expect(await resolveBackupDatabase(api, { ...base, driver: "mysql", profileDatabase: "p" })).toBe("p");
+    expect(await resolveBackupDatabase(api, { ...base, driver: "mysql" })).toBeNull();
+  });
+  it("SQLite: 実在する main のテーブルだけ", async () => {
+    const api = { listTables: async () => ["Users"] } as unknown as BackupApi;
+    expect(await resolveBackupDatabase(api, { ...base, driver: "sqlite" })).toBe("main");
+    const none = { listTables: async () => [] } as unknown as BackupApi;
+    expect(await resolveBackupDatabase(none, { ...base, driver: "sqlite" })).toBeNull();
   });
 });
 
@@ -225,10 +315,25 @@ describe("runBackup", () => {
     expect(r?.backupName).toBe("orders_bak_202611190905");
     expect(calls[0][1]).toContain("(`id`) SELECT `id` FROM");
   });
-  it("テーブルが無ければ何もしない", async () => {
+  it("テーブルが見つからなければエラーで中止 (退避なしで続行しない)", async () => {
     const { api, calls } = make({ listTables: async () => [] });
-    expect(await runBackup(api, req)).toBeNull();
+    await expect(runBackup(api, req)).rejects.toThrow(/orders/);
     expect(calls).toEqual([]);
+  });
+  it("missingOk (DROP TABLE IF EXISTS) のときだけ、表が無くても null で続行", async () => {
+    const { api, calls } = make({ listTables: async () => [] });
+    expect(await runBackup(api, { ...req, missingOk: true })).toBeNull();
+    expect(calls).toEqual([]);
+  });
+  it("MySQL / SQLite は大文字小文字を無視して実在の綴りで退避する", async () => {
+    const { api, calls } = make({ listTables: async () => ["ORDERS"] });
+    const r = await runBackup(api, req);
+    expect(r?.backupName).toBe("ORDERS_bak_202611190905");
+    expect(calls[0][0]).toContain("`ORDERS`");
+  });
+  it("PostgreSQL は大文字小文字を区別する (別の表を退避しない)", async () => {
+    const { api } = make({ listTables: async () => ["Orders"] });
+    await expect(runBackup(api, { ...req, driver: "postgres", database: "public" })).rejects.toThrow();
   });
   it("失敗は例外 (本操作を実行させない)。MySQL は残骸の可能性を伝える", async () => {
     let n = 0;

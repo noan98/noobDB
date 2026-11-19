@@ -23,9 +23,6 @@ import {
 /** 退避の対象になる破壊的操作。 */
 export type BackupKind = "drop" | "truncate" | "deleteNoWhere";
 
-/** この行数 (推定) を超えると、退避に時間とディスクを使うので警告を出す。 */
-export const BACKUP_LARGE_ROWS = 500_000;
-
 /** 退避の既定。本番接続ではオン、それ以外はオフ (オプトイン)。 */
 export function backupDefaultEnabled(isProduction: boolean): boolean {
   return isProduction;
@@ -140,16 +137,69 @@ export interface BackupTarget {
   kind: BackupKind;
   /** データベース (MySQL) / スキーマ (PostgreSQL) / `main` 等 (SQLite)。文に書かれていなければ null。 */
   database: string | null;
+  /** テーブル名。クオートを外して `""` / ` `` ` のエスケープを戻した実体。PostgreSQL の引用符なしは小文字に畳んである。 */
   table: string;
+  /** `DROP TABLE IF EXISTS` か。表が実在しなくてもエラーにならない文なので、退避の対象が無いことを許す。 */
+  ifExists: boolean;
 }
 
 const IDENT = '(?:[\\w$]+|"\\s*"|`\\s*`)';
 const QUALIFIED = `${IDENT}(?:\\s*\\.\\s*${IDENT})?`;
 const DROP_RE = new RegExp(
-  `^drop\\s+table\\s+(?:if\\s+exists\\s+)?${QUALIFIED}(?:\\s+(?:cascade|restrict))?$`,
+  `^drop\\s+table\\s+(?<ie>if\\s+exists\\s+)?(?<name>${QUALIFIED})(?:\\s+(?:cascade|restrict))?$`,
+  "di",
 );
-const TRUNCATE_RE = new RegExp(`^truncate(?:\\s+table)?\\s+(?:only\\s+)?${QUALIFIED}$`);
-const DELETE_RE = new RegExp(`^delete\\s+from\\s+(?:only\\s+)?${QUALIFIED}$`);
+const TRUNCATE_RE = new RegExp(`^truncate(?:\\s+table)?\\s+(?:only\\s+)?(?<name>${QUALIFIED})$`, "di");
+const DELETE_RE = new RegExp(`^delete\\s+from\\s+(?:only\\s+)?(?<name>${QUALIFIED})$`, "di");
+
+/**
+ * `a.b` / `"a"."b"` / `` `a`.`b` `` の生の文字列を、クオートを外した部品の配列にする。
+ * 引用符なしの PostgreSQL 識別子は小文字に畳む (`DROP TABLE Users` は `users`)。`""` / ` `` ` のエスケープは戻す。
+ * MySQL の `"..."` は文字列 (識別子ではない) なので解釈しない。解釈できなければ null。
+ */
+export function parseQualifiedName(raw: string, driver?: string): string[] | null {
+  const parts: string[] = [];
+  let i = 0;
+  const n = raw.length;
+  const ws = () => {
+    while (i < n && /\s/.test(raw[i])) i++;
+  };
+  for (;;) {
+    ws();
+    const c = raw[i];
+    if (c === '"' || c === "`") {
+      if (c === '"' && driver === "mysql") return null;
+      if (c === "`" && driver === "postgres") return null;
+      let out = "";
+      i++;
+      for (;;) {
+        if (i >= n) return null;
+        if (raw[i] === c) {
+          if (raw[i + 1] === c) {
+            out += c;
+            i += 2;
+            continue;
+          }
+          i++;
+          break;
+        }
+        out += raw[i++];
+      }
+      if (out.length === 0) return null;
+      parts.push(out);
+    } else {
+      const m = /^[\w$]+/.exec(raw.slice(i));
+      if (!m) return null;
+      i += m[0].length;
+      parts.push(driver === "postgres" ? m[0].toLowerCase() : m[0]);
+    }
+    ws();
+    if (i >= n) break;
+    if (raw[i] !== ".") return null;
+    i++;
+  }
+  return parts.length >= 1 && parts.length <= 2 ? parts : null;
+}
 
 /**
  * 確認ダイアログが出た文が「退避できる単一テーブルの破壊的操作」か。次の形だけを対象にする
@@ -158,25 +208,36 @@ const DELETE_RE = new RegExp(`^delete\\s+from\\s+(?:only\\s+)?${QUALIFIED}$`);
  *   - `DROP TABLE [IF EXISTS] t [CASCADE | RESTRICT]`
  *   - `TRUNCATE [TABLE] [ONLY] t`
  *   - `DELETE FROM [ONLY] t` (WHERE なし)
- * `target` は `analyzeDangerousSql` の指摘の対象名 (クオート除去済み、`db.table` のことがある)。
- * 判定は字句マスクした文に対する正規表現で、パーサではない (迷ったら null = 出さない)。
+ * テーブル名は、リテラル・コメントをマスクした文で構造を確かめたうえで、**元の文の同じ位置**から字句として読む
+ * (`analyzeDangerousSql` の対象名はクオートの有無を失うので使わない)。パーサではなく、迷ったら null (= 出さない)。
  */
-export function backupTargetFor(sql: string, target: string | null, driver?: string): BackupTarget | null {
-  if (!target) return null;
-  const masked = maskLiterals(sql, driver)
-    .toLowerCase()
-    .replace(/[\s;\u0085\uFEFF]+$/, "")
-    .replace(/^[\s\u0085\uFEFF]+/, "");
-  const kind: BackupKind | null = DROP_RE.test(masked)
-    ? "drop"
-    : TRUNCATE_RE.test(masked)
-      ? "truncate"
-      : DELETE_RE.test(masked)
-        ? "deleteNoWhere"
-        : null;
-  if (!kind) return null;
-  const parts = target.split(".");
-  if (parts.length > 2 || parts.some((p) => p.length === 0)) return null;
-  const table = parts[parts.length - 1];
-  return { kind, database: parts.length === 2 ? parts[0] : null, table };
+export function backupTargetFor(sql: string, driver?: string): BackupTarget | null {
+  const masked = maskLiterals(sql, driver);
+  const lead = masked.length - masked.replace(/^[\s\u0085\uFEFF]+/, "").length;
+  const end = masked.replace(/[\s;\u0085\uFEFF]+$/, "").length;
+  if (end <= lead) return null;
+  const body = masked.slice(lead, end);
+  let kind: BackupKind | null = null;
+  let m: RegExpExecArray | null = null;
+  for (const [k, re] of [
+    ["drop", DROP_RE],
+    ["truncate", TRUNCATE_RE],
+    ["deleteNoWhere", DELETE_RE],
+  ] as const) {
+    m = re.exec(body);
+    if (m) {
+      kind = k;
+      break;
+    }
+  }
+  const span = m?.indices?.groups?.name;
+  if (!m || !kind || !span) return null;
+  const parts = parseQualifiedName(sql.slice(lead + span[0], lead + span[1]), driver);
+  if (!parts) return null;
+  return {
+    kind,
+    database: parts.length === 2 ? parts[0] : null,
+    table: parts[parts.length - 1],
+    ifExists: !!m.groups?.ie,
+  };
 }

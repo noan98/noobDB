@@ -1,0 +1,214 @@
+{
+  "note": "退避コピー (#2448) の共有ベクタ。backupGolden.test.ts が生成し、Rust の backup_before_destructive_integration.rs が実 DB で流す。",
+  "database": "nb2448_backup",
+  "cases": [
+    {
+      "name": "sqlite drop (空白入りの名前・自動採番・生成列・FK)",
+      "driver": "sqlite",
+      "database": null,
+      "kind": "drop",
+      "setup": [
+        "CREATE TABLE parents_drop (id INTEGER PRIMARY KEY)",
+        "INSERT INTO parents_drop VALUES (1), (2)",
+        "CREATE TABLE \"Odd Name drop\" (id INTEGER PRIMARY KEY AUTOINCREMENT, parent_id INT REFERENCES parents_drop(id) ON DELETE CASCADE, price INT, total INT GENERATED ALWAYS AS (price * 2) STORED, label TEXT)",
+        "INSERT INTO \"Odd Name drop\" (parent_id, price, label) VALUES (1, 10, 'a'), (2, 20, 'it''s'), (NULL, 30, NULL)"
+      ],
+      "checkSql": "SELECT id, parent_id, price, total, label FROM \"Odd Name drop\" ORDER BY id",
+      "backupStatements": [
+        "CREATE TABLE \"Odd Name drop_bak_202611190905\" (id INTEGER PRIMARY KEY AUTOINCREMENT, parent_id INT, price INT, total INT GENERATED ALWAYS AS (price * 2) STORED, label TEXT)",
+        "INSERT INTO \"Odd Name drop_bak_202611190905\" (\"id\", \"parent_id\", \"price\", \"label\") SELECT \"id\", \"parent_id\", \"price\", \"label\" FROM \"Odd Name drop\""
+      ],
+      "afterBackup": [
+        "DELETE FROM parents_drop"
+      ],
+      "beforeRestore": [
+        "INSERT INTO parents_drop VALUES (1), (2)"
+      ],
+      "mainSql": "DROP TABLE \"Odd Name drop\"",
+      "restoreSql": "ALTER TABLE \"Odd Name drop_bak_202611190905\" RENAME TO \"Odd Name drop\""
+    },
+    {
+      "name": "mysql drop (バッククォート入りの名前・自動採番・生成列・FK)",
+      "driver": "mysql",
+      "database": "nb2448_backup",
+      "kind": "drop",
+      "setup": [
+        "CREATE TABLE `nb2448_backup`.`odd``name_drop_p` (id INT PRIMARY KEY)",
+        "INSERT INTO `nb2448_backup`.`odd``name_drop_p` VALUES (1), (2)",
+        "CREATE TABLE `nb2448_backup`.`odd``name_drop` (id INT AUTO_INCREMENT PRIMARY KEY, parent_id INT, price INT, total INT GENERATED ALWAYS AS (price * 2) STORED, label VARCHAR(20), FOREIGN KEY (parent_id) REFERENCES `nb2448_backup`.`odd``name_drop_p`(id) ON DELETE CASCADE)",
+        "INSERT INTO `nb2448_backup`.`odd``name_drop` (parent_id, price, label) VALUES (1, 10, 'a'), (2, 20, 'it''s'), (NULL, 30, NULL)"
+      ],
+      "checkSql": "SELECT id, parent_id, price, total, label FROM `nb2448_backup`.`odd``name_drop` ORDER BY id",
+      "backupStatements": [
+        "CREATE TABLE `nb2448_backup`.`odd``name_drop_bak_202611190905` LIKE `nb2448_backup`.`odd``name_drop`",
+        "INSERT INTO `nb2448_backup`.`odd``name_drop_bak_202611190905` (`id`, `parent_id`, `price`, `label`) SELECT `id`, `parent_id`, `price`, `label` FROM `nb2448_backup`.`odd``name_drop`"
+      ],
+      "afterBackup": [
+        "DELETE FROM `nb2448_backup`.`odd``name_drop_p`"
+      ],
+      "beforeRestore": [
+        "INSERT INTO `nb2448_backup`.`odd``name_drop_p` VALUES (1), (2)"
+      ],
+      "mainSql": "DROP TABLE `nb2448_backup`.`odd``name_drop`",
+      "restoreSql": "ALTER TABLE `nb2448_backup`.`odd``name_drop_bak_202611190905` RENAME TO `nb2448_backup`.`odd``name_drop`"
+    },
+    {
+      "name": "postgres drop (引用符入りの名前・identity・生成列・FK)",
+      "driver": "postgres",
+      "database": "nb2448_backup",
+      "kind": "drop",
+      "setup": [
+        "CREATE TABLE \"nb2448_backup\".\"Odd \"\"Name\"\" drop_p\" (id int PRIMARY KEY)",
+        "INSERT INTO \"nb2448_backup\".\"Odd \"\"Name\"\" drop_p\" VALUES (1), (2)",
+        "CREATE TABLE \"nb2448_backup\".\"Odd \"\"Name\"\" drop\" (id int GENERATED ALWAYS AS IDENTITY PRIMARY KEY, parent_id int REFERENCES \"nb2448_backup\".\"Odd \"\"Name\"\" drop_p\"(id) ON DELETE CASCADE, price int, total int GENERATED ALWAYS AS (price * 2) STORED, label text)",
+        "INSERT INTO \"nb2448_backup\".\"Odd \"\"Name\"\" drop\" (parent_id, price, label) VALUES (1, 10, 'a'), (2, 20, 'it''s'), (NULL, 30, NULL)"
+      ],
+      "checkSql": "SELECT id, parent_id, price, total, label FROM \"nb2448_backup\".\"Odd \"\"Name\"\" drop\" ORDER BY id",
+      "backupStatements": [
+        "CREATE TABLE \"nb2448_backup\".\"Odd \"\"Name\"\" drop_bak_202611190905\" (LIKE \"nb2448_backup\".\"Odd \"\"Name\"\" drop\" INCLUDING ALL)",
+        "INSERT INTO \"nb2448_backup\".\"Odd \"\"Name\"\" drop_bak_202611190905\" (\"id\", \"parent_id\", \"price\", \"label\") OVERRIDING SYSTEM VALUE SELECT \"id\", \"parent_id\", \"price\", \"label\" FROM \"nb2448_backup\".\"Odd \"\"Name\"\" drop\"",
+        "SELECT setval(pg_get_serial_sequence('\"nb2448_backup\".\"Odd \"\"Name\"\" drop_bak_202611190905\"', 'id'), max(\"id\")) FROM \"nb2448_backup\".\"Odd \"\"Name\"\" drop_bak_202611190905\" HAVING max(\"id\") >= (SELECT seqmin FROM pg_sequence WHERE seqrelid = pg_get_serial_sequence('\"nb2448_backup\".\"Odd \"\"Name\"\" drop_bak_202611190905\"', 'id')::regclass)"
+      ],
+      "afterBackup": [
+        "DELETE FROM \"nb2448_backup\".\"Odd \"\"Name\"\" drop_p\""
+      ],
+      "beforeRestore": [
+        "INSERT INTO \"nb2448_backup\".\"Odd \"\"Name\"\" drop_p\" VALUES (1), (2)"
+      ],
+      "mainSql": "DROP TABLE \"nb2448_backup\".\"Odd \"\"Name\"\" drop\"",
+      "restoreSql": "ALTER TABLE \"nb2448_backup\".\"Odd \"\"Name\"\" drop_bak_202611190905\" RENAME TO \"Odd \"\"Name\"\" drop\""
+    },
+    {
+      "name": "postgres drop (serial)",
+      "driver": "postgres",
+      "database": "nb2448_backup",
+      "kind": "drop",
+      "setup": [
+        "CREATE TABLE \"nb2448_backup\".\"serial_drop_p\" (id int PRIMARY KEY)",
+        "INSERT INTO \"nb2448_backup\".\"serial_drop_p\" VALUES (1), (2)",
+        "CREATE TABLE \"nb2448_backup\".\"serial_drop\" (id serial PRIMARY KEY, parent_id int REFERENCES \"nb2448_backup\".\"serial_drop_p\"(id) ON DELETE CASCADE, price int, total int GENERATED ALWAYS AS (price * 2) STORED, label text)",
+        "INSERT INTO \"nb2448_backup\".\"serial_drop\" (parent_id, price, label) VALUES (1, 10, 'a'), (2, 20, 'it''s'), (NULL, 30, NULL)"
+      ],
+      "checkSql": "SELECT id, parent_id, price, total, label FROM \"nb2448_backup\".\"serial_drop\" ORDER BY id",
+      "backupStatements": [
+        "CREATE TABLE \"nb2448_backup\".\"serial_drop_bak_202611190905\" (LIKE \"nb2448_backup\".\"serial_drop\" INCLUDING ALL)",
+        "CREATE SEQUENCE \"nb2448_backup\".\"serial_drop_bak_202611190905_id_seq\" OWNED BY \"nb2448_backup\".\"serial_drop_bak_202611190905\".\"id\"",
+        "ALTER TABLE \"nb2448_backup\".\"serial_drop_bak_202611190905\" ALTER COLUMN \"id\" SET DEFAULT nextval('\"nb2448_backup\".\"serial_drop_bak_202611190905_id_seq\"'::regclass)",
+        "INSERT INTO \"nb2448_backup\".\"serial_drop_bak_202611190905\" (\"id\", \"parent_id\", \"price\", \"label\") OVERRIDING SYSTEM VALUE SELECT \"id\", \"parent_id\", \"price\", \"label\" FROM \"nb2448_backup\".\"serial_drop\"",
+        "SELECT setval(pg_get_serial_sequence('\"nb2448_backup\".\"serial_drop_bak_202611190905\"', 'id'), max(\"id\")) FROM \"nb2448_backup\".\"serial_drop_bak_202611190905\" HAVING max(\"id\") >= (SELECT seqmin FROM pg_sequence WHERE seqrelid = pg_get_serial_sequence('\"nb2448_backup\".\"serial_drop_bak_202611190905\"', 'id')::regclass)"
+      ],
+      "afterBackup": [
+        "DELETE FROM \"nb2448_backup\".\"serial_drop_p\""
+      ],
+      "beforeRestore": [
+        "INSERT INTO \"nb2448_backup\".\"serial_drop_p\" VALUES (1), (2)"
+      ],
+      "mainSql": "DROP TABLE \"nb2448_backup\".\"serial_drop\"",
+      "restoreSql": "ALTER TABLE \"nb2448_backup\".\"serial_drop_bak_202611190905\" RENAME TO \"serial_drop\""
+    },
+    {
+      "name": "sqlite truncate (空白入りの名前・自動採番・生成列・FK)",
+      "driver": "sqlite",
+      "database": null,
+      "kind": "truncate",
+      "setup": [
+        "CREATE TABLE parents_truncate (id INTEGER PRIMARY KEY)",
+        "INSERT INTO parents_truncate VALUES (1), (2)",
+        "CREATE TABLE \"Odd Name truncate\" (id INTEGER PRIMARY KEY AUTOINCREMENT, parent_id INT REFERENCES parents_truncate(id) ON DELETE CASCADE, price INT, total INT GENERATED ALWAYS AS (price * 2) STORED, label TEXT)",
+        "INSERT INTO \"Odd Name truncate\" (parent_id, price, label) VALUES (1, 10, 'a'), (2, 20, 'it''s'), (NULL, 30, NULL)"
+      ],
+      "checkSql": "SELECT id, parent_id, price, total, label FROM \"Odd Name truncate\" ORDER BY id",
+      "backupStatements": [
+        "CREATE TABLE \"Odd Name truncate_bak_202611190905\" (id INTEGER PRIMARY KEY AUTOINCREMENT, parent_id INT, price INT, total INT GENERATED ALWAYS AS (price * 2) STORED, label TEXT)",
+        "INSERT INTO \"Odd Name truncate_bak_202611190905\" (\"id\", \"parent_id\", \"price\", \"label\") SELECT \"id\", \"parent_id\", \"price\", \"label\" FROM \"Odd Name truncate\""
+      ],
+      "afterBackup": [
+        "DELETE FROM parents_truncate"
+      ],
+      "beforeRestore": [
+        "INSERT INTO parents_truncate VALUES (1), (2)"
+      ],
+      "mainSql": "DELETE FROM \"Odd Name truncate\"",
+      "restoreSql": "INSERT INTO \"Odd Name truncate\" (\"id\", \"parent_id\", \"price\", \"label\") SELECT \"id\", \"parent_id\", \"price\", \"label\" FROM \"Odd Name truncate_bak_202611190905\""
+    },
+    {
+      "name": "mysql truncate (バッククォート入りの名前・自動採番・生成列・FK)",
+      "driver": "mysql",
+      "database": "nb2448_backup",
+      "kind": "truncate",
+      "setup": [
+        "CREATE TABLE `nb2448_backup`.`odd``name_truncate_p` (id INT PRIMARY KEY)",
+        "INSERT INTO `nb2448_backup`.`odd``name_truncate_p` VALUES (1), (2)",
+        "CREATE TABLE `nb2448_backup`.`odd``name_truncate` (id INT AUTO_INCREMENT PRIMARY KEY, parent_id INT, price INT, total INT GENERATED ALWAYS AS (price * 2) STORED, label VARCHAR(20), FOREIGN KEY (parent_id) REFERENCES `nb2448_backup`.`odd``name_truncate_p`(id) ON DELETE CASCADE)",
+        "INSERT INTO `nb2448_backup`.`odd``name_truncate` (parent_id, price, label) VALUES (1, 10, 'a'), (2, 20, 'it''s'), (NULL, 30, NULL)"
+      ],
+      "checkSql": "SELECT id, parent_id, price, total, label FROM `nb2448_backup`.`odd``name_truncate` ORDER BY id",
+      "backupStatements": [
+        "CREATE TABLE `nb2448_backup`.`odd``name_truncate_bak_202611190905` LIKE `nb2448_backup`.`odd``name_truncate`",
+        "INSERT INTO `nb2448_backup`.`odd``name_truncate_bak_202611190905` (`id`, `parent_id`, `price`, `label`) SELECT `id`, `parent_id`, `price`, `label` FROM `nb2448_backup`.`odd``name_truncate`"
+      ],
+      "afterBackup": [
+        "DELETE FROM `nb2448_backup`.`odd``name_truncate_p`"
+      ],
+      "beforeRestore": [
+        "INSERT INTO `nb2448_backup`.`odd``name_truncate_p` VALUES (1), (2)"
+      ],
+      "mainSql": "TRUNCATE TABLE `nb2448_backup`.`odd``name_truncate`",
+      "restoreSql": "INSERT INTO `nb2448_backup`.`odd``name_truncate` (`id`, `parent_id`, `price`, `label`) SELECT `id`, `parent_id`, `price`, `label` FROM `nb2448_backup`.`odd``name_truncate_bak_202611190905`"
+    },
+    {
+      "name": "postgres truncate (引用符入りの名前・identity・生成列・FK)",
+      "driver": "postgres",
+      "database": "nb2448_backup",
+      "kind": "truncate",
+      "setup": [
+        "CREATE TABLE \"nb2448_backup\".\"Odd \"\"Name\"\" truncate_p\" (id int PRIMARY KEY)",
+        "INSERT INTO \"nb2448_backup\".\"Odd \"\"Name\"\" truncate_p\" VALUES (1), (2)",
+        "CREATE TABLE \"nb2448_backup\".\"Odd \"\"Name\"\" truncate\" (id int GENERATED ALWAYS AS IDENTITY PRIMARY KEY, parent_id int REFERENCES \"nb2448_backup\".\"Odd \"\"Name\"\" truncate_p\"(id) ON DELETE CASCADE, price int, total int GENERATED ALWAYS AS (price * 2) STORED, label text)",
+        "INSERT INTO \"nb2448_backup\".\"Odd \"\"Name\"\" truncate\" (parent_id, price, label) VALUES (1, 10, 'a'), (2, 20, 'it''s'), (NULL, 30, NULL)"
+      ],
+      "checkSql": "SELECT id, parent_id, price, total, label FROM \"nb2448_backup\".\"Odd \"\"Name\"\" truncate\" ORDER BY id",
+      "backupStatements": [
+        "CREATE TABLE \"nb2448_backup\".\"Odd \"\"Name\"\" truncate_bak_202611190905\" (LIKE \"nb2448_backup\".\"Odd \"\"Name\"\" truncate\" INCLUDING ALL)",
+        "INSERT INTO \"nb2448_backup\".\"Odd \"\"Name\"\" truncate_bak_202611190905\" (\"id\", \"parent_id\", \"price\", \"label\") OVERRIDING SYSTEM VALUE SELECT \"id\", \"parent_id\", \"price\", \"label\" FROM \"nb2448_backup\".\"Odd \"\"Name\"\" truncate\"",
+        "SELECT setval(pg_get_serial_sequence('\"nb2448_backup\".\"Odd \"\"Name\"\" truncate_bak_202611190905\"', 'id'), max(\"id\")) FROM \"nb2448_backup\".\"Odd \"\"Name\"\" truncate_bak_202611190905\" HAVING max(\"id\") >= (SELECT seqmin FROM pg_sequence WHERE seqrelid = pg_get_serial_sequence('\"nb2448_backup\".\"Odd \"\"Name\"\" truncate_bak_202611190905\"', 'id')::regclass)"
+      ],
+      "afterBackup": [
+        "DELETE FROM \"nb2448_backup\".\"Odd \"\"Name\"\" truncate_p\""
+      ],
+      "beforeRestore": [
+        "INSERT INTO \"nb2448_backup\".\"Odd \"\"Name\"\" truncate_p\" VALUES (1), (2)"
+      ],
+      "mainSql": "TRUNCATE TABLE \"nb2448_backup\".\"Odd \"\"Name\"\" truncate\"",
+      "restoreSql": "INSERT INTO \"nb2448_backup\".\"Odd \"\"Name\"\" truncate\" (\"id\", \"parent_id\", \"price\", \"label\") OVERRIDING SYSTEM VALUE SELECT \"id\", \"parent_id\", \"price\", \"label\" FROM \"nb2448_backup\".\"Odd \"\"Name\"\" truncate_bak_202611190905\""
+    },
+    {
+      "name": "postgres truncate (serial)",
+      "driver": "postgres",
+      "database": "nb2448_backup",
+      "kind": "truncate",
+      "setup": [
+        "CREATE TABLE \"nb2448_backup\".\"serial_truncate_p\" (id int PRIMARY KEY)",
+        "INSERT INTO \"nb2448_backup\".\"serial_truncate_p\" VALUES (1), (2)",
+        "CREATE TABLE \"nb2448_backup\".\"serial_truncate\" (id serial PRIMARY KEY, parent_id int REFERENCES \"nb2448_backup\".\"serial_truncate_p\"(id) ON DELETE CASCADE, price int, total int GENERATED ALWAYS AS (price * 2) STORED, label text)",
+        "INSERT INTO \"nb2448_backup\".\"serial_truncate\" (parent_id, price, label) VALUES (1, 10, 'a'), (2, 20, 'it''s'), (NULL, 30, NULL)"
+      ],
+      "checkSql": "SELECT id, parent_id, price, total, label FROM \"nb2448_backup\".\"serial_truncate\" ORDER BY id",
+      "backupStatements": [
+        "CREATE TABLE \"nb2448_backup\".\"serial_truncate_bak_202611190905\" (LIKE \"nb2448_backup\".\"serial_truncate\" INCLUDING ALL)",
+        "CREATE SEQUENCE \"nb2448_backup\".\"serial_truncate_bak_202611190905_id_seq\" OWNED BY \"nb2448_backup\".\"serial_truncate_bak_202611190905\".\"id\"",
+        "ALTER TABLE \"nb2448_backup\".\"serial_truncate_bak_202611190905\" ALTER COLUMN \"id\" SET DEFAULT nextval('\"nb2448_backup\".\"serial_truncate_bak_202611190905_id_seq\"'::regclass)",
+        "INSERT INTO \"nb2448_backup\".\"serial_truncate_bak_202611190905\" (\"id\", \"parent_id\", \"price\", \"label\") OVERRIDING SYSTEM VALUE SELECT \"id\", \"parent_id\", \"price\", \"label\" FROM \"nb2448_backup\".\"serial_truncate\"",
+        "SELECT setval(pg_get_serial_sequence('\"nb2448_backup\".\"serial_truncate_bak_202611190905\"', 'id'), max(\"id\")) FROM \"nb2448_backup\".\"serial_truncate_bak_202611190905\" HAVING max(\"id\") >= (SELECT seqmin FROM pg_sequence WHERE seqrelid = pg_get_serial_sequence('\"nb2448_backup\".\"serial_truncate_bak_202611190905\"', 'id')::regclass)"
+      ],
+      "afterBackup": [
+        "DELETE FROM \"nb2448_backup\".\"serial_truncate_p\""
+      ],
+      "beforeRestore": [
+        "INSERT INTO \"nb2448_backup\".\"serial_truncate_p\" VALUES (1), (2)"
+      ],
+      "mainSql": "TRUNCATE TABLE \"nb2448_backup\".\"serial_truncate\"",
+      "restoreSql": "INSERT INTO \"nb2448_backup\".\"serial_truncate\" (\"id\", \"parent_id\", \"price\", \"label\") OVERRIDING SYSTEM VALUE SELECT \"id\", \"parent_id\", \"price\", \"label\" FROM \"nb2448_backup\".\"serial_truncate_bak_202611190905\""
+    }
+  ]
+}

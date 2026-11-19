@@ -238,4 +238,22 @@ describe("useConfirm / beforeConfirm (#2448)", () => {
     expect(onResult).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "Drop" })).toBeEnabled();
   });
+
+  it("前処理の実行中にキャンセルしたら、完了しても確認にならない", async () => {
+    const onResult = vi.fn();
+    let finish: (v: string | null) => void = () => {};
+    const before = vi.fn(() => new Promise<string | null>((r) => (finish = r)));
+    const user = userEvent.setup();
+    renderWithProviders(<BeforeHarness before={before} onResult={onResult} />);
+    await user.click(screen.getByRole("button", { name: "open" }));
+    await user.click(screen.getByRole("button", { name: "Drop" }));
+    expect(before).toHaveBeenCalledTimes(1);
+    const cancels = screen.getAllByRole("button", { name: t("confirmDefaultCancel") });
+    await user.click(cancels[cancels.length - 1]);
+    finish(null);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(onResult).toHaveBeenCalledTimes(1);
+    expect(onResult).toHaveBeenCalledWith(false);
+  });
 });

@@ -428,4 +428,28 @@ describe("DangerousQueryDialog 退避コピー (#2448)", () => {
     await user.click(screen.getByRole("button", { name: t("dangerousConfirm") }));
     expect(onConfirm).toHaveBeenCalledTimes(1);
   });
+
+  it("退避の実行中にキャンセルしたら、完了しても onConfirm を呼ばない", async () => {
+    const onConfirm = vi.fn();
+    const onCancel = vi.fn();
+    let finish: (v: string | null) => void = () => {};
+    const user = userEvent.setup();
+    renderWithProviders(
+      <DangerousQueryDialog
+        findings={findings}
+        isProduction={false}
+        backup={{ node: null, beforeConfirm: () => new Promise<string | null>((r) => (finish = r)) }}
+        onConfirm={onConfirm}
+        onCancel={onCancel}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: t("dangerousConfirm") }));
+    const cancels = screen.getAllByRole("button", { name: t("dangerousCancel") });
+    await user.click(cancels[cancels.length - 1]);
+    finish(null);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(onCancel).toHaveBeenCalled();
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
 });

@@ -2658,12 +2658,17 @@ const en = {
   backupOptionLabelMany: "Make backup copies of {count} tables before running (<table>_bak_<timestamp>)",
   backupOptionHint:
     "Copies the rows into a new table first and only runs the operation if the copy succeeds. Drop the backup yourself when it is no longer needed.",
-  backupMysqlNote:
-    'MySQL commits DDL implicitly, so "backup then run" is two separate steps: if the operation fails afterwards, the backup table stays.',
   backupRowEstimate: "Rows to back up: about {rows} (estimate)",
   backupLargeData:
     "About {rows} rows will be copied. The backup can take a long time and uses as much disk space as the table itself.",
-  backupFailed: "The backup copy failed, so nothing was run: {error}",
+  backupFailed: "Could not create the backup copy, so the operation was not run: {error}",
+  backupTableMissing: 'Table "{table}" was not found, so no backup copy could be made. Nothing was run.',
+  backupCannotBuild: 'Cannot build a backup copy of "{table}" (is it a view?) {detail}',
+  backupPartial: '{error} (an incomplete backup table "{name}" may remain; drop it manually)',
+  backupStepsNote:
+    "The backup and the operation run as two separate steps: if the operation fails afterwards, the backup table stays. (MySQL commits DDL implicitly, so a failure in the middle of the backup can also leave an empty backup table.)",
+  backupNotCovered:
+    "A backup copy does not restore everything: foreign keys of the backup table (it has none), rows removed from child tables by ON DELETE CASCADE, objects dropped by DROP ... CASCADE, triggers, and privileges are not covered.",
   backupDoneToast: "Backed up to {names}.",
   backupDoneKeptToast: "The operation failed; the backup {names} was kept.",
   backupCopyRestore: "Copy restore SQL",
@@ -11884,12 +11889,18 @@ const ja: Dict = {
   backupOptionLabelMany: "実行前に {count} 個のテーブルの退避コピーを作る (<テーブル>_bak_<日時>)",
   backupOptionHint:
     "先に行を新しいテーブルへコピーし、コピーが成功したときだけ本操作を実行します。不要になった退避テーブルは自分で削除してください。",
-  backupMysqlNote:
-    "MySQL は DDL が暗黙コミットされるため、「退避 → 本操作」は別々の 2 段階です。あとの本操作が失敗しても退避テーブルは残ります。",
   backupRowEstimate: "退避する行数: 約 {rows} 行 (推定)",
   backupLargeData:
     "約 {rows} 行をコピーします。退避に時間がかかり、テーブルと同じ量のディスクを使う可能性があります。",
-  backupFailed: "退避コピーに失敗したため、何も実行していません: {error}",
+  backupFailed: "退避コピーを作れなかったため、本操作は実行していません: {error}",
+  backupTableMissing: 'テーブル "{table}" が見つからないため退避コピーを作れません。何も実行していません。',
+  backupCannotBuild: '"{table}" の退避コピーを組み立てられません (ビューではありませんか?) {detail}',
+  backupPartial:
+    '{error} (不完全な退避テーブル "{name}" が残っている可能性があります。手動で削除してください)',
+  backupStepsNote:
+    "退避と本操作は別々の 2 段階で実行します。あとの本操作が失敗しても退避テーブルは残ります (MySQL は DDL が暗黙コミットされるため、退避の途中で失敗したときも空の退避テーブルが残りえます)。",
+  backupNotCovered:
+    "退避コピーでは戻らないもの: 退避テーブルの外部キー (付きません)、ON DELETE CASCADE で消える子テーブルの行、DROP ... CASCADE で消える依存オブジェクト、トリガ、権限。",
   backupDoneToast: "{names} へ退避しました。",
   backupDoneKeptToast: "本操作は失敗しました。退避テーブル {names} は残っています。",
   backupCopyRestore: "復元用 SQL をコピー",

@@ -161,8 +161,13 @@ import {
 import { useKeyedStable } from "./useKeyedStable";
 import { copyToClipboard } from "./components/clipboard";
 import { BackupBeforeOption } from "./components/BackupBeforeOption";
-import { backupDefaultEnabled, type BackupKind, backupTargetFor } from "./backupBeforeDestructive";
-import { type BackupResult, runBackup } from "./backupRun";
+import {
+  backupDefaultEnabled,
+  type BackupKind,
+  type BackupTarget,
+  backupTargetFor,
+} from "./backupBeforeDestructive";
+import { type BackupResult, resolveBackupDatabase, runBackup } from "./backupRun";
 import {
   buildIndexExecutionPlan,
   planAllSql,
@@ -2735,7 +2740,7 @@ export default function App() {
     /** 影響行プレビュー (#1881) の材料。プリフライトが確定していて推定可能なときだけ入る。 */
     rowPreview?: { sampleSql: string; setColumns: string[] } | null;
     /** 単一テーブルの DROP / TRUNCATE / WHERE なし DELETE のとき、退避コピーの対象 (#2448)。 */
-    backupTarget?: { kind: BackupKind; database: string; table: string } | null;
+    backupTarget?: BackupTarget | null;
   } | null>(null);
   // GUI モーダル経由の DDL の実行ゲート (#2176)。`runGuardedDdl` が開き、承認 / キャンセルで
   // `resolve` を呼んで待機中の呼び出しへ結果を返す。ダイアログはエディタの実行ゲートと同じ。
@@ -7313,19 +7318,12 @@ export default function App() {
             pf && pf.sql === sql && pf.status === "ready" && pf.count !== 0
               ? rowPreviewFor(pf.plan, sql, selectedProfile?.driver)
               : null,
-          backupTarget: (() => {
-            // 退避できるのは「1 文・指摘 1 件」の単一テーブル操作だけ。明示トランザクション中は別接続の退避が
-            // 未コミットの変更を見られないので出さない。
-            if (batch || txActiveRef.current || sessionReadOnly || findings.length !== 1) return null;
-            const bt = backupTargetFor(sql, findings[0].target, selectedProfile?.driver);
-            const driver = selectedProfile?.driver;
-            if (!bt || !driver) return null;
-            const database =
-              bt.database ??
-              target.database ??
-              (driver === "postgres" ? "public" : driver === "sqlite" ? "main" : selectedProfile?.database);
-            return database ? { kind: bt.kind, database, table: bt.table } : null;
-          })(),
+          // 退避できるのは「1 文・指摘 1 件」の単一テーブル操作だけ。明示トランザクション中は別接続の退避が
+          // 未コミットの変更を見られないので出さない。スキーマの特定は effect で非同期に行う。
+          backupTarget:
+            batch || txActiveRef.current || sessionReadOnly || findings.length !== 1
+              ? null
+              : backupTargetFor(sql, selectedProfile?.driver),
         });
         return;
       }
@@ -7402,7 +7400,7 @@ export default function App() {
   // ダイアログは閉じず本操作も実行しない)、`results` = 作れた退避。退避も書き込みなので read_only 接続では
   // 出さない (本操作自体がバックエンドに拒否される)。`confirm_writes` / `is_production` は UI レベルの誤操作防止のみ。
   const makeBackupGate = useCallback(
-    (database: string, tables: string[], kind: BackupKind) => {
+    (database: string, tables: string[], kind: BackupKind, opts?: { missingOk?: boolean }) => {
       const profile = selectedProfile;
       if (!sessionId || !profile || profile.read_only || tables.length === 0) return null;
       const driver = profile.driver;
@@ -7428,8 +7426,21 @@ export default function App() {
             for (const table of tables) {
               // 失敗後に押し直したとき、作成済みの退避を重ねて作らない。
               if (results.some((r) => r.table === table)) continue;
-              const r = await runBackup(api, { sessionId, driver, database, table, kind });
-              if (r) results.push({ ...r, table });
+              const r = await runBackup(api, {
+                sessionId,
+                driver,
+                database,
+                table,
+                kind,
+                missingOk: opts?.missingOk,
+              });
+              if (r) {
+                results.push({ ...r, table });
+                // 退避テーブルが増えたので、スキーマキャッシュとツリーを読み直す (DDL 後の既存の流儀)。
+                invalidateSchemaCache(database);
+                noteSchemaDdl(`CREATE TABLE ${r.backupName}`, database);
+                connectionListRef.current?.refreshSchema();
+              }
             }
             return null;
           } catch (e) {
@@ -7439,7 +7450,7 @@ export default function App() {
         results: () => results,
       };
     },
-    [sessionId, selectedProfile],
+    [sessionId, selectedProfile, invalidateSchemaCache, noteSchemaDdl],
   );
 
   // 退避を作ったあとのトースト: 退避先の名前と「復元用 SQL をコピー」(DROP は RENAME、TRUNCATE / DELETE は INSERT ... SELECT)。
@@ -7465,20 +7476,53 @@ export default function App() {
     [toast],
   );
 
-  // エディタの確認ダイアログ用の退避ゲート。ダイアログごとに 1 つだけ作る (チェック状態を closure に持つため
-  // 毎描画では作り直さない)。
-  // biome-ignore lint/correctness/useExhaustiveDependencies: ダイアログごとに 1 回だけ作る (makeBackupGate は毎回変わりうる)
+  // エディタの確認ダイアログ用の退避ゲート。文にスキーマが書かれていないときは、本操作が実際に触るスキーマを
+  // 非同期に特定する (PostgreSQL は search_path、SQLite は main)。特定できなければ退避オプションを出さない。
+  const [backupResolved, setBackupResolved] = useState<{
+    owner: object;
+    database: string | null;
+  } | null>(null);
+  useEffect(() => {
+    const p = pendingDangerous;
+    const bt = p?.backupTarget;
+    const driver = selectedProfile?.driver;
+    setBackupResolved(null);
+    if (!p || !bt || !sessionId || !driver) return;
+    let cancelled = false;
+    const tabDb = tabsRef.current.find((tb) => tb.id === p.tabId)?.database ?? null;
+    resolveBackupDatabase(api, {
+      sessionId,
+      driver,
+      table: bt.table,
+      explicit: bt.database,
+      tabDatabase: tabDb,
+      profileDatabase: selectedProfile?.database ?? null,
+    })
+      .then((database) => {
+        if (!cancelled) setBackupResolved({ owner: p, database });
+      })
+      .catch(() => {
+        if (!cancelled) setBackupResolved({ owner: p, database: null });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [pendingDangerous, sessionId, selectedProfile?.driver, selectedProfile?.database, tabsRef]);
+  // ダイアログごとに 1 つだけ作る (チェック状態を closure に持つため毎描画では作り直さない)。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: ダイアログと解決結果ごとに 1 回だけ作る (makeBackupGate は毎回変わりうる)
   const dangerousBackup = useMemo(() => {
-    const target = pendingDangerous?.backupTarget;
-    if (!pendingDangerous || !target) return null;
-    return makeBackupGate(target.database, [target.table], target.kind);
-  }, [pendingDangerous]);
+    const bt = pendingDangerous?.backupTarget;
+    if (!pendingDangerous || !bt || backupResolved?.owner !== pendingDangerous || !backupResolved.database) {
+      return null;
+    }
+    return makeBackupGate(backupResolved.database, [bt.table], bt.kind, { missingOk: bt.ifExists });
+  }, [pendingDangerous, backupResolved]);
 
   const handleConfirmDangerous = useCallback(() => {
     if (!pendingDangerous) return;
     const { tabId, sql, autoLimit, batch } = pendingDangerous;
-    // 退避を作っていたら、実行を始める前にトーストで名前と復元用 SQL を渡す (退避は確認ボタンの前処理で作成済み)。
-    announceBackup(dangerousBackup?.results() ?? [], true);
+    // 退避は確認ボタンの前処理で作成済み。トースト (退避先と復元用 SQL) は本操作が終わってから出す。
+    const backedUp = [...(dangerousBackup?.results() ?? [])];
     // 型確認 (#2216) は確認を通過したときだけ「試した」にする (キャンセルでは記録しない)。
     if (pendingDangerous.typedConfirmTarget) markFeatureTried("helpTypeToConfirmTitle");
     setPendingDangerous(null);
@@ -7492,7 +7536,14 @@ export default function App() {
       void runTxInTab(tabId, sql);
       return;
     }
-    void runQueryInTab(tabId, sql, null, autoLimit);
+    void runQueryInTab(
+      tabId,
+      sql,
+      null,
+      autoLimit,
+      false,
+      backedUp.length > 0 ? { onSettled: (ok) => announceBackup(backedUp, ok) } : undefined,
+    );
   }, [pendingDangerous, dangerousBackup, announceBackup, runQueryInTab, runBatchInTab, runTxInTab, tabsRef]);
 
   const handleCancelDangerous = useCallback(() => setPendingDangerous(null), []);
@@ -10156,6 +10207,7 @@ export default function App() {
         tone: "danger",
         typedConfirmation: selectedProfile?.is_production ? table : undefined,
         beforeConfirm: backup?.beforeConfirm,
+        busyLabel: backup ? translate("backupRunning") : undefined,
       });
       if (!ok) return;
       const driver = selectedProfile?.driver ?? "mysql";
@@ -10216,6 +10268,7 @@ export default function App() {
         tone: "danger",
         typedConfirmation: selectedProfile?.is_production ? table : undefined,
         beforeConfirm: backup?.beforeConfirm,
+        busyLabel: backup ? translate("backupRunning") : undefined,
       });
       if (!ok) return;
       const driver = selectedProfile?.driver ?? "mysql";
@@ -11622,6 +11675,7 @@ export default function App() {
         tone: "danger",
         typedConfirmation: production ? database : undefined,
         beforeConfirm: backup?.beforeConfirm,
+        busyLabel: backup ? translate("backupRunning") : undefined,
       });
       if (!ok) return;
       const driver = selectedProfile?.driver ?? "mysql";

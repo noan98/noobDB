@@ -12,6 +12,7 @@ import {
   parsePgForeignKeys,
   type PgColumnFlags,
   type PgForeignKey,
+  LARGE_COPY_ROWS,
   suggestCloneName,
 } from "../tableClone";
 import { tableNameCollides } from "./resultsToTable";
@@ -25,9 +26,6 @@ import { Button, Input, PressableButton, Switch } from "./ui";
 import { Spinner } from "./Spinner";
 import { isPlainEnterKey } from "./modalKeys";
 import { formatRowCount } from "./tableSize";
-
-/** この行数を超えると「データも複製」が長い処理になりうるので警告を出す (推定値で判定)。 */
-const LARGE_CLONE_ROWS = 500_000;
 
 /**
  * テーブル複製ダイアログ (#1398)。
@@ -209,7 +207,7 @@ export function TableCloneModal({ sessionId, driver, database, sourceTable, onCo
             <chakra.span textStyle="caption">
               {t("cloneTableRowEstimate", { rows: formatRowCount(rowEstimate) })}
             </chakra.span>
-            {rowEstimate >= LARGE_CLONE_ROWS && (
+            {rowEstimate >= LARGE_COPY_ROWS && (
               <Callout tone="warning">
                 {t("cloneTableLargeData", { rows: formatRowCount(rowEstimate) })}
               </Callout>
