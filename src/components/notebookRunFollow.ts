@@ -5,29 +5,43 @@
 
 import { useEffect, useRef, type RefObject } from "react";
 
-/** スクロール位置を動かす操作として扱うキー (編集中の要素では無視する)。 */
-const SCROLL_KEYS: ReadonlySet<string> = new Set(["PageUp", "PageDown", "Home", "End", " ", "Spacebar"]);
+/** スクロール位置を動かす操作として扱うキー。ArrowUp / Down は編集欄・選択欄の外だけ。 */
+const SCROLL_KEYS: ReadonlySet<string> = new Set([
+  "PageUp",
+  "PageDown",
+  "Home",
+  "End",
+  "ArrowUp",
+  "ArrowDown",
+]);
+const SPACE_KEYS: ReadonlySet<string> = new Set([" ", "Spacebar"]);
 
 export interface ScrollInput {
   type: string;
   key?: string;
-  /** イベントの発生源が入力欄 / エディタなど編集可能な要素か (キー入力はスクロール操作ではない)。 */
+  /** イベントの発生源が入力欄 / エディタ / 選択欄など、キー操作を自分で使う要素か。 */
   editable?: boolean;
-  /** イベントの発生源がスクロールコンテナ自身か (スクロールバーのドラッグ)。 */
-  onContainer?: boolean;
+  /** イベントの発生源が button / [role=button] か (Space は押下であってスクロールではない)。 */
+  onButton?: boolean;
+  /** wheel / touchmove: 発生源からコンテナまでの間に、自分でスクロールする内側の領域 (エディタ・結果表) があるか。 */
+  innerScroller?: boolean;
+  /** pointerdown: コンテナ自身のスクロールバー上か (余白のクリックは含めない)。 */
+  onScrollbar?: boolean;
 }
 
-/** 利用者が手でスクロールしたと見なせる入力か。 */
+/** 利用者が手でコンテナをスクロールしたと見なせる入力か。 */
 export function isManualScrollInput(e: ScrollInput): boolean {
   switch (e.type) {
     case "wheel":
     case "touchmove":
-      return true;
+      // 内側の領域 (CodeMirror・結果グリッド) のスクロールは、コンテナを動かさない。
+      return e.innerScroller !== true;
     case "pointerdown":
-      // コンテナ自身への押下はスクロールバーのつかみ。セル内のクリックは含めない。
-      return e.onContainer === true;
+      return e.onScrollbar === true;
     case "keydown":
-      return !e.editable && e.key !== undefined && SCROLL_KEYS.has(e.key);
+      if (e.editable || e.key === undefined) return false;
+      if (SPACE_KEYS.has(e.key)) return !e.onButton;
+      return SCROLL_KEYS.has(e.key);
     default:
       return false;
   }
@@ -38,9 +52,37 @@ export function followScrollOptions(still: boolean): ScrollIntoViewOptions {
   return { block: "nearest", behavior: still ? "auto" : "smooth" };
 }
 
+const KEY_OWNER_SELECTOR =
+  "input, textarea, select, [contenteditable], [role=textbox], [role=listbox], [role=combobox], [role=option], [role=menu], [role=slider]";
+
 function isEditable(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  return target.isContentEditable || target.matches("input, textarea, select");
+  return (
+    target instanceof HTMLElement && (target.isContentEditable || target.closest(KEY_OWNER_SELECTOR) !== null)
+  );
+}
+
+function isButton(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement && target.closest("button, [role=button]") !== null;
+}
+
+/** `target` からコンテナ (含まない) までに、縦に溢れて自分でスクロールする祖先があるか。 */
+function hasInnerScroller(target: EventTarget | null, container: HTMLElement): boolean {
+  let node = target instanceof HTMLElement ? target : null;
+  while (node && node !== container) {
+    if (node.scrollHeight > node.clientHeight) {
+      const overflowY = getComputedStyle(node).overflowY;
+      if (overflowY === "auto" || overflowY === "scroll") return true;
+    }
+    node = node.parentElement;
+  }
+  return false;
+}
+
+/** コンテナ自身のスクロールバー (右端の clientWidth より外側) への押下か。 */
+function isOnScrollbar(ev: Event, container: HTMLElement): boolean {
+  if (ev.target !== container || !(ev instanceof MouseEvent)) return false;
+  if (container.offsetWidth <= container.clientWidth) return false;
+  return ev.clientX >= container.getBoundingClientRect().left + container.clientLeft + container.clientWidth;
 }
 
 /**
@@ -60,7 +102,9 @@ export function useFollowLatch(containerRef: RefObject<HTMLElement | null>, acti
           type: ev.type,
           key: ev instanceof KeyboardEvent ? ev.key : undefined,
           editable: isEditable(ev.target),
-          onContainer: ev.target === el,
+          onButton: isButton(ev.target),
+          innerScroller: hasInnerScroller(ev.target, el),
+          onScrollbar: isOnScrollbar(ev, el),
         })
       ) {
         following.current = false;

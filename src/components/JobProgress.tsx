@@ -123,10 +123,13 @@ export function JobOutcome({
   tone,
   detail,
   message,
+  role: roleOverride,
   children,
   testId,
 }: {
   kind: "done" | "cancelled" | "error";
+  /** Callout の role の上書き。既定は error が alert、それ以外は status。割り込まず読み上げたい失敗は "status"。 */
+  role?: "status" | "alert";
   /** 既定は kind から決める (完了 success / 中断 warning / 失敗 danger)。スキップ有りの完了は warning にできる。 */
   tone?: SemanticRole;
   /** 進捗の最終値。無ければ Callout だけ。 */
@@ -139,7 +142,7 @@ export function JobOutcome({
   return (
     <chakra.div display="flex" flexDirection="column" gap="2" data-testid={testId}>
       {detail && <JobProgressDetail {...detail} running={false} tone={role} full={kind === "done"} />}
-      <Callout tone={role} role={kind === "error" ? "alert" : "status"}>
+      <Callout tone={role} role={roleOverride ?? (kind === "error" ? "alert" : "status")}>
         {message}
       </Callout>
       {children}

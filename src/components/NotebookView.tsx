@@ -450,11 +450,17 @@ interface RunStop {
   total: number;
   /** 完了した件数 (止まったセルは含まない)。 */
   done: number;
-  kind: "error" | "cancelled";
+  kind: "error" | "cancelled" | "connection";
   elapsedMs: number;
   /** 止まったときの文書の世代 (新規 / 読み込みで入れ替わったら表示しない)。 */
   epoch: number;
 }
+
+const STOP_MESSAGE_KEY = {
+  error: "notebookStoppedFailed",
+  cancelled: "notebookStoppedCancelled",
+  connection: "notebookStoppedConnChanged",
+} as const;
 
 /** スクロール領域内で、指定セルの枠 (`data-notebook-cell-id`) を探す。 */
 function findCellSection(host: HTMLElement | null, cellId: string): HTMLElement | null {
@@ -1045,7 +1051,7 @@ export function NotebookView(props: NotebookViewProps) {
         // 確認した後にセルの接続が変えられていたら、確認なしでは流さず止める。
         if ((latest.connection?.profileId ?? null) !== (c.connection?.profileId ?? null)) {
           toast.error(t("notebookCellConnChanged"));
-          stop = { cellId: c.id, index: i + 1, kind: "error" };
+          stop = { cellId: c.id, index: i + 1, kind: "connection" };
           break;
         }
         // 失敗・取りやめ・中止のセルで止める (後続は前のセルの結果を前提にしがち)。
@@ -1080,10 +1086,14 @@ export function NotebookView(props: NotebookViewProps) {
   // 止まったセルへは追従の有無に関わらず着地させ、外枠を 1 回光らせる (reduced-motion / hc-* は光らせない)。
   useEffect(() => {
     if (!stopped) return;
-    const el = findCellSection(scrollHostRef.current, stopped.cellId);
-    if (!el) return;
-    el.scrollIntoView?.(followScrollOptions(still));
-    pulseFocusLanding(el);
+    // 進捗ブロックの退場で高さが縮むので、1 フレーム待ってから位置を決める。
+    const raf = requestAnimationFrame(() => {
+      const el = findCellSection(scrollHostRef.current, stopped.cellId);
+      if (!el) return;
+      el.scrollIntoView?.(followScrollOptions(still));
+      pulseFocusLanding(el);
+    });
+    return () => cancelAnimationFrame(raf);
   }, [stopped, still]);
 
   const onRunCell = useCallback(
@@ -1451,15 +1461,10 @@ export function NotebookView(props: NotebookViewProps) {
           </Button>
         </Tooltip>
       </chakra.header>
-      <Box ref={scrollHostRef} flex="1" minH={0} overflowY="auto" px="6" py="4">
+      <chakra.div px="6" data-testid="notebook-run-status-area">
         <Flex direction="column" maxW="960px" mx="auto" gap="3">
-          {mismatch && (
-            <Callout tone="info" role="status">
-              {t("notebookConnectionMismatch", { name: mismatch.name })}
-            </Callout>
-          )}
           <JobPresence show={runAll}>
-            <Flex direction="column" gap="1.5" data-testid="notebook-run-progress">
+            <Flex direction="column" gap="1.5" pt="3" data-testid="notebook-run-progress">
               <chakra.div color="app.textMuted" textStyle="caption" role="status">
                 {t("notebookRunning")}
               </chakra.div>
@@ -1477,19 +1482,37 @@ export function NotebookView(props: NotebookViewProps) {
             </Flex>
           </JobPresence>
           {stopped && stopped.epoch === epoch && !runAll && (
-            // JobOutcome の error は role="alert" だが、停止位置は割り込まず読み上げたいので、
-            // 失敗も cancelled (role="status") 枠に danger の意味色で出す。
-            <JobOutcome
-              kind="cancelled"
-              tone={stopped.kind === "error" ? "danger" : "warning"}
-              detail={{ done: stopped.done, total: stopped.total, elapsedMs: stopped.elapsedMs }}
-              message={t(stopped.kind === "error" ? "notebookStoppedFailed" : "notebookStoppedCancelled", {
-                index: stopped.index,
-                total: stopped.total,
-                done: stopped.done,
-              })}
-              testId="notebook-run-stopped"
-            />
+            // 停止位置は割り込まず読み上げたいので、失敗も role="status" にする。
+            <chakra.div pt="3">
+              <JobOutcome
+                kind={stopped.kind === "cancelled" ? "cancelled" : "error"}
+                role="status"
+                detail={{ done: stopped.done, total: stopped.total, elapsedMs: stopped.elapsedMs }}
+                message={t(STOP_MESSAGE_KEY[stopped.kind], {
+                  index: stopped.index,
+                  total: stopped.total,
+                  done: stopped.done,
+                })}
+                testId="notebook-run-stopped"
+              />
+            </chakra.div>
+          )}
+        </Flex>
+      </chakra.div>
+      <Box
+        ref={scrollHostRef}
+        data-testid="notebook-scroll-host"
+        flex="1"
+        minH={0}
+        overflowY="auto"
+        px="6"
+        py="4"
+      >
+        <Flex direction="column" maxW="960px" mx="auto" gap="3">
+          {mismatch && (
+            <Callout tone="info" role="status">
+              {t("notebookConnectionMismatch", { name: mismatch.name })}
+            </Callout>
           )}
           {doc.cells.length === 0 ? (
             <EmptyState
