@@ -6,7 +6,6 @@ import {
   backupTimestamp,
   buildBackupPlan,
   buildRestoreSql,
-  isBackupTableName,
 } from "../backupBeforeDestructive";
 import { resolveBackupDatabase, runBackup, type BackupApi } from "../backupRun";
 
@@ -29,8 +28,7 @@ describe("backupTableName", () => {
   it("<table>_bak_<YYYYMMDDHHmm>", () => {
     expect(backupTimestamp(NOW)).toBe("202611190905");
     expect(backupTableName("mysql", "orders", NOW)).toBe("orders_bak_202611190905");
-    expect(isBackupTableName("orders_bak_202611190905")).toBe(true);
-    expect(isBackupTableName("orders_bak_2026")).toBe(false);
+    expect(backupTableName("mysql", "orders", NOW)).toMatch(/_bak_\d{12}$/);
   });
   it("同じ分の既存名と衝突したら連番 (大小無視)", () => {
     expect(backupTableName("sqlite", "t", NOW, ["T_bak_202611190905"])).toBe("t_bak_202611190905_2");

@@ -16,7 +16,6 @@ import {
   buildCloneStatements,
   buildCopyRowsSql,
   fitIdent,
-  formatCloneStatements,
   type PgColumnFlags,
 } from "./tableClone";
 
@@ -51,11 +50,6 @@ export function backupTableName(
   let candidate = fitIdent(driver, table, base);
   for (let n = 2; used.has(candidate.toLowerCase()); n++) candidate = fitIdent(driver, table, `${base}_${n}`);
   return candidate;
-}
-
-/** 退避先の名前が、この名前の退避テーブルか (アドバイザなどの取り残し検出用)。 */
-export function isBackupTableName(name: string): boolean {
-  return /_bak_\d{12}(?:_\d+)?$/.test(name);
 }
 
 export interface BackupPlanInput {
@@ -133,11 +127,6 @@ export function buildBackupPlan(i: BackupPlanInput): BackupPlan {
     restoreSql: buildRestoreSql(i.driver, i.database, i.table, backupName, i.kind, i.columns),
     errors: clone.errors,
   };
-}
-
-/** プレビュー用: 退避の文を `;` 付きで並べる。 */
-export function formatBackupStatements(statements: readonly string[]): string {
-  return formatCloneStatements([...statements]);
 }
 
 /** エディタの文から、退避できる単一テーブルの破壊的操作を読み取った結果。 */
