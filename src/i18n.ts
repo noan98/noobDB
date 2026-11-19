@@ -744,6 +744,10 @@ const en = {
   settingsFlightRecorderEnabled: "Capture writes for undo",
   settingsFlightRecorderEnabledHelp:
     "When on, an INSERT/UPDATE/DELETE run from the editor (each one in a multi-statement script too, up to 200 per run, counting declined ones) tries to capture a before/after image before executing, stored only in a local file (never sent to the server).",
+  settingsTxWarnProduction: "Open-transaction warning, production (minutes)",
+  settingsTxWarnOther: "Open-transaction warning, other connections (minutes)",
+  settingsTxWarnHelp:
+    "When an explicit transaction stays open longer than this, its TX badge turns to the warning color and a notification is shown once. Production connections usually want a shorter value.",
   settingsFlightRecorderRowCap: "Row cap per write",
   settingsFlightRecorderRowCapHelp:
     "A write that would affect more rows than this runs normally but is not captured (no undo available for it).",
@@ -1077,6 +1081,39 @@ const en = {
     "The current connection still holds an uncommitted transaction. It stays open in the background while you switch, so its changes and row locks remain until you come back and commit or roll back.",
   connSwitchTxAction: "Switch anyway",
   txActiveHelp: "An explicit transaction is active. Queries run inside it until commit/rollback.",
+  txElapsedHelp: "Open for {elapsed}.",
+  txStaleHelp:
+    "This transaction has been open for a long time. It keeps its row locks and can block other sessions; commit or roll back soon.",
+  txSqliteLockHelp:
+    "SQLite: a write transaction holds the file lock and blocks other writers until you commit or roll back.",
+  txStaleToast: "This transaction has been open for {elapsed}. Commit or roll back to release its locks.",
+  txBlockingCount: "Blocking {count}",
+  txBlockingNone: "Blocking 0",
+  txBlockingHelp:
+    "Number of other sessions currently waiting on a lock held by this transaction. Refreshed every few seconds.",
+  txBlockingToast:
+    "This transaction is blocking {count} other session(s). Commit or roll back to release them.",
+  txBlockingUnknown: "Blocking: unknown",
+  txBlockingUnknownHelp:
+    "Could not determine how many sessions this transaction blocks (missing privileges or lock tables unavailable). It may still be blocking others.",
+  txBlockingUnsupported: "Blocking: n/a",
+  txBlockingUnsupportedHelp:
+    "SQLite has no server, so the number of blocked sessions is not available. Only the elapsed time is shown.",
+  txChangesSummary: "Changes ({statements} stmts / {rows} rows)",
+  txChangesTitle: "Statements run in this transaction",
+  txJournalOmitted:
+    "The oldest {count} statement(s) are omitted from this list. The totals still include them.",
+  txChangesEmpty: "No statements have been run in this transaction yet.",
+  txChangesNote:
+    "Only statements run from the editor or notebook while the transaction is open are listed. Reads are shown but not counted as changes. Statements undone by ROLLBACK TO SAVEPOINT stay in this list and the totals.",
+  txChangesFailedNote: "{count} statement(s) failed and are not counted.",
+  txEntryAffected: "{rows} rows affected",
+  txEntryRead: "{rows} rows read",
+  txEntryFailed: "Failed",
+  txCommitConfirmTitle: "Commit this transaction?",
+  txCommitConfirmBody:
+    "This production connection will commit {statements} statement(s) / {rows} row(s). Review the statements below before committing.",
+  txCommitConfirmAction: "Commit",
   txIsolationLabel: "Isolation level",
   txIsolationDefault: "Server default",
   txIsolationReadCommitted: "READ COMMITTED",
@@ -10009,6 +10046,10 @@ const ja: Dict = {
   settingsFlightRecorderEnabled: "書き込みを記録して Undo に備える",
   settingsFlightRecorderEnabledHelp:
     "オンのとき、エディタから実行した INSERT/UPDATE/DELETE (複数文スクリプトでは 1 文ずつ、1 回の実行で最大 200 文まで) は実行前に before/after イメージの記録を試みます。ローカルのファイルにのみ保存され、サーバへは送信されません。",
+  settingsTxWarnProduction: "トランザクション放置の警告 本番 (分)",
+  settingsTxWarnOther: "トランザクション放置の警告 本番以外 (分)",
+  settingsTxWarnHelp:
+    "明示トランザクションがこの時間より長く開いたままだと、TX バッジが警告色になり通知を 1 回出します。本番接続は短めの値がおすすめです。",
   settingsFlightRecorderRowCap: "1 回の書き込みあたりの対象行数上限",
   settingsFlightRecorderRowCapHelp:
     "この行数を超える書き込みは通常どおり実行されますが記録はされません (その操作の Undo は使えません)。",
@@ -10337,6 +10378,38 @@ const ja: Dict = {
     "現在の接続は未確定のトランザクションを保持しています。切り替えてもバックグラウンドで開いたままになり、戻って確定または破棄するまで変更と行ロックが残ります。",
   connSwitchTxAction: "このまま切り替える",
   txActiveHelp: "明示トランザクションが有効です。クエリは確定/破棄するまでこの中で実行されます。",
+  txElapsedHelp: "開始から {elapsed} 経過しています。",
+  txStaleHelp:
+    "このトランザクションは長く開いたままです。行ロックを保持し続け、他のセッションを止める恐れがあります。早めに確定または破棄してください。",
+  txSqliteLockHelp:
+    "SQLite: 書き込みトランザクションはファイルロックを保持し、確定または破棄するまで他の書き込みを止めます。",
+  txStaleToast:
+    "このトランザクションが {elapsed} 開いたままです。ロックを手放すため確定または破棄してください。",
+  txBlockingCount: "ブロック中 {count}",
+  txBlockingNone: "ブロック中 0",
+  txBlockingHelp: "このトランザクションが持つロックを待っている他セッションの数です。数秒ごとに更新します。",
+  txBlockingToast:
+    "このトランザクションが他の {count} セッションをブロックしています。確定または破棄して解放してください。",
+  txBlockingUnknown: "ブロック数: 不明",
+  txBlockingUnknownHelp:
+    "このトランザクションがブロックしているセッション数を取得できませんでした (権限不足またはロック情報を読めない)。他セッションを止めている可能性はあります。",
+  txBlockingUnsupported: "ブロック数: 対象外",
+  txBlockingUnsupportedHelp:
+    "SQLite はサーバが無いため、ブロック中のセッション数は取得できません (表示は経過時間のみ)。",
+  txChangesSummary: "変更 ({statements} 文 / {rows} 行)",
+  txChangesTitle: "このトランザクションで実行した文",
+  txJournalOmitted: "古い {count} 文は一覧から省略しています (集計には含まれます)。",
+  txChangesEmpty: "このトランザクションではまだ文を実行していません。",
+  txChangesNote:
+    "トランザクション中にエディタ / ノートブックから実行した文を表示します。読み取りは一覧に出ますが、変更には数えません。ROLLBACK TO SAVEPOINT で取り消した文も一覧と集計に残ります。",
+  txChangesFailedNote: "失敗した文が {count} 件あります (変更には数えません)。",
+  txEntryAffected: "{rows} 行を変更",
+  txEntryRead: "{rows} 行を取得",
+  txEntryFailed: "失敗",
+  txCommitConfirmTitle: "このトランザクションをコミットしますか?",
+  txCommitConfirmBody:
+    "本番接続で {statements} 文 / {rows} 行の変更を確定します。下の実行内容を確認してからコミットしてください。",
+  txCommitConfirmAction: "コミットする",
   txIsolationLabel: "分離レベル",
   txIsolationDefault: "サーバ既定",
   txIsolationReadCommitted: "READ COMMITTED",

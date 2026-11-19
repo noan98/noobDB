@@ -159,6 +159,12 @@ import {
   setBatchWrapInTransaction,
   setFlightRecorderEnabled,
   setFlightRecorderRowCap,
+  setTxWarnMinutesProduction,
+  setTxWarnMinutesOther,
+  MIN_TX_WARN_MINUTES,
+  MAX_TX_WARN_MINUTES,
+  DEFAULT_TX_WARN_MINUTES_PRODUCTION,
+  DEFAULT_TX_WARN_MINUTES_OTHER,
   setFlightRecorderRetentionDays,
   setStreamPrefetchSize,
   setSyntaxColor,
@@ -802,6 +808,8 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
     String(settings.queryNotificationThresholdSecs),
   );
   const [flightRowCapInput, setFlightRowCapInput] = useState(String(settings.flightRecorderRowCap));
+  const [txWarnProdInput, setTxWarnProdInput] = useState(String(settings.txWarnMinutesProduction));
+  const [txWarnOtherInput, setTxWarnOtherInput] = useState(String(settings.txWarnMinutesOther));
   const [flightRetentionInput, setFlightRetentionInput] = useState(
     String(settings.flightRecorderRetentionDays),
   );
@@ -855,6 +863,11 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
     [settings.queryNotificationThresholdSecs],
   );
   useEffect(
+    () => setTxWarnProdInput(String(settings.txWarnMinutesProduction)),
+    [settings.txWarnMinutesProduction],
+  );
+  useEffect(() => setTxWarnOtherInput(String(settings.txWarnMinutesOther)), [settings.txWarnMinutesOther]);
+  useEffect(
     () => setFlightRowCapInput(String(settings.flightRecorderRowCap)),
     [settings.flightRecorderRowCap],
   );
@@ -907,6 +920,11 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
     const n = Number.parseInt(reconnectRetriesInput, 10);
     if (Number.isFinite(n)) setAutoReconnectMaxRetries(n);
     setReconnectRetriesInput(String(getSettings().autoReconnectMaxRetries));
+  };
+  const commitTxWarn = (raw: string, set: (n: number) => void, reset: () => void) => {
+    const n = Number.parseInt(raw, 10);
+    if (Number.isSafeInteger(n) && n >= MIN_TX_WARN_MINUTES && n <= MAX_TX_WARN_MINUTES) set(n);
+    reset();
   };
   const commitFlightRowCap = () => {
     const n = Number.parseInt(flightRowCapInput, 10);
@@ -2155,6 +2173,56 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
                     onChange={setBatchWrapInTransaction}
                   />
                 </SettingsToggleRow>
+                <SettingsNumberRow>
+                  <SettingsLabelWithInfo>
+                    <chakra.label htmlFor="settings-tx-warn-prod">
+                      {t("settingsTxWarnProduction")}
+                    </chakra.label>
+                    <SettingsInfo>{t("settingsTxWarnHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Input
+                    id="settings-tx-warn-prod"
+                    type="number"
+                    min={MIN_TX_WARN_MINUTES}
+                    max={MAX_TX_WARN_MINUTES}
+                    step={1}
+                    value={txWarnProdInput}
+                    placeholder={String(DEFAULT_TX_WARN_MINUTES_PRODUCTION)}
+                    onChange={(e) => setTxWarnProdInput(e.target.value)}
+                    onBlur={() =>
+                      commitTxWarn(txWarnProdInput, setTxWarnMinutesProduction, () =>
+                        setTxWarnProdInput(String(getSettings().txWarnMinutesProduction)),
+                      )
+                    }
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                    }}
+                  />
+                </SettingsNumberRow>
+                <SettingsNumberRow>
+                  <SettingsLabelWithInfo>
+                    <chakra.label htmlFor="settings-tx-warn-other">{t("settingsTxWarnOther")}</chakra.label>
+                    <SettingsInfo>{t("settingsTxWarnHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Input
+                    id="settings-tx-warn-other"
+                    type="number"
+                    min={MIN_TX_WARN_MINUTES}
+                    max={MAX_TX_WARN_MINUTES}
+                    step={1}
+                    value={txWarnOtherInput}
+                    placeholder={String(DEFAULT_TX_WARN_MINUTES_OTHER)}
+                    onChange={(e) => setTxWarnOtherInput(e.target.value)}
+                    onBlur={() =>
+                      commitTxWarn(txWarnOtherInput, setTxWarnMinutesOther, () =>
+                        setTxWarnOtherInput(String(getSettings().txWarnMinutesOther)),
+                      )
+                    }
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                    }}
+                  />
+                </SettingsNumberRow>
                 <SettingsToggleRow>
                   <SettingsLabelWithInfo>
                     <SettingsToggleLabel as="span">

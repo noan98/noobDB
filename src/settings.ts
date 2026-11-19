@@ -388,6 +388,10 @@ export interface Settings {
   flightRecorderEnabled: boolean;
   /** 1 回の書き込みで退避する対象行数の上限。超えると記録なしで実行する。 */
   flightRecorderRowCap: number;
+  /** 本番接続の明示トランザクションが、この分数を超えて開いたままだと警告する (#2447)。 */
+  txWarnMinutesProduction: number;
+  /** 本番以外の接続の同じしきい値 (分, #2447)。 */
+  txWarnMinutesOther: number;
   /** 退避した before/after イメージの保持期間 (日数)。0 は無期限。 */
   flightRecorderRetentionDays: number;
   /**
@@ -882,6 +886,11 @@ export const DEFAULT_FLIGHT_RECORDER_ENABLED = true;
 export const DEFAULT_FLIGHT_RECORDER_ROW_CAP = 10_000;
 export const MIN_FLIGHT_RECORDER_ROW_CAP = 1;
 export const MAX_FLIGHT_RECORDER_ROW_CAP = 100_000;
+/** 明示トランザクションの放置警告 (#2447) のしきい値 (分)。本番は短め。 */
+export const DEFAULT_TX_WARN_MINUTES_PRODUCTION = 3;
+export const DEFAULT_TX_WARN_MINUTES_OTHER = 10;
+export const MIN_TX_WARN_MINUTES = 1;
+export const MAX_TX_WARN_MINUTES = 1_440;
 export const DEFAULT_FLIGHT_RECORDER_RETENTION_DAYS = 30;
 export const MIN_FLIGHT_RECORDER_RETENTION_DAYS = 0;
 export const MAX_FLIGHT_RECORDER_RETENTION_DAYS = 3_650;
@@ -960,6 +969,8 @@ export const DEFAULT_SETTINGS: Settings = {
   commandPaletteMru: DEFAULT_COMMAND_PALETTE_MRU,
   flightRecorderEnabled: DEFAULT_FLIGHT_RECORDER_ENABLED,
   flightRecorderRowCap: DEFAULT_FLIGHT_RECORDER_ROW_CAP,
+  txWarnMinutesProduction: DEFAULT_TX_WARN_MINUTES_PRODUCTION,
+  txWarnMinutesOther: DEFAULT_TX_WARN_MINUTES_OTHER,
   flightRecorderRetentionDays: DEFAULT_FLIGHT_RECORDER_RETENTION_DAYS,
   tableOpenQueryTemplate: "",
   tableOpenQueryOverrides: [],
@@ -1226,6 +1237,8 @@ export function normalizeSettings(input: unknown): Settings {
     commandPaletteMru?: unknown;
     flightRecorderEnabled?: unknown;
     flightRecorderRowCap?: unknown;
+    txWarnMinutesProduction?: unknown;
+    txWarnMinutesOther?: unknown;
     flightRecorderRetentionDays?: unknown;
     tableOpenQueryTemplate?: unknown;
     tableOpenQueryOverrides?: unknown;
@@ -1421,6 +1434,18 @@ export function normalizeSettings(input: unknown): Settings {
       DEFAULT_FLIGHT_RECORDER_ROW_CAP,
       MIN_FLIGHT_RECORDER_ROW_CAP,
       MAX_FLIGHT_RECORDER_ROW_CAP,
+    ),
+    txWarnMinutesProduction: sanitizeIntInRange(
+      parsed.txWarnMinutesProduction,
+      DEFAULT_TX_WARN_MINUTES_PRODUCTION,
+      MIN_TX_WARN_MINUTES,
+      MAX_TX_WARN_MINUTES,
+    ),
+    txWarnMinutesOther: sanitizeIntInRange(
+      parsed.txWarnMinutesOther,
+      DEFAULT_TX_WARN_MINUTES_OTHER,
+      MIN_TX_WARN_MINUTES,
+      MAX_TX_WARN_MINUTES,
     ),
     flightRecorderRetentionDays: sanitizeIntInRange(
       parsed.flightRecorderRetentionDays,
@@ -2139,6 +2164,32 @@ export function setFlightRecorderRowCap(value: number): void {
   );
   if (next === current.flightRecorderRowCap) return;
   current = { ...current, flightRecorderRowCap: next };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setTxWarnMinutesProduction(value: number): void {
+  const next = sanitizeIntInRange(
+    value,
+    current.txWarnMinutesProduction,
+    MIN_TX_WARN_MINUTES,
+    MAX_TX_WARN_MINUTES,
+  );
+  if (next === current.txWarnMinutesProduction) return;
+  current = { ...current, txWarnMinutesProduction: next };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setTxWarnMinutesOther(value: number): void {
+  const next = sanitizeIntInRange(
+    value,
+    current.txWarnMinutesOther,
+    MIN_TX_WARN_MINUTES,
+    MAX_TX_WARN_MINUTES,
+  );
+  if (next === current.txWarnMinutesOther) return;
+  current = { ...current, txWarnMinutesOther: next };
   persist();
   listeners.forEach((cb) => cb());
 }

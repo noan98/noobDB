@@ -1982,6 +1982,7 @@ pub fn run() {
             commands::query::begin_transaction,
             commands::query::run_in_transaction,
             commands::query::finish_transaction,
+            commands::query::transaction_blocked_sessions,
             commands::query::create_savepoint,
             commands::query::rollback_to_savepoint,
             commands::query::release_savepoint,

@@ -27,6 +27,9 @@ export const queryCommands = {
   /** 明示トランザクションを確定 (commit=true) / 破棄 (false) する。 */
   finishTransaction: (sessionId: string, commit: boolean) =>
     invoke<void>("finish_transaction", { sessionId, commit }),
+  /** 開いている明示トランザクションがブロックしている他セッション数。null は取得不可 (SQLite は対象外, #2447)。 */
+  transactionBlockedSessions: (sessionId: string) =>
+    invoke<number | null>("transaction_blocked_sessions", { sessionId }),
 
   // 明示トランザクション内の SAVEPOINT (#1418)。名前は英数字と _ のみ。
   createSavepoint: (sessionId: string, name: string) => invoke<void>("create_savepoint", { sessionId, name }),

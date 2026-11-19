@@ -681,6 +681,9 @@ safe(REASON.DRY_RUN, "preview_query_stream", "import_dry_run");
 // 重複レコードのマージのプレビュー: 計画のための SELECT / メタデータ取得だけで、何も書かない。
 safe(REASON.SESSION_READ, "preview_row_merge");
 
+// 開いている明示トランザクションがブロックしている他セッション数 (#2447): ロック待ちの読み取りのみ。
+safe(REASON.SESSION_READ, "transaction_blocked_sessions");
+
 safe(
   REASON.TX_CONTROL,
   "begin_transaction",
@@ -754,6 +757,7 @@ const CONNECTION_READ_METHODS = new Set([
   "driver_kind",
   "connect",
   "transaction_active",
+  "transaction_blocked_sessions",
   "transaction_read_only",
   "health_check",
   "resolve_database",
