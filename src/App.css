@@ -3209,6 +3209,16 @@ td.is-find-current::after {
 }
 .is-focus-landing[data-notebook-cell-id]::after { border-radius: inherit; }
 
+/* セル間の挿入ライン (#2453)。ホバー / フォーカスで現れる細い線 (出入りは motion の fadeScale)。
+   線は枠色ではなくアクセント色にして、挿入位置が分かるようにする。 */
+.notebook-insert-rule {
+  position: absolute;
+  inset-inline: 0;
+  top: 50%;
+  border-top: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  pointer-events: none;
+}
+
 /* 無効な主アクションへの Cmd/Ctrl+Enter (Modal の submitDisabled) を「拒否」で返す共有
    キーフレーム (#1831)。`components/submitRejectFeedback.ts` が `data-submit-rejected` を
    付け、animationend で外す。motion/react が `transform` をインラインで持つため、衝突しない

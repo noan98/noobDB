@@ -86,6 +86,11 @@ function setup(over: Partial<React.ComponentProps<typeof NotebookView>> = {}) {
   return { props, onRunSql, rerender, unmount: view.unmount };
 }
 
+/** ヘッダの「その他」メニュー (新規・開く・別名保存・書き出し) を開く。 */
+function openHeaderMenu() {
+  fireEvent.click(screen.getByRole("button", { name: t("notebookMoreActions") }));
+}
+
 function seed(...cells: ReturnType<typeof newSqlCell | typeof newMarkdownCell>[]) {
   const d = createEmptyNotebook(null);
   d.cells = cells;
@@ -167,7 +172,8 @@ describe("NotebookView (#2380)", () => {
     await screen.findByTestId("notebook-snapshot-meta");
     fireEvent.change(screen.getByLabelText("sql-editor"), { target: { value: "SELECT 3" } });
     mocks.save.mockResolvedValue("/tmp/out.md");
-    fireEvent.click(screen.getByRole("button", { name: new RegExp(t("notebookExportMd")) }));
+    openHeaderMenu();
+    fireEvent.click(screen.getByRole("menuitem", { name: new RegExp(t("notebookExportMd")) }));
     await screen.findByText(t("notebookExportStaleTitle"));
     fireEvent.click(screen.getAllByRole("button", { name: t("confirmDefaultCancel") }).at(-1) as HTMLElement);
     await waitFor(() => expect(screen.queryByText(t("notebookExportStaleTitle"))).toBeNull());
@@ -210,7 +216,8 @@ describe("NotebookView (#2380)", () => {
     await screen.findByTestId("notebook-snapshot-meta");
     fireEvent.change(screen.getByLabelText("sql-editor"), { target: { value: "SELECT 3" } });
     mocks.save.mockResolvedValue("/tmp/out.md");
-    fireEvent.click(screen.getByRole("button", { name: new RegExp(t("notebookExportMd")) }));
+    openHeaderMenu();
+    fireEvent.click(screen.getByRole("menuitem", { name: new RegExp(t("notebookExportMd")) }));
     fireEvent.click(await screen.findByRole("button", { name: t("notebookExportStaleConfirm") }));
     await waitFor(() => expect(mocks.writeTextFile).toHaveBeenCalledTimes(1));
     expect(mocks.writeTextFile.mock.calls[0][1]).toContain(t("notebookExportStaleNote"));
@@ -492,10 +499,14 @@ describe("NotebookView (#2380)", () => {
     });
     await waitFor(() => expect(mocks.writeTextFile).toHaveBeenCalled());
     // 書き込み中は新規 / 開くを押せない
-    expect((screen.getByRole("button", { name: t("notebookNew") }) as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByRole("button", { name: t("notebookOpen") }) as HTMLButtonElement).disabled).toBe(
+    openHeaderMenu();
+    expect((screen.getByRole("menuitem", { name: t("notebookNew") }) as HTMLButtonElement).disabled).toBe(
       true,
     );
+    expect((screen.getByRole("menuitem", { name: t("notebookOpen") }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
     act(() => updateNotebook((x) => ({ ...x, title: "保存中に変えた" })));
     await act(async () => {
       finish(10);
@@ -782,6 +793,111 @@ describe("NotebookView (#2380)", () => {
         const cell = getNotebookState().doc.cells[0];
         expect(cell.kind === "sql" && cell.snapshot?.error).toBe("syntax error near '********' at line 1");
       });
+    });
+  });
+  describe("読む文書らしい見た目 (#2453)", () => {
+    it("補助操作は常に DOM にあり (Tab / aria-label を維持)、ホバー / フォーカスで見せる印が付く", () => {
+      seed(newSqlCell("SELECT 1"), newMarkdownCell("# 見出し"));
+      setup();
+      const tools = screen.getAllByTestId("notebook-cell-more-tools");
+      expect(tools).toHaveLength(2);
+      for (const name of [
+        t("notebookMoveUp"),
+        t("notebookMoveDown"),
+        t("notebookCollapse"),
+        t("notebookDelete"),
+      ]) {
+        for (const el of screen.getAllByRole("button", { name })) {
+          expect(el.closest("[data-cell-hover]")).not.toBeNull();
+        }
+      }
+      // 実行ボタンと接続の選択は常時表示の側 (ホバー対象の外)
+      expect(
+        screen.getByRole("button", { name: t("notebookRunCell") }).closest("[data-cell-hover]"),
+      ).toBeNull();
+      expect(
+        screen.getByRole("combobox", { name: t("notebookCellConn") }).closest("[data-cell-hover]"),
+      ).toBeNull();
+    });
+
+    it("非編集の説明セルは枠なしの本文 (data-plain)、編集中は枠付きに戻る", () => {
+      seed(newMarkdownCell("本文です"));
+      setup();
+      const section = screen.getByTestId("notebook-markdown-view").closest("section") as HTMLElement;
+      expect(section.hasAttribute("data-plain")).toBe(true);
+      fireEvent.click(screen.getByRole("button", { name: new RegExp(t("notebookEdit")) }));
+      expect(section.hasAttribute("data-plain")).toBe(false);
+    });
+
+    it("SQL セルの左端レールは実行順と状態を持つ (未実行 → 成功 → 古い)", async () => {
+      seed(newMarkdownCell("説明"), newSqlCell("SELECT 1"), newSqlCell("SELECT 2"));
+      setup();
+      const rails = screen.getAllByTestId("notebook-cell-rail");
+      expect(rails.map((r) => r.getAttribute("data-status"))).toEqual(["idle", "idle"]);
+      expect(screen.getAllByTestId("notebook-cell-order").map((e) => e.textContent)).toEqual(["1", "2"]);
+      // 色だけに頼らず、aria-label でも状態を示す
+      expect(
+        screen.getByRole("img", { name: t("notebookRailLabel", { n: 2, state: t("notebookRailIdle") }) }),
+      ).toBeTruthy();
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: new RegExp(t("notebookRunAll")) }));
+      });
+      await waitFor(() =>
+        expect(screen.getAllByTestId("notebook-cell-rail").map((r) => r.getAttribute("data-status"))).toEqual(
+          ["ok", "ok"],
+        ),
+      );
+      fireEvent.change(screen.getAllByLabelText("sql-editor")[0], { target: { value: "SELECT 9" } });
+      expect(screen.getAllByTestId("notebook-cell-rail")[0].getAttribute("data-status")).toBe("stale");
+    });
+
+    it("実行順は空の SQL セルを数えず (「–」)、「すべて実行」の順と一致する", () => {
+      seed(newSqlCell("SELECT 1"), newSqlCell("  "), newSqlCell("SELECT 3"));
+      setup();
+      expect(screen.getAllByTestId("notebook-cell-order").map((e) => e.textContent)).toEqual(["1", "–", "2"]);
+    });
+
+    it("失敗したセルのレールは error になる", async () => {
+      seed(newSqlCell("SELECT oops"));
+      const onRunSql = vi.fn().mockRejectedValue(new NotebookRunError("構文エラー", false, false, false));
+      setup({ onRunSql });
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: new RegExp(t("notebookRunAll")) }));
+      });
+      await waitFor(() =>
+        expect(screen.getByTestId("notebook-cell-rail").getAttribute("data-status")).toBe("error"),
+      );
+    });
+
+    it("挿入ラインはホバーとフォーカスで線が出て、離れると消える", async () => {
+      seed(newSqlCell("SELECT 1"));
+      setup();
+      const line = screen.getByTestId("notebook-insert-line");
+      expect(line.querySelector(".notebook-insert-rule")).toBeNull();
+      fireEvent.mouseEnter(line);
+      expect(line.querySelector(".notebook-insert-rule")).not.toBeNull();
+      fireEvent.mouseLeave(line);
+      await waitFor(() => expect(line.querySelector(".notebook-insert-rule")).toBeNull());
+      // キーボード: ボタンへフォーカスが入ると出る
+      fireEvent.focus(within(line).getByRole("button", { name: new RegExp(t("notebookAddSql")) }));
+      expect(line.querySelector(".notebook-insert-rule")).not.toBeNull();
+    });
+
+    it("ヘッダは「すべて実行」と「保存」を主に、補助操作はメニューにまとまる", () => {
+      seed(newSqlCell("SELECT 1"));
+      setup();
+      expect(screen.queryByRole("button", { name: t("notebookNew") })).toBeNull();
+      expect(screen.queryByRole("button", { name: new RegExp(t("notebookExportHtml")) })).toBeNull();
+      openHeaderMenu();
+      for (const k of [
+        "notebookNew",
+        "notebookOpen",
+        "notebookSaveAs",
+        "notebookExportMd",
+        "notebookExportHtml",
+      ] as const) {
+        expect(screen.getByRole("menuitem", { name: new RegExp(t(k)) })).toBeTruthy();
+      }
     });
   });
 });
