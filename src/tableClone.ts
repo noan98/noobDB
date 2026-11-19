@@ -178,7 +178,7 @@ const utf8Len = (s: string) => new TextEncoder().encode(s).length;
  * (`identLimit` と同じ規則, #2392)。どちらも文字 (コードポイント) の境界で切り、サロゲートペアを分断しない。
  * SQLite は上限なし。
  */
-function fitIdent(driver: string, s: string, suffix = ""): string {
+export function fitIdent(driver: string, s: string, suffix = ""): string {
   const lim = identLimit(driver);
   if (!lim) return s + suffix;
   if (lim.bytes) {
@@ -245,6 +245,13 @@ export interface CloneOptions {
   pgForeignKeys?: PgForeignKey[] | null;
   /** 既に使われているインデックス/制約名 (あれば衝突回避に使う)。 */
   existingNames?: string[];
+  /**
+   * 破壊的操作の前の退避コピー (#2448)。複製と同じ文の組み立てを使うが、退避先には外部キーを持たせない
+   * (退避テーブルが他テーブルの DROP / 元テーブルの DROP を邪魔しないように)。
+   * MySQL は `CREATE TABLE new LIKE old` (インデックスは写り FK は写らない)、PostgreSQL は FK の
+   * `ALTER TABLE ... ADD CONSTRAINT` を足さない。SQLite は DDL の書き換えのまま (インライン FK は残る)。
+   */
+  backup?: boolean;
 }
 
 const stripTrailingSemicolon = (s: string) => s.replace(/\s*;+\s*$/, "");
@@ -614,7 +621,10 @@ export function buildCloneStatements(o: CloneOptions): CloneResult {
         );
       }
     }
-    afterData.push(...pgForeignKeyAlters(o, used));
+    if (!o.backup) afterData.push(...pgForeignKeyAlters(o, used));
+  } else if (o.driver === "mysql" && o.backup) {
+    if (!rewriteCreateTable(stmts[0], o, new Set())) return empty;
+    head.push(`CREATE TABLE ${newName} LIKE ${oldName}`);
   } else {
     let rewritten = rewriteCreateTable(stmts[0], o, used);
     if (!rewritten) return empty;
@@ -686,14 +696,26 @@ export function violatesLiteralRules(sql: string, o: CloneOptions): boolean {
 }
 
 function buildInsertSelect(o: CloneOptions, newName: string, oldName: string): string {
-  const cols =
-    o.columns && o.columns.length > 0 ? o.columns.map((c) => quoteIdentFor(o.driver, c)).join(", ") : null;
+  return buildCopyRowsSql(o.driver, o.columns, newName, oldName);
+}
+
+/**
+ * `INSERT INTO <into> (列…) SELECT 列… FROM <from>`。`columns` が無ければ `SELECT *`。
+ * 複製・退避 (#2448) とその復元 SQL が同じ組み立てを使う。`into` / `from` は修飾・クオート済みの名前。
+ */
+export function buildCopyRowsSql(
+  driver: string,
+  columns: readonly string[] | null | undefined,
+  into: string,
+  from: string,
+): string {
+  const cols = columns && columns.length > 0 ? columns.map((c) => quoteIdentFor(driver, c)).join(", ") : null;
   // PostgreSQL の GENERATED ALWAYS AS IDENTITY は OVERRIDING SYSTEM VALUE が無いと値を入れられない
   // (identity 列が無くても構文上は許される)。
-  const override = o.driver === "postgres" && cols ? " OVERRIDING SYSTEM VALUE" : "";
+  const override = driver === "postgres" && cols ? " OVERRIDING SYSTEM VALUE" : "";
   return cols
-    ? `INSERT INTO ${newName} (${cols})${override} SELECT ${cols} FROM ${oldName}`
-    : `INSERT INTO ${newName} SELECT * FROM ${oldName}`;
+    ? `INSERT INTO ${into} (${cols})${override} SELECT ${cols} FROM ${from}`
+    : `INSERT INTO ${into} SELECT * FROM ${from}`;
 }
 
 /** MySQL の `EXTRA` が生成列 (VIRTUAL / STORED GENERATED) を示すか。`DEFAULT_GENERATED` は式既定値なので生成列ではない。 */

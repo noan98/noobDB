@@ -5,7 +5,7 @@ import { useT } from "../i18n";
 import { isConfirmSuppressed, suppressConfirm } from "../settings";
 import { typedConfirmMatches } from "../typeToConfirm";
 import { DestructiveTitle } from "./DestructiveTitle";
-import { FieldLabel, FormSection } from "./modalForm";
+import { ErrorNote, FieldLabel, FormSection } from "./modalForm";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Checkbox, Input, PressableButton } from "./ui";
 
@@ -61,6 +61,12 @@ export interface ConfirmOptions {
    * 選ぶと確認なしで即「確認」として解決し、設定画面の「安全」から戻せる。本番接続の確認には付けないこと。
    */
   rememberKey?: string;
+  /**
+   * 確認ボタンを押したあと、ダイアログを閉じる前に実行する非同期の前処理 (退避コピーの作成など、#2448)。
+   * エラー文字列を返す / 例外を投げると、ダイアログは開いたまま `ErrorNote` に出して「確認」にならない
+   * (呼び出し側は本操作を実行しない)。null / undefined を返せば通常どおり確認として閉じる。実行中は確認ボタンを押せない。
+   */
+  beforeConfirm?: () => Promise<string | null | undefined>;
 }
 
 /** `rememberKey` が有効になる確認か (非破壊で、タイプ確認も第 3 の選択肢も無い)。 */
@@ -147,6 +153,7 @@ export function useConfirm(): {
           tone={state.tone ?? "primary"}
           typedConfirmation={state.typedConfirmation}
           altLabel={state.altLabel}
+          beforeConfirm={state.beforeConfirm}
           rememberKey={rememberApplies(state) ? state.rememberKey : undefined}
           onConfirm={() => close("confirm")}
           onAlt={() => close("alt")}
@@ -168,6 +175,7 @@ interface ConfirmDialogProps {
   typedConfirmation?: string;
   altLabel?: string;
   rememberKey?: string;
+  beforeConfirm?: () => Promise<string | null | undefined>;
   onConfirm: () => void;
   onAlt: () => void;
   onCancel: () => void;
@@ -182,7 +190,8 @@ function ConfirmDialog({
   typedConfirmation,
   altLabel,
   rememberKey,
-  onConfirm,
+  beforeConfirm,
+  onConfirm: onConfirmDone,
   onAlt,
   onCancel,
 }: ConfirmDialogProps) {
@@ -194,9 +203,31 @@ function ConfirmDialog({
   const typedInputRef = useRef<HTMLInputElement>(null);
   const [typedValue, setTypedValue] = useState("");
   const [remember, setRemember] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [preError, setPreError] = useState<string | null>(null);
+  // 前処理 (beforeConfirm) があれば先に走らせ、失敗したら閉じずにエラーを出す。
+  const onConfirm = async () => {
+    if (busy) return;
+    if (beforeConfirm) {
+      setBusy(true);
+      setPreError(null);
+      let err: string | null | undefined;
+      try {
+        err = await beforeConfirm();
+      } catch (e) {
+        err = String(e);
+      }
+      setBusy(false);
+      if (err) {
+        setPreError(err);
+        return;
+      }
+    }
+    onConfirmDone();
+  };
   const confirmAndRemember = () => {
     if (rememberKey && remember) suppressConfirm(rememberKey);
-    onConfirm();
+    void onConfirm();
   };
   const requiresTyped = !!typedConfirmation;
   const typedMatches = !requiresTyped || typedConfirmMatches(typedValue, typedConfirmation);
@@ -232,6 +263,7 @@ function ConfirmDialog({
             {t("confirmRememberLabel")}
           </chakra.label>
         )}
+        {preError && <ErrorNote>{preError}</ErrorNote>}
         {requiresTyped && (
           <FormSection>
             {/* overline の大文字化をここだけ解除する。ラベルに入力すべき対象名が入って
@@ -257,10 +289,10 @@ function ConfirmDialog({
             <Button
               type="button"
               variant={tone === "danger" ? "dangerOutline" : "secondary"}
-              onClick={onConfirm}
-              disabled={requiresTyped && !typedMatches}
+              onClick={() => void onConfirm()}
+              disabled={(requiresTyped && !typedMatches) || busy}
             >
-              {confirmLabel}
+              {busy ? t("backupRunning") : confirmLabel}
             </Button>
             <div style={{ flex: 1 }} />
             <Button ref={cancelRef} type="button" variant="primary" onClick={onCancel}>
@@ -282,9 +314,9 @@ function ConfirmDialog({
               type="button"
               variant="primary"
               onClick={confirmAndRemember}
-              disabled={requiresTyped && !typedMatches}
+              disabled={(requiresTyped && !typedMatches) || busy}
             >
-              {confirmLabel}
+              {busy ? t("backupRunning") : confirmLabel}
             </PressableButton>
           </>
         )}

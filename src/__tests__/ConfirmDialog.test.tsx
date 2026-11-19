@@ -180,3 +180,62 @@ describe("ConfirmDialog 破壊的確認の重みアイコン (#2040)", () => {
     expect(screen.queryByTestId("destructive-title-icon")).not.toBeInTheDocument();
   });
 });
+
+// #2448: 確認ボタンの前処理 (退避コピーの作成)。失敗したら閉じず ErrorNote を出し、確認にならない。
+describe("useConfirm / beforeConfirm (#2448)", () => {
+  beforeEach(() => {
+    setLocale("en");
+  });
+
+  function BeforeHarness({
+    before,
+    onResult,
+  }: {
+    before: () => Promise<string | null>;
+    onResult: (ok: boolean) => void;
+  }) {
+    const { confirm, dialog } = useConfirm();
+    return (
+      <>
+        <button
+          type="button"
+          onClick={() =>
+            confirm({
+              title: "Drop?",
+              message: "body",
+              confirmLabel: "Drop",
+              tone: "danger",
+              beforeConfirm: before,
+            }).then(onResult)
+          }
+        >
+          open
+        </button>
+        {dialog}
+      </>
+    );
+  }
+
+  it("前処理が成功したら確認として解決する", async () => {
+    const onResult = vi.fn();
+    const before = vi.fn().mockResolvedValue(null);
+    const user = userEvent.setup();
+    renderWithProviders(<BeforeHarness before={before} onResult={onResult} />);
+    await user.click(screen.getByRole("button", { name: "open" }));
+    await user.click(screen.getByRole("button", { name: "Drop" }));
+    expect(before).toHaveBeenCalledTimes(1);
+    expect(onResult).toHaveBeenCalledWith(true);
+  });
+
+  it("前処理が失敗したら閉じずにエラーを出し、確認にならない", async () => {
+    const onResult = vi.fn();
+    const before = vi.fn().mockResolvedValue("backup failed: disk full");
+    const user = userEvent.setup();
+    renderWithProviders(<BeforeHarness before={before} onResult={onResult} />);
+    await user.click(screen.getByRole("button", { name: "open" }));
+    await user.click(screen.getByRole("button", { name: "Drop" }));
+    expect(await screen.findByText("backup failed: disk full")).toBeInTheDocument();
+    expect(onResult).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Drop" })).toBeEnabled();
+  });
+});

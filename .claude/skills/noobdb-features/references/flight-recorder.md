@@ -48,7 +48,13 @@
   `INSERT … SELECT`・列リスト無し・式の主キーなども辞退。**PK が無い表・主キーを特定できない文・複数行 INSERT などは従来どおり「記録なしで
   1 回実行」にフォールバックする**。UPDATE の SET で主キーを非決定的な関数で書き換える文も辞退する。
 - 対象は `INSERT` / `UPDATE` / `DELETE` **のみ**。DDL (`DROP` / `TRUNCATE` など) は
-  完全にスコープ外です。
+  完全にスコープ外です。代わりに、DROP / TRUNCATE / WHERE なし DELETE (単一テーブル) の確認ダイアログに
+  「実行前に退避コピーを作る」(#2448、`backupBeforeDestructive.ts` / `backupRun.ts`) がある。
+  `<table>_bak_<YYYYMMDDHHmm>` を `tableClone.ts` の組み立て (`backup: true` で FK なし) と既存の
+  `run_query_transaction` で作り、成功したときだけ本操作に進む (失敗は `ErrorNote`、本操作は実行しない)。
+  生成列は除外、本番は既定オン、推定 50 万行超で警告、MySQL は暗黙コミットで 2 段階 (UI に明記)。
+  実行後のトーストに復元用 SQL (DROP は `RENAME`、TRUNCATE / DELETE は `INSERT ... SELECT`) のコピーを出す。
+  `read_only` 接続では出さない (退避も書き込み)。
 - トリガー・カスケードなどサーバ側の二次的な副作用は記録されません。ドライバが
   報告した「その文が直接触った行」だけが対象です。
 - Undo は通常の書き込みと同じ `run_query_transaction` の all-or-nothing 経路を

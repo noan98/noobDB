@@ -388,3 +388,44 @@ describe("DangerousQueryDialog", () => {
     expect(screen.getByRole("heading", { name: t("dangerousTitle") })).toBeInTheDocument();
   });
 });
+
+describe("DangerousQueryDialog 退避コピー (#2448)", () => {
+  beforeEach(() => {
+    setLocale("en");
+  });
+  const findings: DangerFinding[] = [{ kind: "drop", target: "users" }];
+
+  it("退避が失敗したら onConfirm を呼ばず ErrorNote を出す", async () => {
+    const onConfirm = vi.fn();
+    const user = userEvent.setup();
+    renderWithProviders(
+      <DangerousQueryDialog
+        findings={findings}
+        isProduction={false}
+        backup={{ node: <div>backup-option</div>, beforeConfirm: async () => "backup failed" }}
+        onConfirm={onConfirm}
+        onCancel={() => {}}
+      />,
+    );
+    expect(screen.getByText("backup-option")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: t("dangerousConfirm") }));
+    expect(await screen.findByText("backup failed")).toBeInTheDocument();
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  it("退避が成功したら onConfirm を呼ぶ", async () => {
+    const onConfirm = vi.fn();
+    const user = userEvent.setup();
+    renderWithProviders(
+      <DangerousQueryDialog
+        findings={findings}
+        isProduction={false}
+        backup={{ node: null, beforeConfirm: async () => null }}
+        onConfirm={onConfirm}
+        onCancel={() => {}}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: t("dangerousConfirm") }));
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
+});

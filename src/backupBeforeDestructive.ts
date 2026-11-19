@@ -1,0 +1,182 @@
+// 破壊的操作 (DROP TABLE / TRUNCATE / WHERE なし DELETE) の前に作る「退避コピー」(#2448) の純ロジック。
+//
+// フライトレコーダの Undo は INSERT / UPDATE / DELETE の行だけで、DDL (DROP / TRUNCATE) と行数上限を超える
+// 文は戻せない。確認ダイアログから退避テーブル `<table>_bak_<YYYYMMDDHHmm>` を作り、成功したときだけ本操作に進む。
+//
+// 退避の文は複製 (`tableClone.ts`、#1398) の組み立てをそのまま使う (`backup: true` で退避先の外部キーを外す)。
+//   - MySQL: `CREATE TABLE bak LIKE t` → `INSERT INTO bak (列…) SELECT 列… FROM t`。DDL が暗黙コミットするので
+//     「退避 → 本操作」は非原子。LIKE は FK を写さない。
+//   - PostgreSQL: `CREATE TABLE bak (LIKE t INCLUDING ALL)` → `INSERT ... SELECT` (serial は専用シーケンス)。
+//   - SQLite: sqlite_master の DDL を書き換えて `CREATE` → `INSERT ... SELECT`。
+// 生成列は列リストから除く (`insertableColumns`)。このモジュールは文を組み立てるだけで実行しない。
+
+import { maskLiterals } from "./dangerousSql";
+import { qualifiedTableName } from "./components/sqlDialect";
+import {
+  buildCloneStatements,
+  buildCopyRowsSql,
+  fitIdent,
+  formatCloneStatements,
+  type PgColumnFlags,
+} from "./tableClone";
+
+/** 退避の対象になる破壊的操作。 */
+export type BackupKind = "drop" | "truncate" | "deleteNoWhere";
+
+/** この行数 (推定) を超えると、退避に時間とディスクを使うので警告を出す。 */
+export const BACKUP_LARGE_ROWS = 500_000;
+
+/** 退避の既定。本番接続ではオン、それ以外はオフ (オプトイン)。 */
+export function backupDefaultEnabled(isProduction: boolean): boolean {
+  return isProduction;
+}
+
+const pad = (n: number, width = 2) => String(n).padStart(width, "0");
+
+/** `YYYYMMDDHHmm` (ローカル時刻、分まで)。 */
+export function backupTimestamp(now: Date): string {
+  return `${pad(now.getFullYear(), 4)}${pad(now.getMonth() + 1)}${pad(now.getDate())}${pad(now.getHours())}${pad(now.getMinutes())}`;
+}
+
+/**
+ * 退避テーブル名 `<table>_bak_<YYYYMMDDHHmm>`。識別子の上限 (MySQL 64 文字 / PostgreSQL 63 バイト) に、
+ * 元の名前の末尾側を文字境界で切って収める (接尾辞のタイムスタンプは必ず残す)。同じ分に既存の名前と
+ * 衝突したら `_2`, `_3` ... を付ける (大小無視)。
+ */
+export function backupTableName(
+  driver: string,
+  table: string,
+  now: Date,
+  existingTables: readonly string[] = [],
+): string {
+  const used = new Set(existingTables.map((t) => t.toLowerCase()));
+  const base = `_bak_${backupTimestamp(now)}`;
+  let candidate = fitIdent(driver, table, base);
+  for (let n = 2; used.has(candidate.toLowerCase()); n++) candidate = fitIdent(driver, table, `${base}_${n}`);
+  return candidate;
+}
+
+/** 退避先の名前が、この名前の退避テーブルか (アドバイザなどの取り残し検出用)。 */
+export function isBackupTableName(name: string): boolean {
+  return /_bak_\d{12}(?:_\d+)?$/.test(name);
+}
+
+export interface BackupPlanInput {
+  driver: string;
+  /** MySQL = データベース / PostgreSQL = スキーマ。SQLite は `main` など。 */
+  database: string | null;
+  table: string;
+  kind: BackupKind;
+  now: Date;
+  /** 既存のテーブル名 (退避先の名前の衝突回避)。 */
+  existingTables?: readonly string[];
+  /** `get_object_definition(kind="table")` の DDL。 */
+  ddl: string;
+  /** INSERT ... SELECT の列 (`insertableColumns`)。取れなければ null = `SELECT *`。 */
+  columns: string[] | null;
+  /** PostgreSQL: 列の種別 (serial 専用シーケンスの作成に使う)。 */
+  pgColumns?: PgColumnFlags | null;
+}
+
+export interface BackupPlan {
+  backupName: string;
+  /** 実行順の文 (末尾に `;` なし)。空ならテーブルとして退避できない (ビューなど) / 組み立て失敗。 */
+  statements: string[];
+  /** 本操作のあとに戻すための SQL (`;` 付き、複数文は空行区切り)。 */
+  restoreSql: string;
+  errors: string[];
+}
+
+/** 復元用 SQL。DROP は退避テーブルを元の名前へ `RENAME`、TRUNCATE / DELETE は `INSERT ... SELECT` で行を戻す。 */
+export function buildRestoreSql(
+  driver: string,
+  database: string | null,
+  table: string,
+  backupName: string,
+  kind: BackupKind,
+  columns: readonly string[] | null,
+): string {
+  const bak = qualifiedTableName(driver, database, backupName);
+  const orig = qualifiedTableName(driver, database, table);
+  if (kind === "drop") {
+    // 新しい名前は MySQL だけ DB 修飾できる (PostgreSQL / SQLite は同じスキーマに限られ、修飾すると構文エラー)。
+    const newName = driver === "mysql" ? orig : qualifiedTableName(driver, null, table);
+    return `ALTER TABLE ${bak} RENAME TO ${newName};`;
+  }
+  return `${buildCopyRowsSql(driver, columns, orig, bak)};`;
+}
+
+/** 退避の文と復元 SQL を組み立てる。 */
+export function buildBackupPlan(i: BackupPlanInput): BackupPlan {
+  const backupName = backupTableName(i.driver, i.table, i.now, i.existingTables);
+  const clone = buildCloneStatements({
+    driver: i.driver,
+    database: i.database,
+    sourceTable: i.table,
+    newTable: backupName,
+    ddl: i.ddl,
+    includeData: true,
+    columns: i.columns,
+    pgColumns: i.pgColumns ?? null,
+    pgForeignKeys: null,
+    existingNames: [...(i.existingTables ?? [])],
+    backup: true,
+  });
+  return {
+    backupName,
+    statements: clone.statements,
+    restoreSql: buildRestoreSql(i.driver, i.database, i.table, backupName, i.kind, i.columns),
+    errors: clone.errors,
+  };
+}
+
+/** プレビュー用: 退避の文を `;` 付きで並べる。 */
+export function formatBackupStatements(statements: readonly string[]): string {
+  return formatCloneStatements([...statements]);
+}
+
+/** エディタの文から、退避できる単一テーブルの破壊的操作を読み取った結果。 */
+export interface BackupTarget {
+  kind: BackupKind;
+  /** データベース (MySQL) / スキーマ (PostgreSQL) / `main` 等 (SQLite)。文に書かれていなければ null。 */
+  database: string | null;
+  table: string;
+}
+
+const IDENT = '(?:[\\w$]+|"\\s*"|`\\s*`)';
+const QUALIFIED = `${IDENT}(?:\\s*\\.\\s*${IDENT})?`;
+const DROP_RE = new RegExp(
+  `^drop\\s+table\\s+(?:if\\s+exists\\s+)?${QUALIFIED}(?:\\s+(?:cascade|restrict))?$`,
+);
+const TRUNCATE_RE = new RegExp(`^truncate(?:\\s+table)?\\s+(?:only\\s+)?${QUALIFIED}$`);
+const DELETE_RE = new RegExp(`^delete\\s+from\\s+(?:only\\s+)?${QUALIFIED}$`);
+
+/**
+ * 確認ダイアログが出た文が「退避できる単一テーブルの破壊的操作」か。次の形だけを対象にする
+ * (複数文・別名・JOIN / USING / RETURNING / LIMIT 付きの DELETE・`TRUNCATE ... CASCADE`・複数テーブルの
+ * DROP は退避だけでは戻しきれないので出さない)。
+ *   - `DROP TABLE [IF EXISTS] t [CASCADE | RESTRICT]`
+ *   - `TRUNCATE [TABLE] [ONLY] t`
+ *   - `DELETE FROM [ONLY] t` (WHERE なし)
+ * `target` は `analyzeDangerousSql` の指摘の対象名 (クオート除去済み、`db.table` のことがある)。
+ * 判定は字句マスクした文に対する正規表現で、パーサではない (迷ったら null = 出さない)。
+ */
+export function backupTargetFor(sql: string, target: string | null, driver?: string): BackupTarget | null {
+  if (!target) return null;
+  const masked = maskLiterals(sql, driver)
+    .toLowerCase()
+    .replace(/[\s;\u0085\uFEFF]+$/, "")
+    .replace(/^[\s\u0085\uFEFF]+/, "");
+  const kind: BackupKind | null = DROP_RE.test(masked)
+    ? "drop"
+    : TRUNCATE_RE.test(masked)
+      ? "truncate"
+      : DELETE_RE.test(masked)
+        ? "deleteNoWhere"
+        : null;
+  if (!kind) return null;
+  const parts = target.split(".");
+  if (parts.length > 2 || parts.some((p) => p.length === 0)) return null;
+  const table = parts[parts.length - 1];
+  return { kind, database: parts.length === 2 ? parts[0] : null, table };
+}

@@ -160,6 +160,9 @@ import {
 } from "./components/PaneView";
 import { useKeyedStable } from "./useKeyedStable";
 import { copyToClipboard } from "./components/clipboard";
+import { BackupBeforeOption } from "./components/BackupBeforeOption";
+import { backupDefaultEnabled, type BackupKind, backupTargetFor } from "./backupBeforeDestructive";
+import { type BackupResult, runBackup } from "./backupRun";
 import {
   buildIndexExecutionPlan,
   planAllSql,
@@ -2731,6 +2734,8 @@ export default function App() {
     fkResult?: CascadeImpacts | null;
     /** 影響行プレビュー (#1881) の材料。プリフライトが確定していて推定可能なときだけ入る。 */
     rowPreview?: { sampleSql: string; setColumns: string[] } | null;
+    /** 単一テーブルの DROP / TRUNCATE / WHERE なし DELETE のとき、退避コピーの対象 (#2448)。 */
+    backupTarget?: { kind: BackupKind; database: string; table: string } | null;
   } | null>(null);
   // GUI モーダル経由の DDL の実行ゲート (#2176)。`runGuardedDdl` が開き、承認 / キャンセルで
   // `resolve` を呼んで待機中の呼び出しへ結果を返す。ダイアログはエディタの実行ゲートと同じ。
@@ -7308,6 +7313,19 @@ export default function App() {
             pf && pf.sql === sql && pf.status === "ready" && pf.count !== 0
               ? rowPreviewFor(pf.plan, sql, selectedProfile?.driver)
               : null,
+          backupTarget: (() => {
+            // 退避できるのは「1 文・指摘 1 件」の単一テーブル操作だけ。明示トランザクション中は別接続の退避が
+            // 未コミットの変更を見られないので出さない。
+            if (batch || txActiveRef.current || sessionReadOnly || findings.length !== 1) return null;
+            const bt = backupTargetFor(sql, findings[0].target, selectedProfile?.driver);
+            const driver = selectedProfile?.driver;
+            if (!bt || !driver) return null;
+            const database =
+              bt.database ??
+              target.database ??
+              (driver === "postgres" ? "public" : driver === "sqlite" ? "main" : selectedProfile?.database);
+            return database ? { kind: bt.kind, database, table: bt.table } : null;
+          })(),
         });
         return;
       }
@@ -7379,9 +7397,88 @@ export default function App() {
     ],
   );
 
+  // 破壊的操作 (DROP / TRUNCATE / WHERE なし DELETE) の確認に載せる「実行前に退避コピーを作る」(#2448)。
+  // `node` = チェックボックス、`beforeConfirm` = 確認ボタン押下時に退避を作る (失敗ならエラー文字列を返し、
+  // ダイアログは閉じず本操作も実行しない)、`results` = 作れた退避。退避も書き込みなので read_only 接続では
+  // 出さない (本操作自体がバックエンドに拒否される)。`confirm_writes` / `is_production` は UI レベルの誤操作防止のみ。
+  const makeBackupGate = useCallback(
+    (database: string, tables: string[], kind: BackupKind) => {
+      const profile = selectedProfile;
+      if (!sessionId || !profile || profile.read_only || tables.length === 0) return null;
+      const driver = profile.driver;
+      const production = profile.is_production ?? false;
+      let enabled = backupDefaultEnabled(production);
+      const results: (BackupResult & { table: string })[] = [];
+      return {
+        node: (
+          <BackupBeforeOption
+            sessionId={sessionId}
+            driver={driver}
+            database={database}
+            tables={tables}
+            isProduction={production}
+            onChange={(v) => {
+              enabled = v;
+            }}
+          />
+        ),
+        beforeConfirm: async (): Promise<string | null> => {
+          if (!enabled) return null;
+          try {
+            for (const table of tables) {
+              // 失敗後に押し直したとき、作成済みの退避を重ねて作らない。
+              if (results.some((r) => r.table === table)) continue;
+              const r = await runBackup(api, { sessionId, driver, database, table, kind });
+              if (r) results.push({ ...r, table });
+            }
+            return null;
+          } catch (e) {
+            return translate("backupFailed", { error: String(e) });
+          }
+        },
+        results: () => results,
+      };
+    },
+    [sessionId, selectedProfile],
+  );
+
+  // 退避を作ったあとのトースト: 退避先の名前と「復元用 SQL をコピー」(DROP は RENAME、TRUNCATE / DELETE は INSERT ... SELECT)。
+  const announceBackup = useCallback(
+    (results: readonly BackupResult[], mainOk: boolean) => {
+      if (results.length === 0) return;
+      const names = results.map((r) => r.backupName).join(", ");
+      const restore = results.map((r) => r.restoreSql).join("\n\n");
+      toast.notify({
+        message: translate(mainOk ? "backupDoneToast" : "backupDoneKeptToast", { names }),
+        tone: mainOk ? "success" : "warning",
+        duration: 15000,
+        action: {
+          label: translate("backupCopyRestore"),
+          onAction: () => {
+            void copyToClipboard(restore).then((ok) => {
+              if (ok) toast.success(translate("backupRestoreCopied"));
+            });
+          },
+        },
+      });
+    },
+    [toast],
+  );
+
+  // エディタの確認ダイアログ用の退避ゲート。ダイアログごとに 1 つだけ作る (チェック状態を closure に持つため
+  // 毎描画では作り直さない)。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: ダイアログごとに 1 回だけ作る (makeBackupGate は毎回変わりうる)
+  const dangerousBackup = useMemo(() => {
+    const target = pendingDangerous?.backupTarget;
+    if (!pendingDangerous || !target) return null;
+    return makeBackupGate(target.database, [target.table], target.kind);
+  }, [pendingDangerous]);
+
   const handleConfirmDangerous = useCallback(() => {
     if (!pendingDangerous) return;
     const { tabId, sql, autoLimit, batch } = pendingDangerous;
+    // 退避を作っていたら、実行を始める前にトーストで名前と復元用 SQL を渡す (退避は確認ボタンの前処理で作成済み)。
+    announceBackup(dangerousBackup?.results() ?? [], true);
     // 型確認 (#2216) は確認を通過したときだけ「試した」にする (キャンセルでは記録しない)。
     if (pendingDangerous.typedConfirmTarget) markFeatureTried("helpTypeToConfirmTitle");
     setPendingDangerous(null);
@@ -7396,7 +7493,7 @@ export default function App() {
       return;
     }
     void runQueryInTab(tabId, sql, null, autoLimit);
-  }, [pendingDangerous, runQueryInTab, runBatchInTab, runTxInTab, tabsRef]);
+  }, [pendingDangerous, dangerousBackup, announceBackup, runQueryInTab, runBatchInTab, runTxInTab, tabsRef]);
 
   const handleCancelDangerous = useCallback(() => setPendingDangerous(null), []);
 
@@ -10039,27 +10136,37 @@ export default function App() {
       // 不可逆 (TRUNCATE) × 本番接続では、対象テーブル名のタイプ入力を要求する
       // 強確認ゲートを追加する (#675)。非本番はこれまで通り 1 クリック確認。
       const found = await loadTruncateImpacts(database, [table], []);
+      const backup = makeBackupGate(database, [table], "truncate");
+      const baseBody = maintenanceMessage(translate("truncateConfirmBody", { table }));
+      const body = backup ? (
+        <>
+          {baseBody}
+          {backup.node}
+        </>
+      ) : (
+        baseBody
+      );
       const ok = await confirm({
         title: translate("truncateConfirmTitle", { table }),
         message:
           found.impacts.length > 0 || found.unverified.length > 0
-            ? refImpactTruncateBody(
-                maintenanceMessage(translate("truncateConfirmBody", { table })),
-                found,
-                database,
-              )
-            : maintenanceMessage(translate("truncateConfirmBody", { table })),
+            ? refImpactTruncateBody(body, found, database)
+            : body,
         confirmLabel: translate("truncateConfirmOk"),
         tone: "danger",
         typedConfirmation: selectedProfile?.is_production ? table : undefined,
+        beforeConfirm: backup?.beforeConfirm,
       });
       if (!ok) return;
       const driver = selectedProfile?.driver ?? "mysql";
-      await runMaintenanceDdl(buildTruncateSql(driver, database, table), database, undefined, {
+      const done = await runMaintenanceDdl(buildTruncateSql(driver, database, table), database, undefined, {
         alreadyConfirmed: true,
       });
+      announceBackup(backup?.results() ?? [], done);
     },
     [
+      makeBackupGate,
+      announceBackup,
       confirm,
       maintenanceMessage,
       loadTruncateImpacts,
@@ -10095,17 +10202,20 @@ export default function App() {
       // 不可逆 (DROP) × 本番接続では同様にタイプ入力の強確認ゲートを追加する (#675)。
       const impacts = await loadDropImpacts(database, [table]);
       const sqlite = (selectedProfile?.driver ?? "mysql") === "sqlite";
+      const backup = makeBackupGate(database, [table], "drop");
       const ok = await confirm({
         title: translate("dropConfirmTitle", { table }),
         message: maintenanceMessage(
           <>
             {translate("dropConfirmBody", { table })}
             <DropReferencedBy impacts={impacts} sqlite={sqlite} />
+            {backup?.node}
           </>,
         ),
         confirmLabel: translate("dropConfirmOk"),
         tone: "danger",
         typedConfirmation: selectedProfile?.is_production ? table : undefined,
+        beforeConfirm: backup?.beforeConfirm,
       });
       if (!ok) return;
       const driver = selectedProfile?.driver ?? "mysql";
@@ -10115,6 +10225,7 @@ export default function App() {
         undefined,
         { alreadyConfirmed: true },
       );
+      announceBackup(backup?.results() ?? [], success);
       if (success) {
         // 開いている対象テーブルのタブは整合性が取れなくなるので閉じる。
         tabsRef.current
@@ -10123,6 +10234,8 @@ export default function App() {
       }
     },
     [
+      makeBackupGate,
+      announceBackup,
       confirm,
       maintenanceMessage,
       loadDropImpacts,
@@ -11490,15 +11603,25 @@ export default function App() {
         tables,
         selectedProfile?.driver === "mysql" ? [] : tables,
       );
+      const backup = makeBackupGate(database, tables, "truncate");
+      const withBackup: ReactNode = backup ? (
+        <>
+          {maintenanceMessage(bodyWithNote)}
+          {backup.node}
+        </>
+      ) : (
+        maintenanceMessage(bodyWithNote)
+      );
       const ok = await confirm({
         title: translate("batchTruncateConfirmTitle", { count: tables.length }),
         message:
           found.impacts.length > 0 || found.unverified.length > 0
-            ? refImpactTruncateBody(maintenanceMessage(bodyWithNote), found, database)
-            : maintenanceMessage(bodyWithNote),
+            ? refImpactTruncateBody(withBackup, found, database)
+            : withBackup,
         confirmLabel: translate("batchTruncateConfirmOk", { count: tables.length }),
         tone: "danger",
         typedConfirmation: production ? database : undefined,
+        beforeConfirm: backup?.beforeConfirm,
       });
       if (!ok) return;
       const driver = selectedProfile?.driver ?? "mysql";
@@ -11538,8 +11661,11 @@ export default function App() {
       noteSchemaDdl(statements.join(";\n"), database);
       connectionListRef.current?.refreshSchema();
       if (!failed) toast.success(translate("batchTruncateSuccess", { count: tables.length }));
+      announceBackup(backup?.results() ?? [], !failed);
     },
     [
+      makeBackupGate,
+      announceBackup,
       confirm,
       maintenanceMessage,
       loadTruncateImpacts,
@@ -16875,6 +17001,7 @@ export default function App() {
                 isProduction={pendingDangerous.isProduction}
                 writeApproval={pendingDangerous.writeApproval}
                 typedConfirmTarget={pendingDangerous.typedConfirmTarget}
+                backup={dangerousBackup}
                 impact={pendingDangerous.impact}
                 rowPreview={
                   pendingDangerous.rowPreview && pendingDangerous.impact && sessionId
