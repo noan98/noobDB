@@ -64,10 +64,10 @@ export interface RunAffordancesOptions {
 
 /** 行数バッジの文言と状態を決める純関数 (テスト用に公開)。 */
 export function cteBadgeText(badge: CteBadge): { text: string; tip: string } {
-  const text = t("cteRunBadgeRows", { n: badge.rows });
-  const tip = badge.stale
-    ? t("cteRunBadgeStale", { n: badge.rows })
-    : t("cteRunBadgeFresh", { n: badge.rows });
+  // 自動 LIMIT で打ち切られた可能性があるときは「N+」と出す。
+  const n = badge.truncated ? `${badge.rows}+` : badge.rows;
+  const text = t("cteRunBadgeRows", { n });
+  const tip = badge.stale ? t("cteRunBadgeStale", { n }) : t("cteRunBadgeFresh", { n });
   return { text, tip };
 }
 
@@ -76,7 +76,7 @@ interface CteItem {
   pos: number;
   /** 単体実行の対象 (カーソルのある CTE) か。 */
   cursor: boolean;
-  /** 実行を始められる位置 (CTE の定義の中)。 */
+  /** 実行を始められる位置 (CTE の定義の先頭。カーソル移動で変わらないので `eq` では比べない)。 */
   offset: number;
   /** 実行できない理由の文言。実行できるなら null。 */
   blockedTip: string | null;
@@ -84,7 +84,23 @@ interface CteItem {
 }
 
 function sameBadge(a: CteBadge | null, b: CteBadge | null): boolean {
-  return a === b || (!!a && !!b && a.rows === b.rows && a.stale === b.stale);
+  return a === b || (!!a && !!b && a.rows === b.rows && a.stale === b.stale && a.truncated === b.truncated);
+}
+
+function sameItems(a: readonly CteItem[], b: readonly CteItem[]): boolean {
+  return (
+    a.length === b.length &&
+    a.every((x, i) => {
+      const y = b[i] as CteItem;
+      return (
+        x.pos === y.pos &&
+        x.offset === y.offset &&
+        x.cursor === y.cursor &&
+        x.blockedTip === y.blockedTip &&
+        sameBadge(x.badge, y.badge)
+      );
+    })
+  );
 }
 
 class CteWidget extends WidgetType {
@@ -99,12 +115,7 @@ class CteWidget extends WidgetType {
     if (!(other instanceof CteWidget)) return false;
     const a = this.item;
     const b = other.item;
-    return (
-      a.cursor === b.cursor &&
-      a.offset === b.offset &&
-      a.blockedTip === b.blockedTip &&
-      sameBadge(a.badge, b.badge)
-    );
+    return a.cursor === b.cursor && a.blockedTip === b.blockedTip && sameBadge(a.badge, b.badge);
   }
 
   ignoreEvent(): boolean {
@@ -140,7 +151,6 @@ class CteWidget extends WidgetType {
       chip.className = `cm-cte-badge${item.badge.stale ? " cm-cte-badge-stale" : ""}`;
       chip.textContent = text;
       chip.setAttribute("data-run-tip", tip);
-      chip.setAttribute("aria-label", tip);
       root.append(chip);
     }
     return root;
@@ -171,7 +181,7 @@ function computeCteItems(state: EditorState, opts: RunAffordancesOptions): CteIt
     const plan =
       unsupported || (!cursor && !hasRun)
         ? null
-        : buildCteRun({ text, offset: cursor ? head : offset, driver, limit: opts.getCteLimit() });
+        : buildCteRun({ text, offset, driver, limit: opts.getCteLimit() });
     const blockedTip =
       !cursor || !opts.isCteEnabled()
         ? null
@@ -183,9 +193,9 @@ function computeCteItems(state: EditorState, opts: RunAffordancesOptions): CteIt
     items.push({
       pos: range.from + d.start + d.rawName.length,
       cursor,
-      offset: cursor ? head : offset,
+      offset,
       blockedTip,
-      badge: cteBadge(runs, d.name, plan?.ok ? plan.sql : null),
+      badge: cteBadge(runs, d.name, plan?.ok ? plan.sql : null, opts.getCteLimit()),
     });
   }
   return items;
@@ -256,6 +266,8 @@ export function runAffordances(opts: RunAffordancesOptions): Extension {
       const glyph = document.createElement("span");
       glyph.className = "cm-run-gutter-glyph";
       glyph.setAttribute("data-run-tip", t("runStmtGutterTip"));
+      // 押してもエディタからフォーカスを奪わない。
+      glyph.addEventListener("mousedown", (e) => e.preventDefault());
       return glyph;
     },
     renderSpacer: () => {
@@ -303,7 +315,10 @@ export function runAffordances(opts: RunAffordancesOptions): Extension {
         if (this.timer !== null) window.clearTimeout(this.timer);
         this.timer = window.setTimeout(() => {
           this.timer = null;
-          this.items = computeCteItems(this.view.state, opts);
+          const next = computeCteItems(this.view.state, opts);
+          // 前回と同じなら装飾も作り直さず、更新サイクルも回さない (カーソル移動のたびに DOM を触らない)。
+          if (sameItems(this.items, next)) return;
+          this.items = next;
           this.rebuild();
         }, delay);
       }

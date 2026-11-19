@@ -58,22 +58,30 @@ export interface CteBadge {
   rows: number;
   /** 実行後に CTE が編集された (または今は組み立てられない)。薄く表示する。 */
   stale: boolean;
+  /** 行数が行数上限 (自動 LIMIT) に達している。実際はもっと多いかもしれないので「N+」と出す。 */
+  truncated: boolean;
 }
 
 /**
  * CTE `name` のバッジ。`currentSql` は「いま実行したら組み立てられる SQL」(組み立てられなければ null)。
- * 同名の実行が複数あれば最後のもの。一度も実行していなければ null。名前は大文字小文字を区別しない。
+ * 同名の実行が複数あれば最後のもの。`limit` (自動 LIMIT の行数) 以上の行数は `truncated`。一度も実行していなければ null。名前は大文字小文字を区別しない。
  */
 export function cteBadge(
   runs: readonly CteRunRecord[],
   name: string,
   currentSql: string | null,
+  limit?: number | null,
 ): CteBadge | null {
   const key = name.toLowerCase();
   for (let i = runs.length - 1; i >= 0; i--) {
     const r = runs[i] as CteRunRecord;
-    if (r.name.toLowerCase() === key)
-      return { rows: r.rows, stale: currentSql === null || r.sql !== currentSql };
+    if (r.name.toLowerCase() === key) {
+      return {
+        rows: r.rows,
+        stale: currentSql === null || r.sql !== currentSql,
+        truncated: !!limit && limit > 0 && r.rows >= limit,
+      };
+    }
   }
   return null;
 }

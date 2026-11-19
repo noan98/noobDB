@@ -7,11 +7,12 @@ import type { CteRunRecord } from "../cteRunBadge";
 
 describe("cteBadgeText (#2450)", () => {
   it("行数と最新 / stale のツールチップを返す", () => {
-    const fresh = cteBadgeText({ rows: 12, stale: false });
-    const stale = cteBadgeText({ rows: 12, stale: true });
+    const fresh = cteBadgeText({ rows: 12, stale: false, truncated: false });
+    const stale = cteBadgeText({ rows: 12, stale: true, truncated: false });
     expect(fresh.text).toContain("12");
     expect(fresh.tip).toContain("12");
     expect(stale.tip).not.toBe(fresh.tip);
+    expect(cteBadgeText({ rows: 1000, stale: false, truncated: true }).text).toContain("1000+");
   });
 });
 
@@ -77,7 +78,7 @@ describe("runAffordances 拡張 (#2450)", () => {
     expect(v.dom.querySelectorAll(".cm-run-gutter-btn")).toHaveLength(0);
   });
 
-  it("CTE の中では「CTE まで」が出て、クリックで runCte に CTE 内の位置を渡す", () => {
+  it("CTE の中では「CTE まで」が出て、クリックで runCte に CTE の先頭位置を渡す", () => {
     const doc = "WITH a AS (SELECT 1 AS n) SELECT * FROM a";
     const { v, calls } = mount(doc);
     v.dispatch({ selection: { anchor: 18 } });
@@ -86,7 +87,7 @@ describe("runAffordances 拡張 (#2450)", () => {
     expect(btn).not.toBeNull();
     expect(btn?.getAttribute("aria-disabled")).toBeNull();
     btn?.click();
-    expect(calls.cte).toEqual([18]);
+    expect(calls.cte).toEqual([5]);
   });
 
   it("CTE の外では出ない", () => {
@@ -134,6 +135,16 @@ describe("runAffordances 拡張 (#2450)", () => {
     stale.v.dispatch({ selection: { anchor: 35 } });
     settle();
     expect(stale.v.dom.querySelector(".cm-cte-badge")?.classList.contains("cm-cte-badge-stale")).toBe(true);
+  });
+
+  it("CTE 内でカーソルを動かしても (同じ内容なら) ウィジェットの DOM を作り直さない", () => {
+    const { v } = mount("WITH a AS (SELECT 1 AS n) SELECT * FROM a");
+    v.dispatch({ selection: { anchor: 16 } });
+    settle();
+    const before = v.dom.querySelector(".cm-cte-run-btn");
+    v.dispatch({ selection: { anchor: 20 } });
+    settle();
+    expect(v.dom.querySelector(".cm-cte-run-btn")).toBe(before);
   });
 
   it("onRunCte が無い (isCteEnabled=false) ときは CTE のウィジェットを出さない", () => {
