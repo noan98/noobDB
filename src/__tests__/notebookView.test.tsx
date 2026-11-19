@@ -373,6 +373,27 @@ describe("NotebookView (#2380)", () => {
     expect(getNotebookState().doc.cells.map((c) => c.id)).toEqual([a.id]);
   });
 
+  it("保存行数は「その他」メニューから選べ、現在値が見え、次の実行の上限に使われる (#2469)", async () => {
+    seed(newSqlCell("SELECT 1"));
+    const { onRunSql } = setup();
+    // ヘッダには常置しない
+    expect(screen.queryByRole("combobox", { name: t("notebookRowLimit") })).toBeNull();
+    openHeaderMenu();
+    const parent = await screen.findByRole("menuitem", { name: `${t("notebookRowLimit")}: 200` });
+    fireEvent.keyDown(parent, { key: "ArrowRight" });
+    const sub = await screen.findAllByRole("menuitem", { name: "1,000" });
+    fireEvent.click(sub[0]);
+    expect(getNotebookState().doc.snapshotRowLimit).toBe(1000);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: new RegExp(t("notebookRunAll")) }));
+    });
+    await waitFor(() => expect(onRunSql).toHaveBeenCalledTimes(1));
+    expect(onRunSql.mock.calls[0][1]).toMatchObject({ rowCap: 1000 });
+    // 再度開くと現在値が親項目に出る
+    openHeaderMenu();
+    expect(await screen.findByRole("menuitem", { name: `${t("notebookRowLimit")}: 1,000` })).toBeTruthy();
+  });
+
   it("保存は .noobnb をファイルへ書き、秘密情報を含まない (マスクも掛かる)", async () => {
     const sql = newSqlCell("SELECT 1");
     seed(sql);

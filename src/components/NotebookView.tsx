@@ -1558,6 +1558,17 @@ export function NotebookView(props: NotebookViewProps) {
     { label: t("notebookOpen"), disabled: saving, onSelect: () => void onOpen() },
     { label: t("notebookSaveAs"), onSelect: () => void onSave(true) },
     { separator: true },
+    // 保存行数はヘッダに常置せずメニューへ置く (#2469。サイドバー表示中の 1280px でヘッダを 1 行に収める)。
+    // 現在値は親項目のラベルに出し、選択中の候補にはチェックを付ける。
+    {
+      label: `${t("notebookRowLimit")}: ${doc.snapshotRowLimit.toLocaleString()}`,
+      items: SNAPSHOT_ROW_LIMIT_CHOICES.map((n) => ({
+        label: n.toLocaleString(),
+        icon: n === doc.snapshotRowLimit ? ("check" as const) : undefined,
+        onSelect: () => updateNotebook((d) => ({ ...d, snapshotRowLimit: clampSnapshotRowLimit(n) })),
+      })),
+    },
+    { separator: true },
     { label: t("notebookExportMd"), onSelect: () => void onExport("md") },
     { label: t("notebookExportHtml"), onSelect: () => void onExport("html") },
   ];
@@ -1592,6 +1603,8 @@ export function NotebookView(props: NotebookViewProps) {
           onChange={(e) => updateNotebook((d) => ({ ...d, title: e.target.value }))}
           placeholder={t("notebookTitlePlaceholder")}
           aria-label={t("notebookTitlePlaceholder")}
+          flex="1 1 0"
+          minW="24"
           maxW="260px"
         />
         <Tooltip
@@ -1606,6 +1619,8 @@ export function NotebookView(props: NotebookViewProps) {
             onChange={(e) => updateNotebook((d) => ({ ...d, database: e.target.value.trim() || null }))}
             placeholder={t("notebookDatabasePlaceholder")}
             aria-label={t("notebookDatabasePlaceholder")}
+            flex="1 1 0"
+            minW="20"
             maxW="180px"
           />
         </Tooltip>
@@ -1642,18 +1657,6 @@ export function NotebookView(props: NotebookViewProps) {
             </Button>
           </Tooltip>
         )}
-        <chakra.label display="inline-flex" alignItems="center" gap="2" fontSize="sm" color="app.textMuted">
-          {t("notebookRowLimit")}
-          <ListboxSelect
-            ariaLabel={t("notebookRowLimit")}
-            css={{ minWidth: "88px" }}
-            value={String(doc.snapshotRowLimit)}
-            options={SNAPSHOT_ROW_LIMIT_CHOICES.map((n) => ({ value: String(n) }))}
-            onChange={(v) =>
-              updateNotebook((d) => ({ ...d, snapshotRowLimit: clampSnapshotRowLimit(Number(v)) }))
-            }
-          />
-        </chakra.label>
         <Button size="sm" variant="secondary" onClick={() => void onSave(false)}>
           {t("notebookSave")}
         </Button>
