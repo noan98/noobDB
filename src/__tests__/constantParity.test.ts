@@ -1,4 +1,11 @@
 import { describe, expect, it } from "vitest";
+import cacheRs from "../../src-tauri/src/cache/mod.rs?raw";
+import bulkWriteRs from "../../src-tauri/src/commands/bulk_write.rs?raw";
+import deadlockRs from "../../src-tauri/src/db/deadlock.rs?raw";
+import profileRs from "../../src-tauri/src/db/profile.rs?raw";
+import flightRecorderRs from "../../src-tauri/src/flight_recorder/mod.rs?raw";
+import historyStoreRs from "../../src-tauri/src/history/store.rs?raw";
+import cleanupRs from "../../src-tauri/src/profiles/cleanup.rs?raw";
 import aiRs from "../../src-tauri/src/commands/ai.rs?raw";
 import cellBlobRs from "../../src-tauri/src/commands/cell_blob.rs?raw";
 import connectionRs from "../../src-tauri/src/commands/connection.rs?raw";
@@ -22,6 +29,9 @@ import subsetRs from "../../src-tauri/src/db/subset.rs?raw";
 import backupRs from "../../src-tauri/src/profiles/backup.rs?raw";
 import tasksRs from "../../src-tauri/src/tasks/mod.rs?raw";
 import timelapseRs from "../../src-tauri/src/timelapse/mod.rs?raw";
+import appTsx from "../App.tsx?raw";
+import columnProfileTs from "../components/columnProfile.ts?raw";
+import deadlockTs from "../components/deadlock.ts?raw";
 import conversationTs from "../ai/conversation.ts?raw";
 import schemaDocTs from "../ai/schemaDoc.ts?raw";
 import cellEditTs from "../components/cellEdit.ts?raw";
@@ -103,9 +113,58 @@ const ROW_MERGE_RS = src("db/row_merge.rs", rowMergeRs);
 const SQLITE_RS = src("db/sqlite.rs", sqliteRs);
 const CLONE_ROWS_TS = src("components/cloneRows.ts", cloneRowsTs);
 const CLONE_ROWS_RS = src("db/clone_rows.rs", cloneRowsRs);
+const APP_TSX = src("App.tsx", appTsx);
+const COLUMN_PROFILE_TS = src("components/columnProfile.ts", columnProfileTs);
+const DEADLOCK_TS = src("components/deadlock.ts", deadlockTs);
+const CACHE_RS = src("cache/mod.rs", cacheRs);
+const BULK_WRITE_RS = src("commands/bulk_write.rs", bulkWriteRs);
+const DEADLOCK_RS = src("db/deadlock.rs", deadlockRs);
+const PROFILE_RS = src("db/profile.rs", profileRs);
+const FLIGHT_RECORDER_RS = src("flight_recorder/mod.rs", flightRecorderRs);
+const HISTORY_STORE_RS = src("history/store.rs", historyStoreRs);
+const CLEANUP_RS = src("profiles/cleanup.rs", cleanupRs);
 
 /** 対応表: [TS の定数名, Rust の定数名]。名前が違うものもあるので明示する。 */
 const PAIRS: { ts: Src; rs: Src; names: [string, string][] }[] = [
+  // #2446: Rust 側のコメントでフロントとの一致を求めている定数。
+  // ID の除外キーがズレると、起動時の孤立データ掃除 (sweep_orphans_once) がローカル接続 /
+  // サンドボックスのデータを「存在しないプロファイルのもの」として黙って消す。
+  { ts: APP_TSX, rs: CLEANUP_RS, names: [["LOCAL_PROFILE_ID", "LOCAL_PROFILE_ID"]] },
+  { ts: SANDBOX_TS, rs: CLEANUP_RS, names: [["SANDBOX_PROFILE_ID_PREFIX", "SANDBOX_ID_PREFIX"]] },
+  // 縮退理由コード。Rust 側だけ変わると汎用文言へ黙って倒れる。キー集合は下の別テストでも検証する。
+  {
+    ts: COLUMN_PROFILE_TS,
+    rs: PROFILE_RS,
+    names: [
+      ["NOTE_SAMPLED", "NOTE_SAMPLED"],
+      ["NOTE_OVERVIEW_APPROX_NO_STATS", "NOTE_OVERVIEW_APPROX_NO_STATS"],
+    ],
+  },
+  {
+    ts: DEADLOCK_TS,
+    rs: DEADLOCK_RS,
+    names: [
+      ["UNAVAILABLE_NEEDS_PROCESS", "UNAVAILABLE_NEEDS_PROCESS"],
+      ["UNAVAILABLE_NO_REPORT", "UNAVAILABLE_NO_REPORT"],
+      ["UNAVAILABLE_NO_DETAIL", "UNAVAILABLE_NO_DETAIL"],
+    ],
+  },
+  { ts: SETTINGS_TS, rs: CACHE_RS, names: [["DEFAULT_AUTO_LIMIT_COUNT", "DEFAULT_QUERY_MAX_ROWS"]] },
+  {
+    ts: CELL_EDIT_TS,
+    rs: BULK_WRITE_RS,
+    names: [["FLOAT4_WHERE_REL_TOLERANCE", "FLOAT4_WHERE_REL_TOLERANCE"]],
+  },
+  {
+    ts: SETTINGS_TS,
+    rs: FLIGHT_RECORDER_RS,
+    names: [["DEFAULT_FLIGHT_RECORDER_RETENTION_DAYS", "DEFAULT_RETENTION_DAYS"]],
+  },
+  {
+    ts: SETTINGS_TS,
+    rs: HISTORY_STORE_RS,
+    names: [["MAX_FLIGHT_RECORDER_RETENTION_DAYS", "MAX_RETENTION_DAYS"]],
+  },
   // #2412: コメントだけで揃えていた定数 (Rust 側だけの変更も検出する)。
   {
     ts: ADVISOR_TS,
@@ -407,5 +466,137 @@ describe("Rust ⇔ TS 定数パリティ (#2301): 長さの数え方", () => {
     // subsetExtract の上限判定は `.length` を直接使わない。
     expect(subsetExtractTs).not.toMatch(/\b(?:condition|term|tuple)\.length\b/);
     expect(subsetExtractTs).toMatch(/codePointLength\(condition\)\s*>\s*SUBSET_MAX_WHERE_LEN/);
+  });
+});
+
+// 逆方向 (#2446): Rust 側のコメントが「フロント」や `src/...ts` に言及している定数も、対応表に載せ忘れたら fail
+// させる。TS 側のコメントを起点にする上の検査は、Rust だけにマーカーがある定数 (profiles/cleanup.rs の
+// LOCAL_PROFILE_ID など) を拾えない。
+const rustSources = import.meta.glob("../../src-tauri/src/**/*.rs", {
+  query: "?raw",
+  import: "default",
+  eager: true,
+}) as Record<string, string>;
+
+/** Rust 側の除外 ("src-tauri/src からの相対パス:定数名" → 理由)。TS に写しを持たないものだけ。 */
+const RUST_EXEMPT: Record<string, string> = {
+  "commands/ai.rs:MAX_HISTORY_MESSAGES":
+    "Rust は組み立て不具合を弾く緩い上限 (20 件)。フロントは直近 10 件に絞るだけで、等値は不要",
+  "commands/bulk_write.rs:EXTRA_STATEMENT_ROWS":
+    "フロントが 1 文 = 1 行で生成する規約で、TS に対応する定数は無い",
+  "commands/diff.rs:MARKS":
+    "テスト内の定数。フロントのソースに同じ文字列があることをそのテスト自身が検証する",
+  "commands/file.rs:MAX_TEXT_FILE_BYTES": "Rust 側のガードのみ。TS に対応する定数は無い",
+  "commands/file.rs:MAX_WRITE_FILE_BYTES": "Rust 側のガードのみ。TS に対応する定数は無い",
+  "commands/query.rs:LOOKUP_DEFAULT_ROWS":
+    "フロントは row_cap を渡す側で、Rust の上限以下であればよい (等値は不要)",
+  "commands/query.rs:LOOKUP_MAX_ROWS":
+    "フロントは row_cap を渡す側で、Rust の上限以下であればよい (等値は不要)",
+  "db/profile.rs:NOTE_STATS_UNAVAILABLE":
+    "TS は columnProfile.ts の NOTE_KEYS のキーとして持つ。値の集合は「コード集合」のテストで固定する",
+  "db/profile.rs:NOTE_TOP_VALUES_UNAVAILABLE":
+    "TS は columnProfile.ts の NOTE_KEYS のキーとして持つ。値の集合は「コード集合」のテストで固定する",
+  "db/profile.rs:NOTE_HISTOGRAM_UNAVAILABLE":
+    "TS は columnProfile.ts の NOTE_KEYS のキーとして持つ。値の集合は「コード集合」のテストで固定する",
+  "db/profile.rs:NOTE_APPROX_UNSUPPORTED":
+    "TS は columnProfile.ts の NOTE_KEYS のキーとして持つ。値の集合は「コード集合」のテストで固定する",
+  "db/profile.rs:NOTE_APPROX_NO_STATS":
+    "TS は columnProfile.ts の NOTE_KEYS のキーとして持つ。値の集合は「コード集合」のテストで固定する",
+  "db/types.rs:JS_MAX_SAFE_INTEGER": "TS 側は言語組み込みの Number.MAX_SAFE_INTEGER を使う",
+  "profiles/secrets.rs:ALL_KINDS":
+    "kind 文字列の集合は enumParity.test.ts が ProfileSecretKind と commands::profiles::SecretKind で固定する",
+  "snippets/transfer.rs:MAX_IMPORT_BYTES": "read_text_file の上限に揃えた Rust 側のガードで、TS に定数は無い",
+  "ssm/keepalive.rs:KEEPALIVE_PING_TIMEOUT": "Rust 側の ping のタイムアウトで、TS に対応する定数は無い",
+};
+
+/** Rust ソースの「フロントや TS ファイルに言及するコメント」直下に連続して宣言された const を "パス:NAME" で集める。 */
+function rustMarkedConsts(files: Record<string, string>): string[] {
+  const out: string[] = [];
+  const isComment = (l: string) => /^\s*\/\//.test(l);
+  const marker = /フロント|\bsrc\/[\w/.-]+\.tsx?\b|\b[\w-]+\.tsx?\b/;
+  for (const [path, text] of Object.entries(files)) {
+    const file = path.replace(/^.*\/src-tauri\/src\//, "");
+    const lines = text.split("\n");
+    let i = 0;
+    while (i < lines.length) {
+      if (!isComment(lines[i])) {
+        i++;
+        continue;
+      }
+      let end = i;
+      while (end < lines.length && isComment(lines[end])) end++;
+      if (marker.test(lines.slice(i, end).join("\n"))) {
+        // コメント直下から、const が途切れるまで (間にコメントを挟むと別のブロック)。
+        for (let j = end; j < lines.length; j++) {
+          const m = /^\s*(?:pub(?:\([a-z]+\))?\s+)?const\s+([A-Z][A-Z0-9_]*)\s*:/.exec(lines[j]);
+          if (!m) break;
+          out.push(`${file}:${m[1]}`);
+        }
+      }
+      i = end;
+    }
+  }
+  return [...new Set(out)];
+}
+
+describe("Rust ⇔ TS 定数パリティ (#2446): Rust 側コメントの網羅チェック", () => {
+  const coveredRs = new Set(PAIRS.flatMap((p) => p.names.map(([, r]) => `${p.rs.name}:${r}`)));
+  const marked = rustMarkedConsts(rustSources);
+
+  it("検出ロジックが既知の定数を拾えている (空振り防止)", () => {
+    expect(marked).toContain("profiles/cleanup.rs:LOCAL_PROFILE_ID");
+    expect(marked).toContain("profiles/cleanup.rs:SANDBOX_ID_PREFIX");
+    expect(marked).toContain("db/profile.rs:NOTE_APPROX_NO_STATS");
+    expect(marked).toContain("db/deadlock.rs:UNAVAILABLE_NEEDS_PROCESS");
+    expect(marked).toContain("commands/script.rs:FILE_CHANGED_MARKER");
+  });
+
+  it("フロントに言及する Rust 定数は対応表か RUST_EXEMPT にある", () => {
+    const missing = marked.filter((c) => !coveredRs.has(c) && !(c in RUST_EXEMPT));
+    expect(
+      missing,
+      `対応表 (PAIRS) に追加するか、RUST_EXEMPT に理由つきで追加: ${missing.join(", ")}`,
+    ).toEqual([]);
+  });
+
+  it("RUST_EXEMPT は実在の定数で、対応表と重複せず、理由がある", () => {
+    for (const [key, reason] of Object.entries(RUST_EXEMPT)) {
+      expect(marked, `${key} がマーカー直下に無い`).toContain(key);
+      expect(coveredRs.has(key), `${key} は対応表にもある`).toBe(false);
+      expect(reason.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("メタテストが Rust だけにあるマーカーの載せ忘れを検出する", () => {
+    const fake = {
+      "../../src-tauri/src/x/new.rs": "/// フロントと揃える。\npub const NEW_LIMIT: usize = 3;\n",
+    };
+    expect(rustMarkedConsts(fake)).toEqual(["x/new.rs:NEW_LIMIT"]);
+    expect(coveredRs.has("x/new.rs:NEW_LIMIT")).toBe(false);
+  });
+});
+
+describe("Rust ⇔ TS 定数パリティ (#2446): コード集合", () => {
+  /** Rust の `const NAME: &str = "value";` のうち、名前が prefix で始まるものの値を集める。 */
+  const rustCodes = (text: string, prefix: string): string[] =>
+    [...text.matchAll(new RegExp(`const (${prefix}[A-Z0-9_]*)\\s*:\\s*&str\\s*=\\s*"([^"]*)"`, "g"))].map(
+      (m) => m[2],
+    );
+
+  it("縮退理由コード: Rust の NOTE_* の値は TS の写像表のキー + 直接比較する 1 件と一致する", () => {
+    const rs = rustCodes(PROFILE_RS.text, "NOTE_").sort();
+    const body = /const NOTE_KEYS = \{([\s\S]*?)\} as const;/.exec(COLUMN_PROFILE_TS.text)?.[1] ?? "";
+    const keys = [...body.matchAll(/^\s*([a-z_]+):/gm)].map((m) => m[1]);
+    const direct = String(extractTsConst(COLUMN_PROFILE_TS.text, "NOTE_OVERVIEW_APPROX_NO_STATS"));
+    expect(keys.length).toBeGreaterThan(0);
+    expect(rs).toEqual([...keys, direct].sort());
+  });
+
+  it("解析不能の理由コード: Rust の UNAVAILABLE_* の値は deadlock.ts の定数と一致する", () => {
+    const rs = rustCodes(DEADLOCK_RS.text, "UNAVAILABLE_").sort();
+    const ts = ["UNAVAILABLE_NEEDS_PROCESS", "UNAVAILABLE_NO_REPORT", "UNAVAILABLE_NO_DETAIL"]
+      .map((n) => String(extractTsConst(DEADLOCK_TS.text, n)))
+      .sort();
+    expect(rs).toEqual(ts);
   });
 });

@@ -95,14 +95,20 @@ export function relationIsMismatch(relation: string | null): boolean {
   return relation === "older" || relation === "newer";
 }
 
+// 解析できなかった理由コード。`db/deadlock.rs` の `UNAVAILABLE_*` と同じ値にする
+// (Rust 側だけ変わると汎用文言へ黙って倒れる。`constantParity.test.ts` が固定)。
+const UNAVAILABLE_NEEDS_PROCESS = "needs_process_privilege";
+const UNAVAILABLE_NO_REPORT = "no_report";
+const UNAVAILABLE_NO_DETAIL = "no_detail";
+
 /** 解析できなかった理由コード → 文言キー。未知のコードは汎用の文言にする。 */
 export function unavailableKey(code: string): I18nKey {
   switch (code) {
-    case "needs_process_privilege":
+    case UNAVAILABLE_NEEDS_PROCESS:
       return "deadlockUnavailableNeedsProcess";
-    case "no_report":
+    case UNAVAILABLE_NO_REPORT:
       return "deadlockUnavailableNoReport";
-    case "no_detail":
+    case UNAVAILABLE_NO_DETAIL:
       return "deadlockUnavailableNoDetail";
     default:
       return "deadlockUnavailableUnknown";

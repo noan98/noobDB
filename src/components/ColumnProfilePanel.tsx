@@ -23,6 +23,8 @@ import {
   type OverviewSortKey,
   profileChartKind,
   profileChartModel,
+  NOTE_OVERVIEW_APPROX_NO_STATS,
+  NOTE_SAMPLED,
   profileNoteKey,
   profilePercent,
   profileTargetLabel,
@@ -376,7 +378,7 @@ export function ColumnProfilePanel({
               ]}
             />
           </Flex>
-          {overview.notes.includes("overview_approx_no_stats") && (
+          {overview.notes.includes(NOTE_OVERVIEW_APPROX_NO_STATS) && (
             <chakra.div
               textStyle="caption"
               color="app.textMuted"
@@ -545,10 +547,10 @@ export function ColumnProfilePanel({
               {t("profileSampleNote", { percent: profile.sample_percent })}
             </Callout>
           )}
-          {profile.notes.some((code) => code !== "sampled") && (
+          {profile.notes.some((code) => code !== NOTE_SAMPLED) && (
             <Callout tone="warning" px="3">
               {profile.notes
-                .filter((code) => code !== "sampled")
+                .filter((code) => code !== NOTE_SAMPLED)
                 .map((code) => (
                   <chakra.div key={code}>{t(profileNoteKey(code))}</chakra.div>
                 ))}
