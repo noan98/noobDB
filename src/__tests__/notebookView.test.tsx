@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, renderWithProviders, screen, waitFor } from "./testUtils";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, renderWithProviders, screen, waitFor, within } from "./testUtils";
 import { makeProfile } from "./fixtures/componentFixtures";
 import { t } from "../i18n";
 
@@ -92,9 +92,21 @@ function seed(...cells: ReturnType<typeof newSqlCell | typeof newMarkdownCell>[]
   replaceNotebook(d, null);
 }
 
+// jsdom には scrollIntoView が無いので、テストごとに差し込み、終わったら元に戻す。
+const originalScrollIntoView = Element.prototype.scrollIntoView;
+function stubScrollIntoView() {
+  const fn = vi.fn();
+  Element.prototype.scrollIntoView = fn;
+  return fn;
+}
+
 describe("NotebookView (#2380)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+  afterEach(() => {
+    if (originalScrollIntoView) Element.prototype.scrollIntoView = originalScrollIntoView;
+    else Reflect.deleteProperty(Element.prototype, "scrollIntoView");
   });
 
   it("すべて実行で SQL セルが順に実行され、スナップショットが切り詰め表示つきで残る", async () => {
@@ -224,6 +236,110 @@ describe("NotebookView (#2380)", () => {
     });
     expect(await screen.findByText(t("notebookError", { error: "syntax error" }))).toBeTruthy();
     expect(onRunSql).toHaveBeenCalledTimes(1);
+  });
+
+  it("全実行中は実行中セルだけ data-running が付き、n / m と追従スクロールが出る (#2449)", async () => {
+    seed(newSqlCell("SELECT 1"), newSqlCell("SELECT 2"));
+    const scroll = stubScrollIntoView();
+    let release: (v: unknown) => void = () => {};
+    const onRunSql = vi.fn().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    setup({ onRunSql });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: new RegExp(t("notebookRunAll")) }));
+    });
+    await waitFor(() => expect(onRunSql).toHaveBeenCalledTimes(1));
+    expect(document.querySelectorAll("[data-running]")).toHaveLength(1);
+    expect(document.querySelector("[data-running]")?.getAttribute("data-notebook-cell-id")).toBe(
+      getNotebookState().doc.cells[0].id,
+    );
+    expect(screen.getByTestId("notebook-run-count").textContent).toContain("1");
+    expect(scroll).toHaveBeenCalledWith(expect.objectContaining({ block: "nearest" }));
+    // 手でスクロールしたら、次のセルへ移っても追従しない
+    scroll.mockClear();
+    fireEvent.wheel(screen.getByTestId("notebook-scroll-host"));
+    await act(async () => release(OUT));
+    await waitFor(() => expect(onRunSql).toHaveBeenCalledTimes(2));
+    expect(scroll).not.toHaveBeenCalled();
+    await act(async () => release(OUT));
+    await waitFor(() => expect(document.querySelector("[data-running]")).toBeNull());
+  });
+
+  it("失敗で止まったら、停止位置を role=status で伝え、そのセルへ着地する (#2449)", async () => {
+    seed(newSqlCell("SELECT 1"), newSqlCell("SELECT bad"), newSqlCell("SELECT 3"));
+    const scroll = stubScrollIntoView();
+    const onRunSql = vi
+      .fn()
+      .mockResolvedValueOnce(OUT)
+      .mockRejectedValueOnce(new NotebookRunError("syntax error", false, false, false));
+    setup({ onRunSql });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: new RegExp(t("notebookRunAll")) }));
+    });
+    const outcome = await screen.findByTestId("notebook-run-stopped");
+    const msg = t("notebookStoppedFailed", { index: 2, total: 3, done: 1 });
+    expect(outcome.textContent).toContain(msg);
+    expect(within(outcome).getByRole("status").textContent).toContain(msg);
+    expect(onRunSql).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(scroll).toHaveBeenCalled());
+    const target = scroll.mock.contexts.at(-1) as HTMLElement;
+    expect(target.getAttribute("data-notebook-cell-id")).toBe(getNotebookState().doc.cells[1].id);
+  });
+
+  it("全実行中の進捗 n / m はスクロール領域の外 (ヘッダ側) にあり、完了すると消える (#2449)", async () => {
+    seed(newSqlCell("SELECT 1"), newSqlCell("SELECT 2"));
+    stubScrollIntoView();
+    let release: (v: unknown) => void = () => {};
+    const onRunSql = vi.fn().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    setup({ onRunSql });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: new RegExp(t("notebookRunAll")) }));
+    });
+    const progress = await screen.findByTestId("notebook-run-progress");
+    expect(screen.getByTestId("notebook-scroll-host").contains(progress)).toBe(false);
+    await act(async () => release(OUT));
+    await waitFor(() => expect(onRunSql).toHaveBeenCalledTimes(2));
+    await act(async () => release(OUT));
+    await waitFor(() => expect(screen.queryByTestId("notebook-run-progress")).toBeNull());
+    expect(screen.queryByTestId("notebook-run-stopped")).toBeNull();
+  });
+
+  it("中止で止まったら、中止の文言と停止位置が出る (#2449)", async () => {
+    seed(newSqlCell("SELECT 1"), newSqlCell("SELECT 2"));
+    stubScrollIntoView();
+    const onRunSql = vi
+      .fn()
+      .mockResolvedValueOnce(OUT)
+      .mockRejectedValueOnce(new NotebookRunError("cancelled", false, false, true));
+    setup({ onRunSql });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: new RegExp(t("notebookRunAll")) }));
+    });
+    const outcome = await screen.findByTestId("notebook-run-stopped");
+    expect(outcome.textContent).toContain(t("notebookStoppedCancelled", { index: 2, total: 2, done: 1 }));
+  });
+
+  it("単独セルの実行では、進捗も停止表示も出さない (#2449)", async () => {
+    seed(newSqlCell("SELECT bad"));
+    stubScrollIntoView();
+    const onRunSql = vi.fn().mockRejectedValue(new NotebookRunError("syntax error", false, false, false));
+    setup({ onRunSql });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: t("notebookRunCell") }));
+    });
+    await waitFor(() => expect(onRunSql).toHaveBeenCalledTimes(1));
+    await screen.findByText(t("notebookError", { error: "syntax error" }));
+    expect(screen.queryByTestId("notebook-run-progress")).toBeNull();
+    expect(screen.queryByTestId("notebook-run-stopped")).toBeNull();
   });
 
   it("未接続では実行できない", () => {

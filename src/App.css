@@ -3165,6 +3165,31 @@ td.is-find-current::after {
   animation: focus-landing-pulse 0.6s var(--ease-out);
 }
 
+/* ノートブックの「すべて実行」で実行中のセル (#2449)。枠の色は Chakra 側 (app.accent) で常時強調し、
+   ここでは外周リングだけを既存の `streaming-pulse` で呼吸させる (レイアウトは動かさない)。
+   reduced-motion / hc-* / forced-colors では呼吸だけ止め、強調 (枠色 + 静止リング) は残す。
+   止まったセルの着地パルス (`is-focus-landing`) は実行が終わってから付くので、::after は競合しない。 */
+.notebook-cell-running { position: relative; }
+.notebook-cell-running::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow: 0 0 0 var(--focus-ring-width) var(--focus-ring-color);
+  animation: streaming-pulse 1.2s ease-in-out infinite;
+}
+:root[data-motion="reduced"] .notebook-cell-running::after,
+:root[data-theme="hc-light"] .notebook-cell-running::after,
+:root[data-theme="hc-dark"] .notebook-cell-running::after { animation: none; }
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion="full"]) .notebook-cell-running::after { animation: none; }
+}
+@media (forced-colors: active) {
+  .notebook-cell-running::after { animation: none; }
+}
+.is-focus-landing[data-notebook-cell-id]::after { border-radius: inherit; }
+
 /* 無効な主アクションへの Cmd/Ctrl+Enter (Modal の submitDisabled) を「拒否」で返す共有
    キーフレーム (#1831)。`components/submitRejectFeedback.ts` が `data-submit-rejected` を
    付け、animationend で外す。motion/react が `transform` をインラインで持つため、衝突しない

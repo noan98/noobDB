@@ -9117,6 +9117,11 @@ const en = {
   notebookRunFromShort: "From here",
   notebookStop: "Stop",
   notebookRunning: "Running cells in order. Stops at the first failure or cancelled confirmation.",
+  notebookRunProgress: "Cell {current} / {total}",
+  notebookStoppedFailed: "Stopped at cell {index} of {total} because it failed ({done} completed).",
+  notebookStoppedCancelled: "Cancelled at cell {index} of {total} ({done} completed).",
+  notebookStoppedConnChanged:
+    "Stopped before cell {index} of {total} because its connection was changed ({done} completed).",
   notebookNeedsConnection: "Connect to a database to run cells.",
   notebookAddSql: "Add SQL cell",
   notebookAddMarkdown: "Add note",
@@ -18254,6 +18259,11 @@ const ja: Dict = {
   notebookRunFromShort: "ここから下",
   notebookStop: "中止",
   notebookRunning: "セルを順に実行中です。失敗または確認の取りやめで止まります。",
+  notebookRunProgress: "{current} / {total} セル目",
+  notebookStoppedFailed: "{total} 件中 {index} 件目のセルが失敗したため止まりました (完了 {done} 件)。",
+  notebookStoppedCancelled: "{total} 件中 {index} 件目のセルで中止しました (完了 {done} 件)。",
+  notebookStoppedConnChanged:
+    "{total} 件中 {index} 件目のセルの接続が変更されたため、実行前に止まりました (完了 {done} 件)。",
   notebookNeedsConnection: "セルを実行するにはデータベースへ接続してください。",
   notebookAddSql: "SQL セルを追加",
   notebookAddMarkdown: "説明を追加",
