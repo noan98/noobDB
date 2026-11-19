@@ -143,6 +143,7 @@ import {
   TreeChevronButton,
   TreeMoreButton,
   TreeCollapse,
+  guideAccentLevels,
   TreeIcon,
   TreeLabel,
   TreeNode,
@@ -279,8 +280,9 @@ const TreeChildren = chakra("div", {
     flexDirection: "column",
     pl: "3",
     ml: "3.5",
-    borderLeft: "1px dashed",
-    borderColor: "app.border",
+    // ガイド線 (#2452): 色は App.css の `.tree-guide-branch` (`--tree-guide*`) が決める。
+    // 選択行の祖先の枝だけ `data-guide-accent` でアクセントになる。
+    borderLeft: "1px solid",
   },
 });
 
@@ -1776,10 +1778,16 @@ const ENTER_CLASS_LIFETIME_MS = 400;
 const NO_KEYS: ReadonlySet<string> = new Set();
 const EMPTY_REFS: readonly TableRef[] = [];
 
-/** 破線インデントを `depth` 段ぶん重ねる (行ごとに入れ子の `TreeChildren` を再現する)。 */
-function Indent({ depth, children }: { depth: number; children: React.ReactNode }) {
+/** ガイド線付きのインデントを `depth` 段ぶん重ねる (行ごとに入れ子の `TreeChildren` を再現する)。
+ *  外側から数えて先頭 `accent` 段が、選択行の祖先の枝としてアクセント色になる (#2452)。 */
+function Indent({ depth, accent, children }: { depth: number; accent: number; children: React.ReactNode }) {
   let node = children;
-  for (let i = 0; i < depth; i++) node = <TreeChildren>{node}</TreeChildren>;
+  for (let i = depth - 1; i >= 0; i--)
+    node = (
+      <TreeChildren className="tree-guide-branch" data-guide-accent={i < accent ? "" : undefined}>
+        {node}
+      </TreeChildren>
+    );
   return <>{node}</>;
 }
 
@@ -2026,6 +2034,15 @@ const SchemaRowList = memo(function SchemaRowList({
     return () => clearTimeout(timer);
   }, [rows]);
 
+  // 選択 (Tab で止まる / フォーカス中) の行の祖先の枝だけガイド線をアクセントにする (#2452)。
+  const guideAccent = useMemo(() => {
+    const i = keyIndex.get(tabStopKey ?? "") ?? (activeKey ? keyIndex.get(activeKey) : undefined);
+    return guideAccentLevels(
+      rows.map((r) => r.depth),
+      i ?? -1,
+    );
+  }, [rows, keyIndex, tabStopKey, activeKey]);
+
   const renderRow = (row: ExplorerRow, index: number, measure?: (el: Element | null) => void) => (
     <div
       key={row.key}
@@ -2034,7 +2051,7 @@ const SchemaRowList = memo(function SchemaRowList({
       data-kind={row.kind}
       className={enterKeys.current.has(row.key) ? "tree-row-enter" : undefined}
     >
-      <Indent depth={row.depth}>
+      <Indent depth={row.depth} accent={guideAccent[index] ?? 0}>
         <SchemaRowContent
           row={row}
           level={level}
@@ -4813,7 +4830,7 @@ export const ConnectionList = memo(
           </TabStop>
 
           <TreeCollapse open={!!(isOpen && isActive && sessionId)}>
-            <TreeChildren>
+            <TreeChildren className="tree-guide-branch">
               {isActive && sessionId && (
                 <SchemaRetryContext.Provider value={retrySchemaLoad}>
                   <SchemaRowList

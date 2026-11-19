@@ -3227,6 +3227,97 @@ td.is-find-current::after {
   animation: tree-row-enter var(--dur-med, 200ms) var(--ease-out, ease-out);
 }
 
+/* ツリーのインデントガイド線 (#2452)。スキーマツリー・JSON ツリー・階層ビューで共通。
+   線は疑似要素 / 既存の入れ子コンテナの枠線だけで描き、DOM を増やさない。
+   色は --border を薄めた --tree-guide、選択行へ至る祖先の枝だけ --tree-guide-accent。
+   設定「表示」で切ると (data-tree-guides="off") どちらも透明になり、字下げの幅は変わらない。
+   位置は --space-* から算出するので、表示密度とフォント拡大に追従する。 */
+:root {
+  --tree-guide: color-mix(in srgb, var(--border) 70%, transparent);
+  --tree-guide-accent: var(--accent);
+  --tree-guide-step: var(--space-4);
+  /* 行の左端 (パディングボックス) から、1 段目の線 (= 開閉 chevron の中心) までの距離。 */
+  --tree-guide-x0: calc(var(--space-1-5) * 2);
+}
+:root[data-tree-guides="off"] {
+  --tree-guide: transparent;
+  --tree-guide-accent: transparent;
+}
+/* 平らなリスト (階層ビュー) の行: --tree-level 本ぶんの線 (::before) と、先頭 --tree-accent 本だけを
+   重ねるアクセントの線 (::after)。アクセントは opacity で切り替える (背景のグラデーションは補間できない)。 */
+.tree-guide-row {
+  position: relative;
+}
+.tree-guide-row::before,
+.tree-guide-row::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--tree-guide-x0);
+  pointer-events: none;
+}
+.tree-guide-row::before {
+  width: calc(var(--tree-level, 0) * var(--tree-guide-step));
+  background-image: repeating-linear-gradient(
+    to right,
+    var(--tree-guide) 0 1px,
+    transparent 1px var(--tree-guide-step)
+  );
+}
+.tree-guide-row::after {
+  width: calc(var(--tree-accent, 0) * var(--tree-guide-step));
+  background-image: repeating-linear-gradient(
+    to right,
+    var(--tree-guide-accent) 0 1px,
+    transparent 1px var(--tree-guide-step)
+  );
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+.tree-guide-row[data-guide-accent]::after {
+  opacity: 1;
+}
+/* 入れ子のコンテナ (JSON ツリーの role="group"): 子の行の左に 1 本の縦線を、コンテナ全体の高さで引く。 */
+.tree-guide-group {
+  position: relative;
+}
+.tree-guide-group::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--space-0-5) + var(--tree-guide-x0) + var(--tree-level, 0) * var(--tree-guide-step));
+  width: 1px;
+  pointer-events: none;
+  background: var(--tree-guide);
+  transition: background-color var(--dur-fast) var(--ease);
+}
+.tree-guide-group[data-guide-accent]::before {
+  background: var(--tree-guide-accent);
+}
+/* スキーマツリーの入れ子の枠線 (TreeChildren)。 */
+.tree-guide-branch {
+  border-left-color: var(--tree-guide);
+  transition: border-color var(--dur-fast) var(--ease);
+}
+.tree-guide-branch[data-guide-accent] {
+  border-left-color: var(--tree-guide-accent);
+}
+/* reduced-motion では色を即時に切り替える (下の Reduced motion の節と同じ 2 ブロック構成)。 */
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion="full"]) .tree-guide-row::after,
+  :root:not([data-motion="full"]) .tree-guide-group::before,
+  :root:not([data-motion="full"]) .tree-guide-branch {
+    transition: none;
+  }
+}
+:root[data-motion="reduced"] .tree-guide-row::after,
+:root[data-motion="reduced"] .tree-guide-group::before,
+:root[data-motion="reduced"] .tree-guide-branch {
+  transition: none;
+}
+
 /* ---------- Reduced motion ----------
    OS の「視差効果/アニメーションを減らす」設定時は、無限アニメーション
    (点滅ドット等) を静止させ、トランジションを実質無効化する。

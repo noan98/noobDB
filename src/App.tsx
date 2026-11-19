@@ -1891,6 +1891,9 @@ export default function App() {
     // OS の prefers-reduced-motion にそのまま従う (どのセレクタにも一致しない)。
     root.setAttribute("data-motion", settings.motionPreference);
 
+    // ツリーのインデントガイド線 (#2452): App.css の `--tree-guide*` を data 属性で入れ替える。
+    root.setAttribute("data-tree-guides", settings.treeGuides ? "on" : "off");
+
     // カスタムテーマ (#1631): 上の構文色・アクセント色などの注入より後に当てる (--syntax-* など同名の
     // トークンを上書きしても、この effect の内側で最後に勝つ)。外すときは effect の再実行で元の値へ戻る。
     return applyCustomThemeVars(root, settings.customTheme);

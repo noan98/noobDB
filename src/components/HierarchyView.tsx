@@ -37,7 +37,7 @@ import { RowInspector } from "./RowInspector";
 import { ResultViewSwitch, type ResultViewKind } from "./ResultViewSwitch";
 import { parseServerVersion, serverVersionSql, type ServerVersion } from "./statsAdvisor";
 import { Tooltip } from "./Tooltip";
-import { TreeBadge, TreeChevron, TreeRow } from "./tree";
+import { guideAccentLevels, TreeBadge, TreeChevron, TreeRow, treeGuideRowProps } from "./tree";
 import { Button, Input } from "./ui";
 import { useJsonTreeReveal } from "./useJsonTreeReveal";
 
@@ -210,6 +210,16 @@ export function HierarchyView({
   );
 
   // 選択行が全折りたたみなどで隠れたら、先頭の行を Tab / 矢印キーの入口にする。
+  // 選択行の祖先の枝だけアクセントにするガイド線の本数 (#2452)。見出しは枝の切れ目 (深さ -1)。
+  const guideAccent = useMemo(
+    () =>
+      guideAccentLevels(
+        entries.list.map((e) => (e.kind === "row" ? e.depth : -1)),
+        selected === null ? -1 : entries.list.findIndex((e) => e.kind === "row" && e.row === selected),
+      ),
+    [entries, selected],
+  );
+
   const selectedVisible = selected !== null && visibleRows.some((r) => r.row === selected);
 
   const toggle = useCallback(
@@ -466,6 +476,7 @@ export function HierarchyView({
                 key={e.row}
                 row={e.row}
                 depth={e.depth}
+                guideAccent={guideAccent[i]}
                 label={cellDisplay(e.row, labelIdx >= 0 ? labelIdx : idIdx)}
                 idText={cellDisplay(e.row, idIdx)}
                 showId={labelIdx !== idIdx}
@@ -543,6 +554,8 @@ function ColField({ label, children }: { label: string; children: React.ReactNod
 interface RowProps {
   row: number;
   depth: number;
+  /** 選択行の祖先の枝にあたる、アクセント色にするガイド線の本数 (#2452)。 */
+  guideAccent: number;
   label: string;
   idText: string;
   showId: boolean;
@@ -561,8 +574,11 @@ function HierarchyRow(p: RowProps) {
   const t = useT();
   const level = Math.min(p.depth, HIERARCHY_INDENT_MAX_LEVELS);
   const expandable = p.childCount > 0;
+  const guide = treeGuideRowProps(level, p.guideAccent);
   return (
     <TreeRow
+      className={guide.className}
+      data-guide-accent={guide["data-guide-accent"]}
       role="treeitem"
       aria-level={p.depth + 1}
       aria-expanded={expandable ? p.open : undefined}
@@ -570,7 +586,7 @@ function HierarchyRow(p: RowProps) {
       data-hrow={p.row}
       tabIndex={p.focusable ? 0 : -1}
       bg={p.selected ? "app.active" : undefined}
-      style={{ paddingLeft: `calc(var(--space-1-5) + ${level} * var(--space-4))` }}
+      style={{ ...guide.style, paddingLeft: `calc(var(--space-1-5) + ${level} * var(--space-4))` }}
       onClick={p.onSelect}
       onFocus={p.onFocusRow}
       onDoubleClick={expandable ? p.onToggle : undefined}
@@ -587,9 +603,12 @@ function HierarchyRow(p: RowProps) {
       ) : (
         <chakra.span display="inline-block" w="4" flexShrink={0} />
       )}
-      <chakra.span flex="0 1 auto" overflow="hidden" textOverflow="ellipsis" fontWeight={500}>
-        {p.label}
-      </chakra.span>
+      {/* 深さはガイド線 (#2452) で読み取れるので、行ごとの文字ではなくツールチップに置く。 */}
+      <Tooltip label={t("hierarchyDepth", { n: p.depth })}>
+        <chakra.span flex="0 1 auto" overflow="hidden" textOverflow="ellipsis" fontWeight={500}>
+          {p.label}
+        </chakra.span>
+      </Tooltip>
       {p.showId && (
         <chakra.span color="app.textSecondary" fontSize="xs" textStyle="numeric" flexShrink={0}>
           #{p.idText}
@@ -608,9 +627,6 @@ function HierarchyRow(p: RowProps) {
           {p.descendants > p.childCount ? ` / ${t("hierarchyDescendants", { n: p.descendants })}` : ""}
         </TreeBadge>
       )}
-      <chakra.span color="app.textSecondary" fontSize="xs" textStyle="numeric" flexShrink={0}>
-        {t("hierarchyDepth", { n: p.depth })}
-      </chakra.span>
     </TreeRow>
   );
 }
