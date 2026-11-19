@@ -1809,6 +1809,7 @@ pub mod __test_api {
             init_sql: None,
             aws_iam: None,
             sqlite_attachments: Vec::new(),
+            idle_in_tx_timeout_min: None,
             read_only: false,
         }
     }
@@ -1855,6 +1856,7 @@ pub mod __test_api {
             init_sql: None,
             aws_iam: None,
             sqlite_attachments: Vec::new(),
+            idle_in_tx_timeout_min: None,
             read_only: false,
         })
     }

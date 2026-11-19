@@ -364,6 +364,7 @@ pub async fn create_local_session_inner(state: &AppState) -> Result<SessionId> {
         init_sql: None,
         aws_iam: None,
         sqlite_attachments: Vec::new(),
+        idle_in_tx_timeout_min: None,
         read_only: false,
     };
     let conn = match Connection::connect(&opts).await {

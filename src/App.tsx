@@ -307,8 +307,10 @@ import { ContextMenu, type ContextMenuEntry } from "./components/ContextMenu";
 import { SavepointControl } from "./components/SavepointControl";
 import { TransactionStatus, TxJournalList, forgetTxNotifications } from "./components/TransactionStatus";
 import {
+  isIdleTxDisconnect,
   newTxMeta,
   recordTxMeta,
+  txLastActivityAt,
   createBatchTxRecorder,
   makeTxEntry,
   shouldReviewBeforeCommit,
@@ -4735,6 +4737,8 @@ export default function App() {
       opts?: {
         inTransaction?: boolean;
         gaveUpAfter?: number;
+        /** サーバが放置トランザクションを自動切断した (#2464)。 */
+        idleTxDisconnect?: boolean;
       },
     ) => {
       const lostProfileId = profile?.id ?? null;
@@ -4766,7 +4770,15 @@ export default function App() {
       setSchemaExportTarget(null);
       setConnectionStatus("connected");
       setErrorProfileId(lostProfileId);
-      if (opts?.inTransaction) {
+      if (opts?.idleTxDisconnect) {
+        // 放置トランザクションの自動切断 (#2464): サーバがロールバック済み。TX 状態は上で破棄している。
+        setStatus({ kind: "key", key: "statusIdleTxDisconnected", error: true });
+        toast.notify({
+          message: translate("toastIdleTxDisconnected", { name: profile?.name ?? "" }),
+          tone: "info",
+          severity: "warning",
+        });
+      } else if (opts?.inTransaction) {
         setStatus({ kind: "key", key: "statusReconnectTx", error: true });
       } else if (opts?.gaveUpAfter != null && profile) {
         setStatus({
@@ -4901,29 +4913,48 @@ export default function App() {
   // 接続断 (クエリ失敗 / フォーカス時のヘルスチェック失敗) の統一ハンドラ。設定と
   // トランザクション状態に応じて、自動再接続ループを起動するか手動再接続へ倒すかを
   // 振り分ける。トランザクション中の断は再接続せず明示エラーにする (#600)。
-  const handleConnectionLost = useCallback(async () => {
-    const oldSessionId = sessionId;
-    const profile = selectedProfile;
-    if (!oldSessionId) return;
-    if (reconnectingRef.current) return; // 既にループ実行中。
-    const inTransaction = txActiveRef.current;
-    const cfg = getSettings();
-    if (
-      !profile ||
-      !shouldAutoReconnect({
-        enabled: cfg.autoReconnectEnabled,
-        inTransaction,
-        attempt: 0,
-        maxRetries: cfg.autoReconnectMaxRetries,
-        // 本番プロファイルは自動リトライせず必ず手動再接続にする (#712)。
-        isProduction: profile.is_production ?? false,
-      })
-    ) {
-      await tearDownLostSession(profile, oldSessionId, { inTransaction });
-      return;
-    }
-    await runReconnectLoop(profile, oldSessionId, cfg.autoReconnectMaxRetries);
-  }, [sessionId, selectedProfile, tearDownLostSession, runReconnectLoop]);
+  const handleConnectionLost = useCallback(
+    async (error?: string) => {
+      const oldSessionId = sessionId;
+      const profile = selectedProfile;
+      if (!oldSessionId) return;
+      if (reconnectingRef.current) return; // 既にループ実行中。
+      const inTransaction = txActiveRef.current;
+      const cfg = getSettings();
+      // サーバの放置トランザクション自動切断か (#2464)。エラー文、または自動切断の設定と
+      // 最後の動きからの経過で判定し、該当すれば再接続せず専用の文言で知らせる。
+      const txMeta = txBySessionRef.current.get(oldSessionId)?.meta;
+      if (
+        profile &&
+        isIdleTxDisconnect({
+          error,
+          inTransaction,
+          timeoutMin: profile.driver === "postgres" ? profile.idle_in_tx_timeout_min : null,
+          lastActivityAt: txMeta ? txLastActivityAt(txMeta) : null,
+          now: Date.now(),
+        })
+      ) {
+        await tearDownLostSession(profile, oldSessionId, { idleTxDisconnect: true });
+        return;
+      }
+      if (
+        !profile ||
+        !shouldAutoReconnect({
+          enabled: cfg.autoReconnectEnabled,
+          inTransaction,
+          attempt: 0,
+          maxRetries: cfg.autoReconnectMaxRetries,
+          // 本番プロファイルは自動リトライせず必ず手動再接続にする (#712)。
+          isProduction: profile.is_production ?? false,
+        })
+      ) {
+        await tearDownLostSession(profile, oldSessionId, { inTransaction });
+        return;
+      }
+      await runReconnectLoop(profile, oldSessionId, cfg.autoReconnectMaxRetries);
+    },
+    [sessionId, selectedProfile, tearDownLostSession, runReconnectLoop],
+  );
 
   // Held in a ref so the streaming callbacks below (created before this
   // handler) can invoke the latest version without re-subscribing on every
@@ -5887,7 +5918,7 @@ export default function App() {
           // A dropped connection leaves the session unusable: tear it down and
           // prompt a reconnect rather than showing the raw transport error.
           if (connectionLost) {
-            void handleConnectionLostRef.current();
+            void handleConnectionLostRef.current(error);
             return;
           }
           if (timedOut) {
@@ -6433,7 +6464,7 @@ export default function App() {
           }));
           finalize();
           if (connectionLost) {
-            void handleConnectionLostRef.current();
+            void handleConnectionLostRef.current(error);
             return;
           }
           setStatus({ kind: "key", key: "statusPreviewError", vars: { error }, error: true });
@@ -6961,7 +6992,7 @@ export default function App() {
           onError: ({ error, connectionLost }) => {
             finish();
             finishRun({ error, connectionLost });
-            if (connectionLost) void handleConnectionLostRef.current();
+            if (connectionLost) void handleConnectionLostRef.current(error);
           },
           onCancelled: () => {
             finish();
@@ -9789,7 +9820,7 @@ export default function App() {
               setHistoryReloadKey((k) => k + 1);
               if (isActiveNow()) pushQueryHistory(stmt);
               setStatus({ kind: "key", key: "statusQueryError", vars: { error: err.message }, error: true });
-              if (err.connectionLost && isActiveNow()) void handleConnectionLostRef.current();
+              if (err.connectionLost && isActiveNow()) void handleConnectionLostRef.current(err.message);
             },
           },
         );

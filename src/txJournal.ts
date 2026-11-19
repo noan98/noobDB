@@ -196,3 +196,39 @@ export function oneLineSql(sql: string, max = 120): string {
   const flat = sql.replace(/\s+/g, " ").trim();
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
 }
+
+/**
+ * サーバが放置トランザクションを切断したことを示すエラーか (#2464)。PostgreSQL は
+ * `idle_in_transaction_session_timeout` に達すると SQLSTATE 25P03 で
+ * "terminating connection due to idle-in-transaction timeout" を返してセッションを閉じる。
+ */
+export function isIdleInTxTimeoutError(raw: string | null | undefined): boolean {
+  if (!raw) return false;
+  return /idle-in-transaction timeout|idle_in_transaction_session_timeout|\b25P03\b/i.test(raw);
+}
+
+/** トランザクションで最後に動きがあった時刻 (epoch ms)。文を実行していなければ BEGIN した時刻。 */
+export function txLastActivityAt(meta: TxMeta): number {
+  const last = meta.entries[meta.entries.length - 1];
+  return last ? Math.max(meta.startedAt, last.at) : meta.startedAt;
+}
+
+/**
+ * 接続断が「放置トランザクションの自動切断」によるものか (#2464)。エラー文が
+ * idle-in-transaction timeout を示していれば確実。FATAL を読む前に接続が閉じて単なる
+ * 接続断に見える場合は、接続に自動切断が設定済みで、最後の動きから設定の分数が過ぎて
+ * いるときだけそう推定する (トランザクション中でなければ該当しない)。
+ */
+export function isIdleTxDisconnect(args: {
+  error?: string | null;
+  inTransaction: boolean;
+  timeoutMin: number | null | undefined;
+  lastActivityAt: number | null;
+  now: number;
+}): boolean {
+  if (isIdleInTxTimeoutError(args.error)) return true;
+  if (!args.inTransaction || !args.timeoutMin || args.timeoutMin <= 0 || args.lastActivityAt === null) {
+    return false;
+  }
+  return args.now - args.lastActivityAt >= args.timeoutMin * 60_000;
+}

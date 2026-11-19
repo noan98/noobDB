@@ -609,6 +609,8 @@ fn build_fixtures() -> serde_json::Value {
             path: "/data/archive.db".into(),
             alias: "archive".into(),
         }],
+        // #2464: 放置トランザクションの自動切断 (分)。
+        idle_in_tx_timeout_min: Some(30),
     };
     let connection_profile = ProfileWithSecretFlags {
         profile: connection_profile_inner,

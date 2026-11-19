@@ -828,6 +828,7 @@ fn build_connect_request(
         aws_iam: profile.aws_iam.clone(),
         ssm: profile.ssm.clone(),
         sqlite_attachments: profile.sqlite_attachments.clone(),
+        idle_in_tx_timeout_min: profile.idle_in_tx_timeout_min,
         read_only: !matches!(action, TaskAction::RunMaintenance { .. }),
         skip_history: true,
     })

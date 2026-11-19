@@ -2004,6 +2004,7 @@ mod tests {
             init_sql: None,
             aws_iam: None,
             sqlite_attachments: Vec::new(),
+            idle_in_tx_timeout_min: None,
             read_only: false,
         };
         assert_eq!(pg_connect_database(&o), Some("app"));
@@ -2030,6 +2031,7 @@ mod tests {
             init_sql: None,
             aws_iam: None,
             sqlite_attachments: Vec::new(),
+            idle_in_tx_timeout_min: None,
             read_only: false,
         };
         // タスク経路: 入力された DB 名が --dbname になる。
@@ -2185,6 +2187,7 @@ mod tests {
             init_sql: None,
             aws_iam: None,
             sqlite_attachments: Vec::new(),
+            idle_in_tx_timeout_min: None,
             read_only: false,
         };
         let path = {
@@ -2269,6 +2272,7 @@ mod tests {
             init_sql: None,
             aws_iam: None,
             sqlite_attachments: Vec::new(),
+            idle_in_tx_timeout_min: None,
             read_only: false,
         }
     }
@@ -2425,6 +2429,7 @@ mod tests {
             init_sql: None,
             aws_iam: None,
             sqlite_attachments: Vec::new(),
+            idle_in_tx_timeout_min: None,
             read_only: false,
         };
         let path = {

@@ -23,3 +23,14 @@ no-op)。
 として `profiles.json` に保存します。判定の単体テストは `db/mod.rs`、実行が各物理接続で
 効くことの検証は `tests/sqlite_integration.rs` の `sqlite_init_sql_runs_on_each_connection`
 (PRAGMA を設定して読み戻す。外部サーバ不要で常時実走) がカバーします。
+
+## PostgreSQL の放置トランザクション自動切断 (#2464)
+
+`DbConnectOptions.idle_in_tx_timeout_min` (profiles.json の非秘密フィールド、既定 `None` = オフ) が
+`Some(n)` のとき、PostgreSQL の `after_connect` が**ユーザの `init_sql` より先に**
+`SET idle_in_transaction_session_timeout = '<n>min'` を流す (`db::idle_in_tx_timeout_sql`。
+`init_sql` で上書き可能)。値は `validate_idle_in_tx_timeout_min` で 1〜10080 の整数に限るので SQL へ
+そのまま埋めても注入の余地がない。保存 (`save_profile`) と接続 (`build_options`) の両方で検証し、
+PostgreSQL 以外では保存も送出もしない。サーバが切断すると SQLSTATE 25P03 / "terminating connection due
+to idle-in-transaction timeout" が返り、`sqlx_is_connection_lost` が接続断として扱う。フロントは
+`txJournal.isIdleTxDisconnect` で判定し、TX 状態を破棄して専用の文言 (`statusIdleTxDisconnected`) を出す。

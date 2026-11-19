@@ -2479,6 +2479,7 @@ mod keyset_tests {
             init_sql: None,
             aws_iam: None,
             sqlite_attachments: Vec::new(),
+            idle_in_tx_timeout_min: None,
             read_only: false,
         };
         (Connection::connect(&opts).await.unwrap(), path)

@@ -384,6 +384,9 @@ function isValidSsmTarget(target: string): boolean {
 }
 
 /** Bordered field group, spanning both columns of the form grid. */
+/** 放置トランザクション自動切断 (分) の上限 (Rust の `IDLE_IN_TX_TIMEOUT_MAX_MIN` と揃える)。 */
+const IDLE_IN_TX_TIMEOUT_MAX_MIN = 10_080;
+
 function Fieldset({ children }: { children: ReactNode }) {
   return (
     <Box
@@ -505,6 +508,11 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
 
   // Session-initialization SQL run on every new connection (#522).
   const [initSql, setInitSql] = useState(initial?.init_sql ?? "");
+  // PostgreSQL の放置トランザクション自動切断 (分) (#2464)。空はオフ (既定)。
+  const [idleTxMin, setIdleTxMin] = useState(
+    initial?.idle_in_tx_timeout_min != null ? String(initial.idle_in_tx_timeout_min) : "",
+  );
+  const [idleTxError, setIdleTxError] = useState<string | null>(null);
 
   // DB auth method (#734): classic password, or AWS RDS IAM auth. IAM stores
   // only the region and the AWS profile *name*; the backend reads the AWS keys
@@ -888,6 +896,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
       skip_history: skipHistory,
       ...tlsSettings(),
       init_sql: initSql.trim() || null,
+      idle_in_tx_timeout_min: idleTxValue(),
       aws_iam: awsIamConfig(),
     };
   };
@@ -905,6 +914,12 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
     const n = Number(value);
     return Number.isInteger(n) && n >= 1 && n <= 65535 ? n : null;
   };
+  // 放置トランザクションの自動切断 (分)。PostgreSQL 以外・空・不正値は null (送らない)。
+  const idleTxValue = (): number | null => {
+    if (driver !== "postgres" || idleTxMin.trim() === "") return null;
+    const n = Number(idleTxMin);
+    return Number.isInteger(n) && n >= 1 && n <= IDLE_IN_TX_TIMEOUT_MAX_MIN ? n : null;
+  };
   // 空 (自動割当) は null。不正値は検証で弾くので、ここでは null に落とす。
   const sshLocalPortValue = (): number | null =>
     sshLocalPort.trim() === "" ? null : parsePort(sshLocalPort.trim());
@@ -921,6 +936,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
     setSshLocalPortError(null);
     setSsmTargetError(null);
     setSsmRegionError(null);
+    setIdleTxError(null);
     if (isFileBacked) {
       // ATTACH 設定の不備 (別名の空・不正・重複、11 件以上) は保存も接続テストも止める (#2153)。
       // バックエンドも同じ規則で拒否する (`save_profile` / 接続時) が、先に FieldError で示す。
@@ -930,6 +946,10 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
       return problem === null;
     }
     let ok = true;
+    if (driver === "postgres" && idleTxMin.trim() !== "" && idleTxValue() === null) {
+      setIdleTxError(t("formIdleTxInvalid", { max: IDLE_IN_TX_TIMEOUT_MAX_MIN }));
+      ok = false;
+    }
     if (useSsm && !isValidSsmTarget(ssmTarget.trim())) {
       setSsmTargetError(t("formInvalidSsmTarget"));
       ok = false;
@@ -1066,6 +1086,8 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
         ssl_client_key: isFileBacked ? null : sslClientKey.trim() || null,
         // Init SQL applies to all drivers (SQLite via PRAGMA).
         init_sql: initSql.trim() || null,
+        // 放置トランザクションの自動切断 (#2464)。PostgreSQL 以外は null (ドライバ切替で値を残さない)。
+        idle_in_tx_timeout_min: idleTxValue(),
         // AWS IAM auth (#734): region + AWS profile name only (no AWS keys).
         aws_iam: awsIamConfig(),
       });
@@ -1924,6 +1946,36 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
           </Text>
         </Box>
       </Fieldset>
+
+      {driver === "postgres" && (
+        <Fieldset>
+          <Legend>{t("formIdleTxLegend")}</Legend>
+          <Box>
+            <FieldLabel htmlFor={`${fid}-idle-tx`}>{t("formIdleTxLabel")}</FieldLabel>
+            <Input
+              id={`${fid}-idle-tx`}
+              type="text"
+              inputMode="numeric"
+              value={idleTxMin}
+              placeholder={t("formIdleTxPlaceholder")}
+              aria-invalid={idleTxError ? true : undefined}
+              onChange={(e) => {
+                setIdleTxMin(e.target.value.replace(/[^0-9]/g, ""));
+                if (idleTxError) setIdleTxError(null);
+              }}
+              maxW="40"
+            />
+            {idleTxError && (
+              <FieldError display="block" mt="1">
+                {idleTxError}
+              </FieldError>
+            )}
+            <Text textStyle="caption" color="app.textMuted" mt="1" mb="0">
+              {t("formIdleTxHelp")}
+            </Text>
+          </Box>
+        </Fieldset>
+      )}
 
       <AnimatePresence initial={false}>
         {message && (

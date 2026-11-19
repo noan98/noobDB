@@ -250,6 +250,11 @@ fn sqlx_is_connection_lost(e: &sqlx::Error) -> bool {
             m.contains("connection") || m.contains("unexpected end") || m.contains("eof")
         }
         sqlx::Error::Database(db) => {
+            // 25P03 = idle_in_transaction_session_timeout (#2464)。サーバが放置トランザクションを
+            // 切ってセッションを閉じたので、メッセージ文言に依らず接続断として扱う。
+            if db.code().as_deref() == Some("25P03") {
+                return true;
+            }
             let m = db.message().to_ascii_lowercase();
             m.contains("gone away")
                 || m.contains("lost connection")

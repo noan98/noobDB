@@ -112,6 +112,12 @@ export interface SessionInitSettings {
    * read-only statements are allowed. `null`/omitted runs nothing.
    */
   init_sql?: string | null;
+  /**
+   * PostgreSQL の放置トランザクションの自動切断 (分) (#2464)。設定すると新しい接続ごとに
+   * `SET idle_in_transaction_session_timeout` を流す。`null`/omitted はオフ (既定)。
+   * 1〜10080。PostgreSQL 以外では無視される。非秘密。
+   */
+  idle_in_tx_timeout_min?: number | null;
 }
 
 /**

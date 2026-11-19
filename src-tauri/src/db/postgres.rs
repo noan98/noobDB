@@ -28,7 +28,9 @@ use super::types::{
 };
 use super::upsert::{conflict_clause, ImportConflict, KeyKind};
 use super::view_rebuild::{AclEntry, DependentViews, RebuildBlocker, ViewInfo, ViewKind};
-use super::{columns_of, init_sql_of, DbConnectOptions, DriverKind, SslMode};
+use super::{
+    columns_of, idle_in_tx_timeout_sql, init_sql_of, DbConnectOptions, DriverKind, SslMode,
+};
 use super::{GuardedStatement, GuardedTxOutcome};
 use crate::error::{AppError, Result};
 
@@ -123,13 +125,20 @@ impl PostgresConn {
             .acquire_timeout(std::time::Duration::from_secs(15));
         let search_path = std::sync::Arc::new(SearchPathState::default());
         let init_sql = init_sql_of(opts);
+        // 放置トランザクションの自動切断 (#2464)。ユーザの init_sql より先に流し、init_sql で上書きできる。
+        let idle_tx_sql = idle_in_tx_timeout_sql(opts);
         let sp_state = search_path.clone();
         // 新しい物理接続ごとに、セッション初期化 SQL を流し、その結果の search_path を
         // 「既定値」として控える (スキーマ指定の文で書き換えた接続を戻す先)。
         pool_opts = pool_opts.after_connect(move |conn, _meta| {
             let sql = init_sql.clone();
+            let idle_tx_sql = idle_tx_sql.clone();
             let sp_state = sp_state.clone();
             Box::pin(async move {
+                if let Some(sql) = idle_tx_sql {
+                    sqlx::Executor::execute(&mut *conn, sqlx::raw_sql(sqlx::AssertSqlSafe(sql)))
+                        .await?;
+                }
                 if let Some(sql) = sql {
                     sqlx::Executor::execute(&mut *conn, sqlx::raw_sql(sqlx::AssertSqlSafe(sql)))
                         .await?;

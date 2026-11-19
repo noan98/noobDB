@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   TX_JOURNAL_MAX_ENTRIES,
   appendTxEntry,
+  isIdleInTxTimeoutError,
+  isIdleTxDisconnect,
+  txLastActivityAt,
   newTxMeta,
   recordTxMeta,
   batchResultToTxOutcome,
@@ -203,5 +206,48 @@ describe("recordTxMeta (一覧の上限と累計)", () => {
     m = recordTxMeta(m, makeTxEntry("DELETE FROM t", "mysql", { ok: false }, 1));
     expect(m.omitted).toBe(0);
     expect(m.totals).toEqual({ statements: 1, rows: 2, failed: 1 });
+  });
+});
+
+describe("放置トランザクションの自動切断 (#2464)", () => {
+  it("idle-in-transaction timeout / 25P03 のエラー文を判定する", () => {
+    expect(
+      isIdleInTxTimeoutError(
+        "error returned from database: terminating connection due to idle-in-transaction timeout",
+      ),
+    ).toBe(true);
+    expect(isIdleInTxTimeoutError("FATAL 25P03")).toBe(true);
+    expect(isIdleInTxTimeoutError("connection reset by peer")).toBe(false);
+    expect(isIdleInTxTimeoutError(null)).toBe(false);
+    expect(isIdleInTxTimeoutError(undefined)).toBe(false);
+  });
+
+  it("最後の動きは最後の文の時刻、文が無ければ BEGIN の時刻", () => {
+    expect(txLastActivityAt(newTxMeta(500))).toBe(500);
+    expect(txLastActivityAt(recordTxMeta(newTxMeta(500), ok("UPDATE t SET a = 1", 1)))).toBe(1000);
+  });
+
+  const base = { inTransaction: true, timeoutMin: 10, lastActivityAt: 0, now: 0 };
+  it("エラー文が自動切断を示せば、設定や経過に関係なく該当する", () => {
+    expect(
+      isIdleTxDisconnect({
+        ...base,
+        timeoutMin: null,
+        error: "terminating connection due to idle-in-transaction timeout",
+      }),
+    ).toBe(true);
+  });
+
+  it("接続断だけのときは、設定済みで最後の動きから設定分が過ぎていれば推定する (境界は 10 分ちょうど)", () => {
+    expect(isIdleTxDisconnect({ ...base, now: 10 * 60_000 - 1 })).toBe(false);
+    expect(isIdleTxDisconnect({ ...base, now: 10 * 60_000 })).toBe(true);
+  });
+
+  it("設定が無い・TX 中でない・時刻不明なら推定しない", () => {
+    const now = 99 * 60_000;
+    expect(isIdleTxDisconnect({ ...base, now, timeoutMin: null })).toBe(false);
+    expect(isIdleTxDisconnect({ ...base, now, timeoutMin: 0 })).toBe(false);
+    expect(isIdleTxDisconnect({ ...base, now, inTransaction: false })).toBe(false);
+    expect(isIdleTxDisconnect({ ...base, now, lastActivityAt: null })).toBe(false);
   });
 });

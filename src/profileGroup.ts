@@ -43,6 +43,7 @@ export function buildGroupMoveRequest(profile: ConnectionProfile, group: string 
     ssl_client_cert: profile.ssl_client_cert ?? null,
     ssl_client_key: profile.ssl_client_key ?? null,
     init_sql: profile.init_sql ?? null,
+    idle_in_tx_timeout_min: profile.idle_in_tx_timeout_min ?? null,
     aws_iam: profile.aws_iam ?? null,
     ssm: profile.ssm ?? null,
     sqlite_attachments: profile.sqlite_attachments ?? [],

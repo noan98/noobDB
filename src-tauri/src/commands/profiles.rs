@@ -77,6 +77,11 @@ pub struct SaveProfileRequest {
     /// SQLite で追加アタッチするファイル (#2129)。非秘密。SQLite 以外は保存しない。
     #[serde(default)]
     pub sqlite_attachments: Vec<crate::db::SqliteAttachment>,
+    /// PostgreSQL の放置トランザクションの自動切断 (分) (#2464)。`Some(n)` で新しい物理接続ごとに
+    /// `SET idle_in_transaction_session_timeout = 'nmin'` を流す。`None` は設定しない (既定)。
+    /// PostgreSQL 以外では無視する。非秘密。
+    #[serde(default)]
+    pub idle_in_tx_timeout_min: Option<u32>,
 }
 
 /// A stored profile plus flags telling the UI which secrets already exist in the
@@ -359,6 +364,12 @@ fn save_profile_inner(id: String, req: SaveProfileRequest) -> Result<ConnectionP
         Vec::new()
     };
     crate::db::sqlite::validate_attachment_settings(&sqlite_attachments)?;
+    // 放置トランザクションの自動切断は PostgreSQL 専用 (#2464)。範囲外は保存時に弾き、他ドライバは保存しない。
+    let idle_in_tx_timeout_min = if req.driver == "postgres" {
+        crate::db::validate_idle_in_tx_timeout_min(req.idle_in_tx_timeout_min)?
+    } else {
+        None
+    };
     let req_secrets = ProfileSecretUpdates {
         db_password: req.db_password.clone(),
         ssh_passphrase: req.ssh_passphrase.clone(),
@@ -407,6 +418,7 @@ fn save_profile_inner(id: String, req: SaveProfileRequest) -> Result<ConnectionP
         }),
         ssm,
         sqlite_attachments,
+        idle_in_tx_timeout_min,
     };
     // 秘密を先に書き、すべて成功してから本体を upsert する。秘密の書き込みが途中で失敗しても
     // それまでに書いた秘密は元の値へ戻し (既存プロファイル)、新規プロファイルなら孤立
@@ -986,6 +998,23 @@ mod tests {
         }
     }
 
+    /// 放置トランザクションの自動切断 (#2464) の範囲外は、保存 (IPC を直接叩く経路) が I/O の前に拒否する。
+    #[test]
+    fn save_profile_rejects_out_of_range_idle_in_tx_timeout_before_any_io() {
+        for minutes in [0u64, 10_081] {
+            let req: SaveProfileRequest = serde_json::from_value(serde_json::json!({
+                "name": "p", "driver": "postgres", "host": "h", "port": 5432, "user": "u",
+                "idle_in_tx_timeout_min": minutes,
+            }))
+            .unwrap();
+            let err = save_profile_inner("abcd2345".into(), req).unwrap_err();
+            assert!(
+                matches!(err, AppError::InvalidInput(_)),
+                "{minutes}: {err:?}"
+            );
+        }
+    }
+
     #[test]
     fn normalize_ssm_trims_and_drops_blank_profile() {
         assert!(normalize_ssm(None, true, "mysql").unwrap().is_none());
@@ -1105,6 +1134,7 @@ mod tests {
             aws_iam: None,
             ssm: None,
             sqlite_attachments: Vec::new(),
+            idle_in_tx_timeout_min: None,
         }
     }
 
