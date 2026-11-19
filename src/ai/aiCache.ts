@@ -141,7 +141,7 @@ function removeQuietly(key: string): void {
   }
 }
 
-/** 1 エントリを消す。 @public 純ロジックを単体テストするために公開。本番の呼び出し元は無い (#2445 のトリアージで削除せず許可。不要と確認できれば削除する) */
+/** 1 エントリを消す。 @public 配線漏れの疑い、要調査 (AI キャッシュの個別削除が本番から呼ばれていない。単体テストでのみ検証) */
 export function removeAiCache(key: string): void {
   removeQuietly(key);
   writeIndex(readIndex().filter((e) => e.k !== key));

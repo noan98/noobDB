@@ -57,7 +57,6 @@ export const FIXTURE_TO_SOURCES = {
   [`${F}dangerousSqlVectors.json`]: [DANGER],
   [`${F}maskVectors.json`]: [DANGER],
   [`${F}readOnlySqlVectors.json`]: [DANGER],
-  [`${F}schemaMutatingVectors.json`]: [DANGER],
   [`${F}scriptSplitVectors.json`]: [SCRIPT, DANGER],
   [`${F}statementSplitVectors.json`]: [SCRIPT, DANGER],
 };

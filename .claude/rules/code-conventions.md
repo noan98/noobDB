@@ -73,3 +73,6 @@ CI の frontend ジョブで実行し、本番の入口から到達しない exp
 テストだけが使うもの (`reset*ForTest` など) は JSDoc の `@public <理由>` で許可し、
 テスト補助ファイルは `knip.production.json` の `ignore` で除外します。本番で使われない
 判定ロジックを足したくなったら、TS 側は作らず Rust 側のテストで固定してください。
+`@public` の理由文には「テスト」の語を含めてください (`publicTagReachability.test.ts` が、
+「テスト」を明記したものだけテストからの参照で到達とみなすため)。`knip.production.json` の
+`tags: ["-public"]` は通常の knip と同じ許可方式に揃えたものです。

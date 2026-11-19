@@ -68,7 +68,6 @@ on:
       - "src/__tests__/fixtures/dangerousSqlVectors.json"
       - "src/__tests__/fixtures/maskVectors.json"
       - "src/__tests__/fixtures/readOnlySqlVectors.json"
-      - "src/__tests__/fixtures/schemaMutatingVectors.json"
       - "src/__tests__/fixtures/scriptSplitVectors.json"
       - "src/__tests__/fixtures/statementSplitVectors.json"
       - "stryker.conf.json"

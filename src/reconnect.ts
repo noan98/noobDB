@@ -50,7 +50,7 @@ export function backoffDelayMs(attempt: number, opts: BackoffOptions = {}): numb
 /**
  * 与えた最大リトライ回数ぶんの待機時間 (ms) の配列。プレビュー表示やテストで
  * バックオフの形を一覧するために使う。`maxRetries <= 0` なら空配列。
- * @public 純ロジックを単体テストするために公開。本番の呼び出し元は無い (#2445 のトリアージで削除せず許可。不要と確認できれば削除する)
+ * @public 配線漏れの疑い、要調査 (バックオフ一覧のプレビュー用だが本番から呼ばれていない。単体テストでのみ検証)
  */
 export function reconnectSchedule(maxRetries: number, opts: BackoffOptions = {}): number[] {
   const count = Number.isFinite(maxRetries) && maxRetries > 0 ? Math.floor(maxRetries) : 0;

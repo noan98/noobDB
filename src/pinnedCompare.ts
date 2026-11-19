@@ -64,7 +64,7 @@ export function resultsComparable(a: { columns: Column[] }, b: { columns: Column
 /**
  * ピン留め一覧に 1 件追加する。上限 `max` を超えたら**古いものから**破棄する
  * (一覧は古い→新しいの順)。元配列は変更しない。
- * @public 純ロジックを単体テストするために公開。本番の呼び出し元は無い (#2445 のトリアージで削除せず許可。不要と確認できれば削除する)
+ * @public 本番の addPinnedWithEvicted の薄いラッパー (テスト用: 追い出された要素を捨てて比較する)
  */
 export function addPinned(list: PinnedResult[], item: PinnedResult, max = MAX_PINNED): PinnedResult[] {
   return addPinnedWithEvicted(list, item, max).list;

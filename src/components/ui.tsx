@@ -94,7 +94,7 @@ export { Switch } from "./Switch";
  * ここ経由で役割を指定すること。
  *
  * `Dialog.Title` のように DOM タグを差し替えられないコンポーネントに同じ役割を
- * 適用したい場合は、`Heading`/`SectionLabel` を経由せず `textStyle="heading"` /
+ * 適用したい場合は、`Heading` を経由せず `textStyle="heading"` /
  * `textStyle="overline"` を対象要素へ直接渡せばよい (textStyles はどの Chakra
  * 要素からも参照できる)。
  */

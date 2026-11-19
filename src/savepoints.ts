@@ -1,15 +1,8 @@
 // 明示トランザクションの SAVEPOINT スタック (#1418) の純ロジック。
-// 名前の規則はバックエンド (`db/savepoint.rs`) と同じ: 英数字と `_`、先頭は英字か `_`、63 文字まで。
+// 名前の検証はバックエンド (`db/savepoint.rs` の validate_name) だけが持つ。自動名 `sp_<n>` はその規則を満たす: 英数字と `_`、先頭は英字か `_`、63 文字まで。
 
 /** 現在の SAVEPOINT スタック (古い順)。末尾が最も新しい。 */
 export type SavepointStack = readonly string[];
-
-const NAME_RE = /^[A-Za-z_][A-Za-z0-9_]{0,62}$/;
-
-/** @public 純ロジックを単体テストするために公開。本番の呼び出し元は無い (#2445 のトリアージで削除せず許可。不要と確認できれば削除する) */
-export function isValidSavepointName(name: string): boolean {
-  return NAME_RE.test(name);
-}
 
 /** 次の自動名 `sp_<n>`。`counter` はトランザクション中に単調増加させる値 (名前の再利用を避ける)。 */
 export function savepointName(counter: number): string {

@@ -334,8 +334,8 @@ const config = defineConfig({
     // 手書きされ、`lg`+600 だったり `lg`+700 だったり、字間が 0.04em/0.05em/0.06em
     // だったりと少しずつ揃わずドリフトしていた問題への対応。Chakra の `textStyle`
     // prop は任意の要素 (`Box` は勿論、`Dialog.Title` のような他コンポーネントの
-    // ポリモーフィック要素にも) にそのまま適用できるため、`ui.tsx` の `Heading` /
-    // `SectionLabel` から使うだけでなく、DOM タグを変えられない箇所 (例: Ark UI の
+    // ポリモーフィック要素にも) にそのまま適用できるため、`ui.tsx` の `Heading` から
+    // 使うだけでなく、DOM タグを変えられない箇所 (例: Ark UI の
     // `Dialog.Title` は常に `h2`) にも同じ役割を後付けできる。
     //
     // 役割は 6 種:

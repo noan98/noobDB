@@ -3,7 +3,7 @@ import { comparePlans, opsFromSnapshot, type PlanPayloadKind } from "../componen
 import vectors from "./fixtures/planWatchVectors.json";
 
 // 実行計画ウォッチ (#743 / #1260) のフロント/バック整合性ゴールデンテスト — フロント側。
-// 計画の正規化・フィンガープリント・2 世代の比較は、フロント (`planDiff.ts`) と
+// 計画の正規化・2 世代の比較は、フロント (`planDiff.ts`) と
 // バック (`src-tauri/src/plan_watch`) で独立に二重実装されている。両者が同一の共有ベクタ
 // を読み、期待値 (フロントの実出力から生成) と一致することを検証する。バック側の
 // 対になるテストは `src-tauri/tests/plan_watch_golden.rs`。
