@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { chakra } from "@chakra-ui/react";
 import { useT } from "../i18n";
 import type { DangerFinding, DangerFindingKind } from "../dangerousSql";
@@ -10,6 +10,7 @@ import { DestructiveTitle } from "./DestructiveTitle";
 import { RefImpactList } from "./RefImpactList";
 import type { CascadeImpacts } from "../refImpact";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
+import { ErrorNote } from "./modalForm";
 import { Button, Input } from "./ui";
 import { api } from "../api/tauri";
 import { useRowSample } from "../useRowSample";
@@ -80,6 +81,17 @@ interface Props {
     total: number | null;
     setColumns: readonly string[];
   } | null;
+  /**
+   * 実行前の退避コピー (#2448)。単一テーブルの DROP / TRUNCATE / WHERE なし DELETE のときだけ渡る。
+   * `node` はチェックボックス (`BackupBeforeOption`)、`beforeConfirm` は実行ボタン押下時に退避を作り、失敗なら
+   * エラー文字列を返す (ダイアログは閉じず `ErrorNote` に出し、本操作は実行しない)。
+   */
+  backup?: { node: ReactNode; beforeConfirm: () => Promise<string | null> } | null;
+  /**
+   * 退避の対象になりうる文で、退避先を特定している間 (`resolving`) は「実行」を無効にして確認中と出す。
+   * 特定できなかった (`unavailable`) ときは「この文では退避できません」と一行出す。それ以外は null。
+   */
+  backupState?: "resolving" | "unavailable" | null;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -112,10 +124,46 @@ export function DangerousQueryDialog({
   pkSuggestion,
   fkImpact,
   rowPreview,
-  onConfirm,
-  onCancel,
+  backup,
+  backupState,
+  onConfirm: onConfirmDone,
+  onCancel: onCancelRaw,
 }: Props) {
   const t = useT();
+  // 退避の実行中にキャンセル / Esc / × / アンマウントされたら、完了しても実行しない。
+  const abandonedRef = useRef(false);
+  useEffect(() => {
+    abandonedRef.current = false;
+    return () => {
+      abandonedRef.current = true;
+    };
+  }, []);
+  const onCancel = () => {
+    abandonedRef.current = true;
+    onCancelRaw();
+  };
+  const [backupBusy, setBackupBusy] = useState(false);
+  const [backupError, setBackupError] = useState<string | null>(null);
+  const onConfirm = async () => {
+    if (backupBusy) return;
+    if (backup) {
+      setBackupBusy(true);
+      setBackupError(null);
+      let err: string | null;
+      try {
+        err = await backup.beforeConfirm();
+      } catch (e) {
+        err = String(e);
+      }
+      if (abandonedRef.current) return;
+      setBackupBusy(false);
+      if (err) {
+        setBackupError(err);
+        return;
+      }
+    }
+    onConfirmDone();
+  };
   // 注意: 別接続で実行する読み取りなので、明示トランザクション中の未コミットの変更は見えない。
   // 重いテーブルで確認を待たせないよう 5 秒で打ち切る (失敗はエラー表示になるだけで、実行ボタンは有効のまま)。
   const previewSession = rowPreview?.sessionId ?? null;
@@ -322,6 +370,18 @@ export function DangerousQueryDialog({
             preflight={impact ?? null}
           />
         )}
+        {backup?.node}
+        {backupState === "resolving" && (
+          <Callout tone="info" role="status" data-testid="dangerous-backup-resolving">
+            {t("backupResolving")}
+          </Callout>
+        )}
+        {backupState === "unavailable" && (
+          <chakra.span textStyle="caption" data-testid="dangerous-backup-unavailable">
+            {t("backupUnavailable")}
+          </chakra.span>
+        )}
+        {backupError && <ErrorNote>{backupError}</ErrorNote>}
         {requiresTyped && (
           <chakra.div display="flex" flexDirection="column" gap="1.5">
             <chakra.label htmlFor="dangerous-type-confirm-input" textStyle="subheading">
@@ -351,10 +411,10 @@ export function DangerousQueryDialog({
         <Button
           type="button"
           variant="dangerOutline"
-          onClick={onConfirm}
-          disabled={requiresTyped && !typedMatches}
+          onClick={() => void onConfirm()}
+          disabled={(requiresTyped && !typedMatches) || backupBusy || backupState === "resolving"}
         >
-          {t("dangerousConfirm")}
+          {backupBusy ? t("backupRunning") : t("dangerousConfirm")}
         </Button>
         <div style={{ flex: 1 }} />
         <Button ref={cancelRef} type="button" variant="primary" onClick={onCancel}>

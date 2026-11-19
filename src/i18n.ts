@@ -2654,6 +2654,28 @@ const en = {
   cloneTableNameLabel: 'New table name (copy of "{table}")',
   cloneTableNameExists: 'A table named "{table}" already exists.',
   cloneTableIncludeData: "Copy the data too (INSERT INTO ... SELECT)",
+  backupOptionLabel: "Make a backup copy before running: {name}",
+  backupOptionLabelMany: "Make backup copies of {count} tables before running (<table>_bak_<timestamp>)",
+  backupOptionHint:
+    "Copies the rows into a new table first and only runs the operation if the copy succeeds. Drop the backup yourself when it is no longer needed.",
+  backupRowEstimate: "Rows to back up: about {rows} (estimate)",
+  backupLargeData:
+    "About {rows} rows will be copied. The backup can take a long time and uses as much disk space as the table itself.",
+  backupFailed: "Could not create the backup copy, so the operation was not run: {error}",
+  backupTableMissing: 'Table "{table}" was not found, so no backup copy could be made. Nothing was run.',
+  backupCannotBuild: 'Cannot build a backup copy of "{table}" (is it a view?) {detail}',
+  backupPartial: '{error} (an incomplete backup table "{name}" may remain; drop it manually)',
+  backupStepsNote:
+    "The backup and the operation run as two separate steps: if the operation fails afterwards, the backup table stays. (MySQL commits DDL implicitly, so a failure in the middle of the backup can also leave an empty backup table.)",
+  backupNotCovered:
+    "A backup copy does not restore everything: foreign keys of the backup table (it has none), rows removed from child tables by ON DELETE CASCADE, objects dropped by DROP ... CASCADE, triggers, and privileges are not covered.",
+  backupDoneToast: "Backed up to {names}.",
+  backupDoneKeptToast: "The operation failed; the backup {names} was kept.",
+  backupCopyRestore: "Copy restore SQL",
+  backupRestoreCopied: "Restore SQL copied.",
+  backupRunning: "Backing up...",
+  backupResolving: "Checking where to back up...",
+  backupUnavailable: "A backup copy cannot be made for this statement.",
   cloneTableRowEstimate: "Rows to copy: about {rows} (estimate)",
   cloneTableLargeData:
     "About {rows} rows will be copied. INSERT ... SELECT may take a long time and hold locks.",
@@ -11887,6 +11909,29 @@ const ja: Dict = {
   cloneTableNameLabel: "新しいテーブル名 (「{table}」の複製)",
   cloneTableNameExists: "テーブル「{table}」は既に存在します。",
   cloneTableIncludeData: "データも複製する (INSERT INTO ... SELECT)",
+  backupOptionLabel: "実行前に退避コピーを作る: {name}",
+  backupOptionLabelMany: "実行前に {count} 個のテーブルの退避コピーを作る (<テーブル>_bak_<日時>)",
+  backupOptionHint:
+    "先に行を新しいテーブルへコピーし、コピーが成功したときだけ本操作を実行します。不要になった退避テーブルは自分で削除してください。",
+  backupRowEstimate: "退避する行数: 約 {rows} 行 (推定)",
+  backupLargeData:
+    "約 {rows} 行をコピーします。退避に時間がかかり、テーブルと同じ量のディスクを使う可能性があります。",
+  backupFailed: "退避コピーを作れなかったため、本操作は実行していません: {error}",
+  backupTableMissing: 'テーブル "{table}" が見つからないため退避コピーを作れません。何も実行していません。',
+  backupCannotBuild: '"{table}" の退避コピーを組み立てられません (ビューではありませんか?) {detail}',
+  backupPartial:
+    '{error} (不完全な退避テーブル "{name}" が残っている可能性があります。手動で削除してください)',
+  backupStepsNote:
+    "退避と本操作は別々の 2 段階で実行します。あとの本操作が失敗しても退避テーブルは残ります (MySQL は DDL が暗黙コミットされるため、退避の途中で失敗したときも空の退避テーブルが残りえます)。",
+  backupNotCovered:
+    "退避コピーでは戻らないもの: 退避テーブルの外部キー (付きません)、ON DELETE CASCADE で消える子テーブルの行、DROP ... CASCADE で消える依存オブジェクト、トリガ、権限。",
+  backupDoneToast: "{names} へ退避しました。",
+  backupDoneKeptToast: "本操作は失敗しました。退避テーブル {names} は残っています。",
+  backupCopyRestore: "復元用 SQL をコピー",
+  backupRestoreCopied: "復元用 SQL をコピーしました。",
+  backupRunning: "退避中...",
+  backupResolving: "退避先を確認中...",
+  backupUnavailable: "この文では退避できません。",
   cloneTableRowEstimate: "複製する行数: 約 {rows} 行 (推定)",
   cloneTableLargeData:
     "約 {rows} 行を複製します。INSERT ... SELECT に時間がかかり、ロックを保持する可能性があります。",

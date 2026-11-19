@@ -388,3 +388,116 @@ describe("DangerousQueryDialog", () => {
     expect(screen.getByRole("heading", { name: t("dangerousTitle") })).toBeInTheDocument();
   });
 });
+
+describe("DangerousQueryDialog 退避コピー (#2448)", () => {
+  beforeEach(() => {
+    setLocale("en");
+  });
+  const findings: DangerFinding[] = [{ kind: "drop", target: "users" }];
+
+  it("退避が失敗したら onConfirm を呼ばず ErrorNote を出す", async () => {
+    const onConfirm = vi.fn();
+    const user = userEvent.setup();
+    renderWithProviders(
+      <DangerousQueryDialog
+        findings={findings}
+        isProduction={false}
+        backup={{ node: <div>backup-option</div>, beforeConfirm: async () => "backup failed" }}
+        onConfirm={onConfirm}
+        onCancel={() => {}}
+      />,
+    );
+    expect(screen.getByText("backup-option")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: t("dangerousConfirm") }));
+    expect(await screen.findByText("backup failed")).toBeInTheDocument();
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  it("退避が成功したら onConfirm を呼ぶ", async () => {
+    const onConfirm = vi.fn();
+    const user = userEvent.setup();
+    renderWithProviders(
+      <DangerousQueryDialog
+        findings={findings}
+        isProduction={false}
+        backup={{ node: null, beforeConfirm: async () => null }}
+        onConfirm={onConfirm}
+        onCancel={() => {}}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: t("dangerousConfirm") }));
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
+
+  it("退避の実行中にキャンセルしたら、完了しても onConfirm を呼ばない", async () => {
+    const onConfirm = vi.fn();
+    const onCancel = vi.fn();
+    let finish: (v: string | null) => void = () => {};
+    const user = userEvent.setup();
+    renderWithProviders(
+      <DangerousQueryDialog
+        findings={findings}
+        isProduction={false}
+        backup={{ node: null, beforeConfirm: () => new Promise<string | null>((r) => (finish = r)) }}
+        onConfirm={onConfirm}
+        onCancel={onCancel}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: t("dangerousConfirm") }));
+    const cancels = screen.getAllByRole("button", { name: t("dangerousCancel") });
+    await user.click(cancels[cancels.length - 1]);
+    finish(null);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(onCancel).toHaveBeenCalled();
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  it("退避先を特定している間は「実行」を無効にし、確認中と出す", async () => {
+    const onConfirm = vi.fn();
+    const user = userEvent.setup();
+    const { rerender } = renderWithProviders(
+      <DangerousQueryDialog
+        findings={findings}
+        isProduction={true}
+        backup={null}
+        backupState="resolving"
+        onConfirm={onConfirm}
+        onCancel={() => {}}
+      />,
+    );
+    const run = screen.getByRole("button", { name: t("dangerousConfirm") });
+    expect(run).toBeDisabled();
+    expect(screen.getByText(t("backupResolving"))).toBeInTheDocument();
+    await user.click(run);
+    expect(onConfirm).not.toHaveBeenCalled();
+    // 特定できたら有効になり、退避オプションが出る
+    rerender(
+      <DangerousQueryDialog
+        findings={findings}
+        isProduction={true}
+        backup={{ node: <div>backup-option</div>, beforeConfirm: async () => null }}
+        backupState={null}
+        onConfirm={onConfirm}
+        onCancel={() => {}}
+      />,
+    );
+    expect(screen.getByRole("button", { name: t("dangerousConfirm") })).toBeEnabled();
+    expect(screen.getByText("backup-option")).toBeInTheDocument();
+  });
+
+  it("特定できなかったら「この文では退避できません」を出し、実行は妨げない", () => {
+    renderWithProviders(
+      <DangerousQueryDialog
+        findings={findings}
+        isProduction={false}
+        backup={null}
+        backupState="unavailable"
+        onConfirm={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+    expect(screen.getByText(t("backupUnavailable"))).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("dangerousConfirm") })).toBeEnabled();
+  });
+});

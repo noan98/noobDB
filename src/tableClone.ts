@@ -178,7 +178,7 @@ const utf8Len = (s: string) => new TextEncoder().encode(s).length;
  * (`identLimit` と同じ規則, #2392)。どちらも文字 (コードポイント) の境界で切り、サロゲートペアを分断しない。
  * SQLite は上限なし。
  */
-function fitIdent(driver: string, s: string, suffix = ""): string {
+export function fitIdent(driver: string, s: string, suffix = ""): string {
   const lim = identLimit(driver);
   if (!lim) return s + suffix;
   if (lim.bytes) {
@@ -219,6 +219,9 @@ export function cloneObjectName(
   return candidate;
 }
 
+/** この行数 (推定) を超えるコピー (テーブル複製のデータ込み・破壊的操作の前の退避) は時間とディスクを使うので警告を出す。 */
+export const LARGE_COPY_ROWS = 500_000;
+
 export interface CloneOptions {
   driver: string;
   /** MySQL = データベース / PostgreSQL = スキーマ。SQLite では無視。 */
@@ -245,6 +248,13 @@ export interface CloneOptions {
   pgForeignKeys?: PgForeignKey[] | null;
   /** 既に使われているインデックス/制約名 (あれば衝突回避に使う)。 */
   existingNames?: string[];
+  /**
+   * 破壊的操作の前の退避コピー (#2448)。複製と同じ文の組み立てを使うが、退避先には外部キーを持たせない
+   * (退避テーブルが他テーブルの DROP を邪魔せず、親行の削除が CASCADE で退避の行を消さないように)。
+   * MySQL は `CREATE TABLE new LIKE old` (インデックスは写り FK は写らない)、PostgreSQL は FK の
+   * `ALTER TABLE ... ADD CONSTRAINT` を足さない。SQLite は DDL の書き換え後に FK の句を落とす。
+   */
+  backup?: boolean;
 }
 
 const stripTrailingSemicolon = (s: string) => s.replace(/\s*;+\s*$/, "");
@@ -486,6 +496,119 @@ function detachSelfForeignKeys(tokens: Token[], o: CloneOptions): { tokens: Toke
 }
 
 /**
+ * SQLite の退避先 (#2448) から外部キーを落とす。テーブル制約の `[CONSTRAINT n] FOREIGN KEY ...` を捨て、
+ * 列定義の `[CONSTRAINT n] REFERENCES t [(cols)] [ON DELETE/UPDATE ...] [MATCH x] [[NOT] DEFERRABLE ...]` を削る。
+ * SQLite は既定で外部キーを強制するので、残すと親行の削除が ON DELETE CASCADE で退避の行を消してしまう。
+ */
+function stripSqliteForeignKeys(tokens: Token[]): Token[] {
+  const open = tokens.findIndex((t) => t.kind === "punct" && t.text === "(");
+  if (open < 0) return tokens;
+  const segs: Token[][] = [];
+  let cur: Token[] = [];
+  let depth = 0;
+  let close = -1;
+  for (let i = open; i < tokens.length; i++) {
+    const t = tokens[i];
+    if (t.kind === "punct" && t.text === "(") {
+      depth++;
+      if (depth === 1) continue;
+    } else if (t.kind === "punct" && t.text === ")") {
+      depth--;
+      if (depth === 0) {
+        segs.push(cur);
+        close = i;
+        break;
+      }
+    } else if (t.kind === "punct" && t.text === "," && depth === 1) {
+      segs.push(cur);
+      cur = [];
+      continue;
+    }
+    cur.push(t);
+  }
+  if (close < 0) return tokens;
+  const up = (t: Token | undefined) => (t ? t.text.toUpperCase() : "");
+  const kept: Token[][] = [];
+  for (let seg of segs) {
+    let i = nextSig(seg, 0);
+    if (i >= 0 && up(seg[i]) === "CONSTRAINT") {
+      const n = nextSig(seg, i + 1);
+      i = n >= 0 ? nextSig(seg, n + 1) : -1;
+    }
+    if (i >= 0 && up(seg[i]) === "FOREIGN") continue; // テーブル制約の FK ごと捨てる
+    // 列定義内の REFERENCES 句
+    // 1 列に REFERENCES が複数あっても全部除く。
+    for (let ref = seg.findIndex((t) => t.kind === "word" && up(t) === "REFERENCES"); ref >= 0; ) {
+      let start = ref;
+      // 直前が `CONSTRAINT <名前>` ならそれも落とす
+      let prev = start - 1;
+      while (prev >= 0 && (seg[prev].kind === "ws" || seg[prev].kind === "comment")) prev--;
+      const prev2 = (() => {
+        let k = prev - 1;
+        while (k >= 0 && (seg[k].kind === "ws" || seg[k].kind === "comment")) k--;
+        return k;
+      })();
+      if (prev >= 0 && prev2 >= 0 && up(seg[prev2]) === "CONSTRAINT") start = prev2;
+      const nm = readQualifiedName(seg, ref + 1);
+      let end = nm ? nm.end : ref + 1;
+      const paren = nextSig(seg, end);
+      if (paren >= 0 && seg[paren].kind === "punct" && seg[paren].text === "(") {
+        let d = 0;
+        for (let k = paren; k < seg.length; k++) {
+          if (seg[k].kind === "punct" && seg[k].text === "(") d++;
+          if (seg[k].kind === "punct" && seg[k].text === ")") {
+            d--;
+            if (d === 0) {
+              end = k + 1;
+              break;
+            }
+          }
+        }
+      }
+      for (;;) {
+        const k = nextSig(seg, end);
+        const w = up(seg[k]);
+        if (k < 0 || seg[k].kind !== "word") break;
+        if (w === "ON") {
+          // ON DELETE|UPDATE SET NULL | SET DEFAULT | CASCADE | RESTRICT | NO ACTION
+          const ev = nextSig(seg, k + 1);
+          const act = ev >= 0 ? nextSig(seg, ev + 1) : -1;
+          if (act < 0) break;
+          const two = up(seg[act]) === "SET" || up(seg[act]) === "NO";
+          const last = two ? nextSig(seg, act + 1) : act;
+          end = (last >= 0 ? last : act) + 1;
+        } else if (w === "MATCH") {
+          const n = nextSig(seg, k + 1);
+          end = (n >= 0 ? n : k) + 1;
+        } else if (w === "DEFERRABLE") {
+          end = k + 1;
+        } else if (w === "NOT") {
+          // `NOT DEFERRABLE` だけを消費する (`NOT NULL` は列の制約なので残す)。
+          const d = nextSig(seg, k + 1);
+          if (d < 0 || up(seg[d]) !== "DEFERRABLE") break;
+          end = d + 1;
+        } else if (w === "INITIALLY") {
+          const n = nextSig(seg, k + 1);
+          end = (n >= 0 ? n : k) + 1;
+        } else break;
+      }
+      seg = [...seg.slice(0, start), ...seg.slice(end)];
+      // 取り除いた跡の末尾空白を整える
+      while (seg.length > 1 && seg[seg.length - 1].kind === "ws") seg.pop();
+      ref = seg.findIndex((t) => t.kind === "word" && up(t) === "REFERENCES");
+    }
+    kept.push(seg);
+  }
+  const out: Token[] = tokens.slice(0, open + 1);
+  kept.forEach((seg, idx) => {
+    if (idx > 0) out.push({ kind: "punct", text: "," });
+    out.push(...seg);
+  });
+  out.push(...tokens.slice(close));
+  return out;
+}
+
+/**
  * 書き換え後の 1 文が操作する対象テーブル名 (最後の名前部品)。CREATE TABLE / CREATE INDEX /
  * ALTER TABLE / INSERT INTO を見る。解釈できなければ null。
  */
@@ -614,7 +737,10 @@ export function buildCloneStatements(o: CloneOptions): CloneResult {
         );
       }
     }
-    afterData.push(...pgForeignKeyAlters(o, used));
+    if (!o.backup) afterData.push(...pgForeignKeyAlters(o, used));
+  } else if (o.driver === "mysql" && o.backup) {
+    if (!rewriteCreateTable(stmts[0], o, new Set())) return empty;
+    head.push(`CREATE TABLE ${newName} LIKE ${oldName}`);
   } else {
     let rewritten = rewriteCreateTable(stmts[0], o, used);
     if (!rewritten) return empty;
@@ -623,6 +749,7 @@ export function buildCloneStatements(o: CloneOptions): CloneResult {
       rewritten = d.tokens;
       afterData.push(...d.alters);
     }
+    if (o.backup && o.driver === "sqlite") rewritten = stripSqliteForeignKeys(rewritten);
     head.push(stripTrailingSemicolon(render(rewritten)));
     stmts.slice(1).forEach((s) => {
       const r = rewriteCreateIndex(s, o, used);
@@ -686,14 +813,26 @@ export function violatesLiteralRules(sql: string, o: CloneOptions): boolean {
 }
 
 function buildInsertSelect(o: CloneOptions, newName: string, oldName: string): string {
-  const cols =
-    o.columns && o.columns.length > 0 ? o.columns.map((c) => quoteIdentFor(o.driver, c)).join(", ") : null;
+  return buildCopyRowsSql(o.driver, o.columns, newName, oldName);
+}
+
+/**
+ * `INSERT INTO <into> (列…) SELECT 列… FROM <from>`。`columns` が無ければ `SELECT *`。
+ * 複製・退避 (#2448) とその復元 SQL が同じ組み立てを使う。`into` / `from` は修飾・クオート済みの名前。
+ */
+export function buildCopyRowsSql(
+  driver: string,
+  columns: readonly string[] | null | undefined,
+  into: string,
+  from: string,
+): string {
+  const cols = columns && columns.length > 0 ? columns.map((c) => quoteIdentFor(driver, c)).join(", ") : null;
   // PostgreSQL の GENERATED ALWAYS AS IDENTITY は OVERRIDING SYSTEM VALUE が無いと値を入れられない
   // (identity 列が無くても構文上は許される)。
-  const override = o.driver === "postgres" && cols ? " OVERRIDING SYSTEM VALUE" : "";
+  const override = driver === "postgres" && cols ? " OVERRIDING SYSTEM VALUE" : "";
   return cols
-    ? `INSERT INTO ${newName} (${cols})${override} SELECT ${cols} FROM ${oldName}`
-    : `INSERT INTO ${newName} SELECT * FROM ${oldName}`;
+    ? `INSERT INTO ${into} (${cols})${override} SELECT ${cols} FROM ${from}`
+    : `INSERT INTO ${into} SELECT * FROM ${from}`;
 }
 
 /** MySQL の `EXTRA` が生成列 (VIRTUAL / STORED GENERATED) を示すか。`DEFAULT_GENERATED` は式既定値なので生成列ではない。 */
