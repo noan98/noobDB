@@ -140,6 +140,8 @@ export async function runPeekQuery(p: RunPeekParams): Promise<QueryResult> {
   } finally {
     p.signal?.removeEventListener("abort", onAbort);
     unlisten();
-    if (current === entry) current = null;
+    // 中止の最中なら、枠は中止処理 (cancelStream の完了後) が空ける。ここで先に空けると、
+    // 中止が終わる前に次の取得が始まり single-flight が崩れる。
+    if (current === entry && abortP === null) current = null;
   }
 }

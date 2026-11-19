@@ -126,6 +126,29 @@ describe("runPeekQuery (#2444)", () => {
     expect((await first) instanceof Error).toBe(true);
   });
 
+  it("中止された取得の reject を待ってから次を呼んでも、cancelStream が解決するまで次は流れない", async () => {
+    let release: () => void = () => {};
+    cancelStream.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve({ cancelled: true, deliveredRows: 0 });
+        }),
+    );
+    const ac = new AbortController();
+    const first = runPeekQuery({ sessionId: "s", database: null, sql: "SELECT 1", signal: ac.signal });
+    await flush();
+    ac.abort();
+    expect((await first.catch((e) => e)) instanceof Error).toBe(true);
+    const second = runPeekQuery({ sessionId: "s", database: null, sql: "SELECT 2" });
+    await flush();
+    expect(runQueryStream).toHaveBeenCalledTimes(1);
+    release();
+    await flush();
+    expect(runQueryStream).toHaveBeenCalledTimes(2);
+    handlersById.get(runQueryStream.mock.calls[1][0].streamId)?.onDone?.(doneMsg);
+    await second;
+  });
+
   it("3 本が重なっても同時に走るのは 1 本まで", async () => {
     let active = 0;
     let maxActive = 0;
