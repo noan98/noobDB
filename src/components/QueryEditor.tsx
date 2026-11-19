@@ -34,7 +34,14 @@ import {
   type ScrollMarkSnapshot,
 } from "./scrollMarkers";
 import { placeholderDecorations } from "./placeholderDecorations";
-import { Compartment, EditorState, StateEffect, StateField, type Text } from "@codemirror/state";
+import {
+  Compartment,
+  EditorSelection,
+  EditorState,
+  StateEffect,
+  StateField,
+  type Text,
+} from "@codemirror/state";
 import {
   Decoration,
   WidgetType,
@@ -88,7 +95,8 @@ import { snippetCompletionSource } from "./sqlSnippetCompletion";
 import { snippetHasFields, snippetToCodeMirrorTemplate } from "../snippetTemplate";
 import { t, useT } from "../i18n";
 import { markFeatureTried, useSettings } from "../settings";
-import { springs } from "../motion";
+import { reducedMotionActive, springs } from "../motion";
+import { prefersStaticMotion } from "./revealOrigin";
 import { statementAtOffset, statementsFromOffset } from "../sqlScript";
 import { insertHints, insertHintsRefresh } from "./insertHintsExtension";
 import { identifierHover, type IdentifierHoverLabels } from "./identifierHoverExtension";
@@ -220,6 +228,67 @@ const stmtFlashField = StateField.define<DecorationSet>({
   },
   provide: (f) => EditorView.decorations.from(f),
 });
+
+// グリッド / ツリー / スニペットなど別ペインから差し込んだテキストの着地点を示す (#2451)。
+// 挿入範囲を見える位置へ寄せ (`scrollIntoView` の y:"nearest")、一度だけ薄く光らせる。
+// `stmtFlashField` とは別クラス (`.cm-insert-flash`) にして、実行ハイライトと干渉させない。
+// 通常の入力・貼り付けでは呼ばない。見た目は App.css の `.cm-insert-flash`。
+const insertFlashEffect = StateEffect.define<{ from: number; to: number } | null>();
+const insertFlashMark = Decoration.mark({ class: "cm-insert-flash" });
+const insertFlashField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(deco, tr) {
+    deco = deco.map(tr.changes);
+    for (const e of tr.effects) {
+      if (e.is(insertFlashEffect)) {
+        deco =
+          e.value && e.value.to > e.value.from
+            ? Decoration.set([insertFlashMark.range(e.value.from, e.value.to)])
+            : Decoration.none;
+      }
+    }
+    return deco;
+  },
+  provide: (f) => EditorView.decorations.from(f),
+});
+
+/** 光らせない設定か (reduced-motion / モーション抑制 / hc-* / forced-colors)。スクロールは常に行う。 */
+function insertFlashSuppressed(): boolean {
+  return reducedMotionActive() || prefersStaticMotion();
+}
+
+/**
+ * 挿入済みの範囲 (挿入後の座標) を見える位置へ寄せ、光らせる effect 群。
+ * `scroll: false` は光らせるだけ (スニペット展開のように、呼び出し側がすでに入力位置へ寄せている場合)。
+ */
+function insertLandingEffects(from: number, length: number, scroll = true): StateEffect<unknown>[] {
+  const to = from + length;
+  const effects: StateEffect<unknown>[] = scroll
+    ? [EditorView.scrollIntoView(EditorSelection.range(from, to), { y: "nearest" })]
+    : [];
+  if (length > 0 && !insertFlashSuppressed()) effects.push(insertFlashEffect.of({ from, to }));
+  return effects;
+}
+
+// 連続挿入で前回のタイマーが今回のフラッシュを早く消さないよう、view ごとに 1 本へ保つ。
+const insertFlashTimers = new WeakMap<EditorView, number>();
+
+/** 光らせた場合に少し後で装飾をクリアする。view 破棄済みなら無視。 */
+function clearInsertFlashLater(view: EditorView) {
+  const prev = insertFlashTimers.get(view);
+  if (prev !== undefined) window.clearTimeout(prev);
+  insertFlashTimers.set(
+    view,
+    window.setTimeout(() => {
+      insertFlashTimers.delete(view);
+      try {
+        view.dispatch({ effects: insertFlashEffect.of(null) });
+      } catch {
+        // view が破棄済みなら無視。
+      }
+    }, 650),
+  );
+}
 
 // スキーマツリーのテーブル / 列行をドラッグしている間 (#1414)、挿入予定位置に出す
 // キャレット相当のマーカー。HTML5 の drag イベントに依存する `dropCursor` 拡張は使えない
@@ -1626,6 +1695,7 @@ export const QueryEditor = memo(
             search({ top: true }),
             highlightSelectionMatches(),
             stmtFlashField,
+            insertFlashField,
             // カーソル位置の文 (文単位実行の対象) の常時表示 (#2354)。
             activeStatementHighlight(
               () => driverRef.current,
@@ -1832,8 +1902,10 @@ export const QueryEditor = memo(
           view.dispatch({
             changes: { from, to, insert: text },
             selection: { anchor: from + text.length },
+            effects: insertLandingEffects(from, text.length),
             userEvent: "input.drop",
           });
+          clearInsertFlashLater(view);
           view.focus();
         },
         setMarker: (pos) => view.dispatch({ effects: treeDropMarkerEffect.of(pos) }),
@@ -1856,8 +1928,10 @@ export const QueryEditor = memo(
             view.dispatch({
               changes: { from: at, insert: text },
               selection: { anchor: at + text.length },
+              effects: insertLandingEffects(at, text.length),
               userEvent: "input.drop",
             });
+            clearInsertFlashLater(view);
             view.focus();
           };
           // Shift でテーブルをドロップ: 列名つきの SELECT 雛形 (#1627)。describe_table の
@@ -2217,7 +2291,9 @@ export const QueryEditor = memo(
       view.dispatch({
         changes: { from: sel.from, to: sel.to, insert: text },
         selection: { anchor: sel.from + text.length },
+        effects: insertLandingEffects(sel.from, text.length),
       });
+      clearInsertFlashLater(view);
       view.focus();
     };
 
@@ -2232,7 +2308,16 @@ export const QueryEditor = memo(
         return;
       }
       const sel = view.state.selection.main;
+      const before = view.state.doc.length;
       snippet(snippetToCodeMirrorTemplate(text))(view, null, sel.from, sel.to);
+      // 展開後の増分 + 置き換えた長さ = 挿入されたテキストの長さ。光らせる (#2451)。
+      // スクロールは snippet() が最初のタブストップへ寄せているので上書きしない
+      // (範囲全体へ寄せると、長いスニペットで入力中のフィールドが画面外へ出る)。
+      const len = view.state.doc.length - before + (sel.to - sel.from);
+      if (len > 0) {
+        view.dispatch({ effects: insertLandingEffects(sel.from, len, false) });
+        clearInsertFlashLater(view);
+      }
       view.focus();
     };
 
