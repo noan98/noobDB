@@ -851,6 +851,12 @@ describe("NotebookView (#2380)", () => {
       expect(screen.getAllByTestId("notebook-cell-rail")[0].getAttribute("data-status")).toBe("stale");
     });
 
+    it("実行順は空の SQL セルを数えず (「–」)、「すべて実行」の順と一致する", () => {
+      seed(newSqlCell("SELECT 1"), newSqlCell("  "), newSqlCell("SELECT 3"));
+      setup();
+      expect(screen.getAllByTestId("notebook-cell-order").map((e) => e.textContent)).toEqual(["1", "–", "2"]);
+    });
+
     it("失敗したセルのレールは error になる", async () => {
       seed(newSqlCell("SELECT oops"));
       const onRunSql = vi.fn().mockRejectedValue(new NotebookRunError("構文エラー", false, false, false));

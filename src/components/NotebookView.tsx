@@ -477,8 +477,8 @@ interface CellShellProps {
   cell: NotebookCell;
   index: number;
   count: number;
-  /** SQL セルの中での 1 始まりの位置 (= 「すべて実行」の実行順。Markdown セルでは 0)。 */
-  runOrder: number;
+  /** SQL セルの中での 1 始まりの位置 (= 「すべて実行」の実行順。空の SQL セル・Markdown セルは実行されないので null)。 */
+  runOrder: number | null;
   still: boolean;
   running: boolean;
   runDisabled: string | null;
@@ -546,6 +546,9 @@ const InsertLine = memo(function InsertLine(p: {
 }) {
   const t = useT();
   const [hot, setHot] = useState(false);
+  // ホバーできない端末 (タッチ) では出す契機が無いので常時表示する。
+  const touch = typeof window.matchMedia === "function" && window.matchMedia("(hover: none)").matches;
+  const shown = hot || touch;
   const tr = p.still ? ({ duration: 0 } as const) : transitions.enter;
   return (
     <Flex
@@ -563,7 +566,7 @@ const InsertLine = memo(function InsertLine(p: {
       }}
     >
       <AnimatePresence initial={false}>
-        {hot && (
+        {shown && (
           <motion.div
             key="rule"
             aria-hidden="true"
@@ -579,7 +582,7 @@ const InsertLine = memo(function InsertLine(p: {
       <motion.div
         variants={variants.fadeScale}
         initial={false}
-        animate={hot ? "animate" : "initial"}
+        animate={shown ? "animate" : "initial"}
         transition={tr}
         style={{ display: "flex", gap: "var(--space-2)", position: "relative" }}
       >
@@ -620,7 +623,9 @@ const CellShell = memo(function CellShell(p: CellShellProps) {
             : snapshotFreshness(cell, p.driver).kind === "stale"
               ? "stale"
               : "ok";
-  const railLabel = status ? t("notebookRailLabel", { n: p.runOrder, state: t(RAIL_TEXT_KEY[status]) }) : "";
+  const railLabel = status
+    ? t("notebookRailLabel", { n: p.runOrder ?? "–", state: t(RAIL_TEXT_KEY[status]) })
+    : "";
 
   return (
     <Reorder.Item
@@ -691,7 +696,7 @@ const CellShell = memo(function CellShell(p: CellShellProps) {
               bg="app.toolbar"
               borderRight="1px solid"
               borderRightColor="app.border"
-              borderLeft="3px solid"
+              borderLeft="var(--space-1) solid"
               borderTopLeftRadius="lg"
               borderBottomLeftRadius="lg"
               color={RAIL_COLOR[status]}
@@ -700,7 +705,7 @@ const CellShell = memo(function CellShell(p: CellShellProps) {
               data-status={status}
             >
               <chakra.span textStyle="caption" color="app.textMuted" data-testid="notebook-cell-order">
-                {p.runOrder}
+                {p.runOrder ?? "–"}
               </chakra.span>
               <Tooltip label={railLabel}>
                 <chakra.span
@@ -745,7 +750,7 @@ const CellShell = memo(function CellShell(p: CellShellProps) {
               {...(plain
                 ? {
                     position: "absolute",
-                    top: "1",
+                    top: "-3",
                     right: "2",
                     zIndex: 1,
                     border: "1px solid",
@@ -1019,6 +1024,7 @@ export function NotebookView(props: NotebookViewProps) {
   const [editingIds, setEditingIds] = useState<ReadonlySet<string>>(() => new Set());
   const [runningId, setRunningId] = useState<string | null>(null);
   const [runAll, setRunAll] = useState(false);
+  const moreButtonRef = useRef<HTMLButtonElement>(null);
   const [headerMenu, setHeaderMenu] = useState<{ x: number; y: number } | null>(null);
   // 「すべて実行」の進捗 (完了した件数 / 実行対象の件数) と、止まったセル (#2449)。
   const [progress, setProgress] = useState({ done: 0, total: 0 });
@@ -1552,8 +1558,8 @@ export function NotebookView(props: NotebookViewProps) {
     { label: t("notebookOpen"), disabled: saving, onSelect: () => void onOpen() },
     { label: t("notebookSaveAs"), onSelect: () => void onSave(true) },
     { separator: true },
-    { label: t("notebookExportMd"), icon: "download", onSelect: () => void onExport("md") },
-    { label: t("notebookExportHtml"), icon: "download", onSelect: () => void onExport("html") },
+    { label: t("notebookExportMd"), onSelect: () => void onExport("md") },
+    { label: t("notebookExportHtml"), onSelect: () => void onExport("html") },
   ];
 
   const sqlCount = doc.cells.filter((c) => c.kind === "sql").length;
@@ -1561,6 +1567,12 @@ export function NotebookView(props: NotebookViewProps) {
   const mismatch =
     doc.connection && props.profile && doc.connection.profileId !== props.profile.id ? doc.connection : null;
   const ids = doc.cells.map((c) => c.id);
+  // 実行順 (1 始まり)。「すべて実行」が流すセル (`sqlCellsToRun`、空の SQL は飛ばす) だけを 1 回の走査で数える。
+  const runOrders = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const c of sqlCellsToRun(doc.cells)) m.set(c.id, m.size + 1);
+    return m;
+  }, [doc.cells]);
 
   return (
     <Flex direction="column" flex="1" minH={0} onKeyDown={onKeyDown} data-testid="notebook-view">
@@ -1650,6 +1662,7 @@ export function NotebookView(props: NotebookViewProps) {
             size="sm"
             variant="ghost"
             aria-label={t("notebookMoreActions")}
+            ref={moreButtonRef}
             aria-haspopup="menu"
             aria-expanded={headerMenu !== null}
             onClick={(e) => {
@@ -1758,7 +1771,7 @@ export function NotebookView(props: NotebookViewProps) {
                       cell={cell}
                       index={i}
                       count={doc.cells.length}
-                      runOrder={doc.cells.slice(0, i + 1).filter((c) => c.kind === "sql").length}
+                      runOrder={runOrders.get(cell.id) ?? null}
                       still={still}
                       running={runningId === cell.id}
                       runDisabled={cell.kind === "sql" ? blockReason(target) : null}
@@ -1800,7 +1813,10 @@ export function NotebookView(props: NotebookViewProps) {
           x={headerMenu.x}
           y={headerMenu.y}
           items={headerMenuItems}
-          onClose={() => setHeaderMenu(null)}
+          onClose={() => {
+            setHeaderMenu(null);
+            moreButtonRef.current?.focus();
+          }}
         />
       )}
       {dialog}
