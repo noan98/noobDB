@@ -115,7 +115,14 @@ class CteWidget extends WidgetType {
     if (!(other instanceof CteWidget)) return false;
     const a = this.item;
     const b = other.item;
-    return a.cursor === b.cursor && a.blockedTip === b.blockedTip && sameBadge(a.badge, b.badge);
+    // offset はクリック時に渡す実行位置。手前の編集で CTE がずれたら作り直して古い位置を使わない
+    // (カーソル移動では変わらない値なので、CTE 内のカーソル移動では作り直さない)。
+    return (
+      a.offset === b.offset &&
+      a.cursor === b.cursor &&
+      a.blockedTip === b.blockedTip &&
+      sameBadge(a.badge, b.badge)
+    );
   }
 
   ignoreEvent(): boolean {

@@ -147,6 +147,20 @@ describe("runAffordances 拡張 (#2450)", () => {
     expect(v.dom.querySelector(".cm-cte-run-btn")).toBe(before);
   });
 
+  it("手前の編集で CTE の位置がずれたら、クリックで新しい先頭位置を渡す", () => {
+    const doc = "WITH a AS (SELECT 1), b AS (SELECT 2) SELECT * FROM b";
+    const { v, calls } = mount(doc);
+    const inB = doc.indexOf("SELECT 2") + 2;
+    v.dispatch({ selection: { anchor: inB } });
+    settle();
+    const pad = " ".repeat(40);
+    const at = doc.indexOf("1");
+    v.dispatch({ changes: { from: at, insert: pad }, selection: { anchor: inB + pad.length } });
+    settle();
+    v.dom.querySelector<HTMLButtonElement>(".cm-cte-run-btn")?.click();
+    expect(calls.cte).toEqual([doc.indexOf("b AS") + pad.length]);
+  });
+
   it("onRunCte が無い (isCteEnabled=false) ときは CTE のウィジェットを出さない", () => {
     const { v } = mount("WITH a AS (SELECT 1) SELECT * FROM a", { isCteEnabled: () => false });
     v.dispatch({ selection: { anchor: 16 } });
