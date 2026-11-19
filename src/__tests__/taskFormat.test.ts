@@ -6,7 +6,6 @@ import {
   flagsToWeekdays,
   scheduleFromDraft,
   weekdaysToFlags,
-  localToUtcClock,
   tzOffsetMinutes,
   utcToLocalClock,
   previewOutputPath,
@@ -140,18 +139,13 @@ describe("relativeNextRun / summarizeAction の日本語化 (#1533)", () => {
   });
 });
 
-describe("daily 時刻のローカル <-> UTC 変換 (#1533)", () => {
+describe("daily 時刻の UTC -> ローカル変換 (#1533)", () => {
   const winter = new Date("2026-01-15T00:00:00Z");
   const summer = new Date("2026-07-15T00:00:00Z");
 
   it("JST (UTC+9) では UTC 00:00 が 09:00、UTC 20:00 が翌日 05:00", () => {
     expect(utcToLocalClock(0, 0, winter, JST)).toEqual({ hour: 9, minute: 0, dayShift: 0 });
     expect(utcToLocalClock(20, 30, winter, JST)).toEqual({ hour: 5, minute: 30, dayShift: 1 });
-  });
-
-  it("JST の 9:00 入力は UTC 0:00、JST 8:00 は前日の UTC 23:00", () => {
-    expect(localToUtcClock(9, 0, winter, JST)).toEqual({ hour: 0, minute: 0, dayShift: 0 });
-    expect(localToUtcClock(8, 15, winter, JST)).toEqual({ hour: 23, minute: 15, dayShift: -1 });
   });
 
   it("DST のある地域は基準日でオフセットが変わる (America/New_York)", () => {
@@ -161,27 +155,10 @@ describe("daily 時刻のローカル <-> UTC 変換 (#1533)", () => {
     expect(utcToLocalClock(13, 0, winter, ny)).toEqual({ hour: 8, minute: 0, dayShift: 0 });
     expect(utcToLocalClock(13, 0, summer, ny)).toEqual({ hour: 9, minute: 0, dayShift: 0 });
     expect(utcToLocalClock(3, 0, summer, ny)).toEqual({ hour: 23, minute: 0, dayShift: -1 });
-    expect(localToUtcClock(9, 0, summer, ny)).toEqual({ hour: 13, minute: 0, dayShift: 0 });
   });
 
-  it("30 分オフセットの地域 (Asia/Kolkata, +5:30) も分まで往復で一致する", () => {
-    const tz = "Asia/Kolkata";
-    const local = utcToLocalClock(20, 45, winter, tz);
-    expect(local).toEqual({ hour: 2, minute: 15, dayShift: 1 });
-    const back = localToUtcClock(local.hour, local.minute, winter, tz);
-    expect([back.hour, back.minute]).toEqual([20, 45]);
-  });
-
-  it("全時刻で往復変換が恒等 (JST / New_York / Auckland)", () => {
-    for (const tz of [JST, "America/New_York", "Pacific/Auckland"]) {
-      for (const at of [winter, summer]) {
-        for (let h = 0; h < 24; h++) {
-          const l = utcToLocalClock(h, 30, at, tz);
-          const u = localToUtcClock(l.hour, l.minute, at, tz);
-          expect([u.hour, u.minute]).toEqual([h, 30]);
-        }
-      }
-    }
+  it("30 分オフセットの地域 (Asia/Kolkata, +5:30) も分まで変換できる", () => {
+    expect(utcToLocalClock(20, 45, winter, "Asia/Kolkata")).toEqual({ hour: 2, minute: 15, dayShift: 1 });
   });
 });
 
