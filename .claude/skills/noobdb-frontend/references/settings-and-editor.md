@@ -11,7 +11,7 @@
   (`density`)・自動リフレッシュ間隔 (`autoRefreshDefaultSecs`)・グリッド表示モード
   (`resultGridMode` scroll/paginate, `resultGridPageSize`)・セル編集の blur 挙動
   (`cellEditOnBlur`)・リッチセル描画 (`richCellRendering`)・列ヘッダの NULL 率
-  ミニバー (`columnNullBars`。#911)・列ヘッダのミニ分布 (`columnDistribution`。#2383)・機微カラムの表示マスク (`columnMaskEnabled` /
+  ミニバー (`columnNullBars`。#911)・列ヘッダのミニ分布 (`columnDistribution`。#2383)・ツリーのインデントガイド線 (`treeGuides`、既定オン。#2452、`data-tree-guides` 属性 → App.css の `--tree-guide*`)・機微カラムの表示マスク (`columnMaskEnabled` /
   `columnMaskPatterns` / `columnMaskCopyPlaceholder`。#1069)・テーマプリセット
   (`themePreset` default/dracula/high-contrast/colorblind。後者 2 つは light/dark
   追従でアクセシビリティ向け。#558) などを保持します。

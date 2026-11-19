@@ -1,4 +1,4 @@
-import { lazy, memo, Suspense, useCallback, useMemo, useRef, useState } from "react";
+import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Box, Flex, chakra } from "@chakra-ui/react";
 import { AnimatePresence, Reorder, useDragControls, useReducedMotionConfig } from "motion/react";
 import { open as openFileDialog, save as saveFileDialog } from "@tauri-apps/plugin-dialog";
@@ -79,6 +79,12 @@ import { useToast } from "./Toast";
 import { Tooltip } from "./Tooltip";
 import { Button, Heading, Input, Textarea } from "./ui";
 import { prefersStaticMotion } from "./revealOrigin";
+import { pulseFocusLanding } from "./focusLandingPulse";
+import { followScrollOptions, useFollowLatch } from "./notebookRunFollow";
+import { CountUpText } from "./CountUp";
+import { JobOutcome, JobPresence } from "./JobProgress";
+import { DeterminateProgressBar } from "./StreamProgressBar";
+import { progressRatio } from "../progressEta";
 
 const QueryEditor = lazy(() => import("./QueryEditor").then((m) => ({ default: m.QueryEditor })));
 const ChartView = lazy(() => import("./ChartView").then((m) => ({ default: m.ChartView })));
@@ -436,6 +442,35 @@ interface CellPin {
   sessionId: string;
 }
 
+/** 「すべて実行」が止まったセルと、そのときの進捗 (#2449)。 */
+interface RunStop {
+  cellId: string;
+  /** 実行対象の中での 1 始まりの位置。 */
+  index: number;
+  total: number;
+  /** 完了した件数 (止まったセルは含まない)。 */
+  done: number;
+  kind: "error" | "cancelled" | "connection";
+  elapsedMs: number;
+  /** 止まったときの文書の世代 (新規 / 読み込みで入れ替わったら表示しない)。 */
+  epoch: number;
+}
+
+const STOP_MESSAGE_KEY = {
+  error: "notebookStoppedFailed",
+  cancelled: "notebookStoppedCancelled",
+  connection: "notebookStoppedConnChanged",
+} as const;
+
+/** スクロール領域内で、指定セルの枠 (`data-notebook-cell-id`) を探す。 */
+function findCellSection(host: HTMLElement | null, cellId: string): HTMLElement | null {
+  if (!host) return null;
+  for (const el of host.querySelectorAll<HTMLElement>("[data-notebook-cell-id]")) {
+    if (el.dataset.notebookCellId === cellId) return el;
+  }
+  return null;
+}
+
 interface CellShellProps {
   cell: NotebookCell;
   index: number;
@@ -503,9 +538,15 @@ const CellShell = memo(function CellShell(p: CellShellProps) {
         <chakra.section
           aria-label={`${label} ${p.index + 1}`}
           border="1px solid"
-          borderColor={writes ? semanticColorToken("warning", "border") : "app.border"}
+          borderColor={
+            p.running ? "app.accent" : writes ? semanticColorToken("warning", "border") : "app.border"
+          }
           borderRadius="lg"
           bg="app.surface"
+          className={p.running ? "notebook-cell-running" : undefined}
+          data-running={p.running ? "" : undefined}
+          data-notebook-cell-id={cell.id}
+          data-focus-landing-region
         >
           <Flex
             align="center"
@@ -771,12 +812,17 @@ export function NotebookView(props: NotebookViewProps) {
   const toast = useToast();
   const { confirm, dialog } = useConfirm();
   const settings = useSettings();
-  const { doc, filePath, dirty } = useNotebookState();
+  const { doc, filePath, dirty, epoch } = useNotebookState();
   const reduced = useReducedMotionConfig() ?? false;
   const still = reduced || prefersStaticMotion();
   const [editingIds, setEditingIds] = useState<ReadonlySet<string>>(() => new Set());
   const [runningId, setRunningId] = useState<string | null>(null);
   const [runAll, setRunAll] = useState(false);
+  // 「すべて実行」の進捗 (完了した件数 / 実行対象の件数) と、止まったセル (#2449)。
+  const [progress, setProgress] = useState({ done: 0, total: 0 });
+  const [stopped, setStopped] = useState<RunStop | null>(null);
+  const scrollHostRef = useRef<HTMLDivElement>(null);
+  const following = useFollowLatch(scrollHostRef, runAll);
   const streamRef = useRef<string | null>(null);
   const cancelRef = useRef(false);
 
@@ -845,12 +891,12 @@ export function NotebookView(props: NotebookViewProps) {
   );
 
   /**
-   * 1 セルを実行してスナップショットを書き戻す。続けてよいなら true。
+   * 1 セルを実行してスナップショットを書き戻す。続けてよいなら "ok" (失敗は "error"、取りやめ・中止は "cancelled")。
    * 実行先は `pin` (実行開始時点に解決した接続 + セッション) に固定し、省略しない (実行中にアクティブ接続が
    * 切り替わっても別の接続で流さない)。
    */
   const runOne = useCallback(
-    async (cell: NotebookSqlCell, pin: CellPin): Promise<boolean> => {
+    async (cell: NotebookSqlCell, pin: CellPin): Promise<"ok" | "error" | "cancelled"> => {
       setRunningId(cell.id);
       const started = Date.now();
       // 別の接続で流すセルには、文書の実行先 DB (既定の接続の DB 名) を持ち込まない。接続の既定 DB へ寄せる。
@@ -868,7 +914,7 @@ export function NotebookView(props: NotebookViewProps) {
           },
           isCancelled: () => cancelRef.current,
         });
-        if (out === null) return false;
+        if (out === null) return "cancelled";
         const source = {
           sql: cell.sql,
           connection: { profileId: pin.profile.id, name: pin.profile.name },
@@ -876,9 +922,9 @@ export function NotebookView(props: NotebookViewProps) {
         };
         const snapshot = buildSnapshot({ ...out, error: null }, limit, maskRef.current, new Date(), source);
         patchCell(cell.id, { snapshot });
-        return true;
+        return "ok";
       } catch (e) {
-        if (e instanceof NotebookRunError && e.cancelled) return false;
+        if (e instanceof NotebookRunError && e.cancelled) return "cancelled";
         const raw = e instanceof Error ? e.message : String(e);
         // エラー文は SQL の断片を引用する。資格情報リテラル (`IDENTIFIED BY '…'` など) は、ファイルへ残す前に伏せる (#2174)。
         const message = redactErrorText(raw, cell.sql, driverOfCell);
@@ -889,7 +935,7 @@ export function NotebookView(props: NotebookViewProps) {
             database: runDatabase,
           }),
         });
-        return false;
+        return "error";
       } finally {
         streamRef.current = null;
         setRunningId(null);
@@ -987,9 +1033,19 @@ export function NotebookView(props: NotebookViewProps) {
       if (!(await confirmConnection(pinList.find((p) => p.isDefault)?.profile ?? null))) return;
       if (!(await confirmCellConnections(pinList))) return;
       cancelRef.current = false;
+      setStopped(null);
+      setProgress({ done: 0, total: cells.length });
       setRunAll(all);
-      for (const c of cells) {
-        if (cancelRef.current) break;
+      const startedAt = Date.now();
+      // 実行中に新規 / 開くで文書が入れ替わっても、停止表示を元の文書に結び付けるため開始時に控える。
+      const startEpoch = getNotebookState().epoch;
+      let stop: Pick<RunStop, "cellId" | "index" | "kind"> | null = null;
+      for (const [i, c] of cells.entries()) {
+        setProgress({ done: i, total: cells.length });
+        if (cancelRef.current) {
+          stop = { cellId: c.id, index: i + 1, kind: "cancelled" };
+          break;
+        }
         // 実行直前の最新の SQL を使う (編集直後の実行でも取りこぼさない)。
         const latest = docRef.current.cells.find((x) => x.id === c.id);
         const pin = pins.get(c.id);
@@ -997,15 +1053,50 @@ export function NotebookView(props: NotebookViewProps) {
         // 確認した後にセルの接続が変えられていたら、確認なしでは流さず止める。
         if ((latest.connection?.profileId ?? null) !== (c.connection?.profileId ?? null)) {
           toast.error(t("notebookCellConnChanged"));
+          stop = { cellId: c.id, index: i + 1, kind: "connection" };
           break;
         }
         // 失敗・取りやめ・中止のセルで止める (後続は前のセルの結果を前提にしがち)。
-        if (!(await runOne(latest, pin))) break;
+        const outcome = await runOne(latest, pin);
+        if (outcome !== "ok") {
+          stop = { cellId: c.id, index: i + 1, kind: outcome };
+          break;
+        }
+      }
+      if (all && stop) {
+        setStopped({
+          ...stop,
+          total: cells.length,
+          done: stop.index - 1,
+          elapsedMs: Date.now() - startedAt,
+          epoch: startEpoch,
+        });
+      } else {
+        setProgress({ done: cells.length, total: cells.length });
       }
       setRunAll(false);
     },
     [busy, runOne, props.sessionId, toast],
   );
+
+  // 全実行中は実行中のセルへ追従する (手でスクロールしたら止める)。画面内なら動かさない (block: nearest)。
+  useEffect(() => {
+    if (!runAll || !runningId || !following.current) return;
+    findCellSection(scrollHostRef.current, runningId)?.scrollIntoView?.(followScrollOptions(still));
+  }, [runAll, runningId, still, following]);
+
+  // 止まったセルへは追従の有無に関わらず着地させ、外枠を 1 回光らせる (reduced-motion / hc-* は光らせない)。
+  useEffect(() => {
+    if (!stopped) return;
+    // 進捗ブロックの退場で高さが縮むので、1 フレーム待ってから位置を決める。
+    const raf = requestAnimationFrame(() => {
+      const el = findCellSection(scrollHostRef.current, stopped.cellId);
+      if (!el) return;
+      el.scrollIntoView?.(followScrollOptions(still));
+      pulseFocusLanding(el);
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [stopped, still]);
 
   const onRunCell = useCallback(
     (id: string) => {
@@ -1372,17 +1463,58 @@ export function NotebookView(props: NotebookViewProps) {
           </Button>
         </Tooltip>
       </chakra.header>
-      <Box flex="1" minH={0} overflowY="auto" px="6" py="4">
+      <chakra.div px="6" data-testid="notebook-run-status-area">
+        <Flex direction="column" maxW="960px" mx="auto" gap="3">
+          <JobPresence show={runAll}>
+            <Flex direction="column" gap="1.5" pt="3" data-testid="notebook-run-progress">
+              <chakra.div color="app.textMuted" textStyle="caption" role="status">
+                {t("notebookRunning")}
+              </chakra.div>
+              <Flex align="center" gap="3">
+                <Box flex="1">
+                  <DeterminateProgressBar value={progressRatio(progress.done, progress.total) ?? 0} />
+                </Box>
+                <chakra.span textStyle="numeric" color="app.textMuted" data-testid="notebook-run-count">
+                  <CountUpText
+                    values={[Math.min(progress.done + 1, progress.total), progress.total]}
+                    render={([current, total]) => t("notebookRunProgress", { current, total })}
+                  />
+                </chakra.span>
+              </Flex>
+            </Flex>
+          </JobPresence>
+          {stopped && stopped.epoch === epoch && !runAll && (
+            // 停止位置は割り込まず読み上げたいので、失敗も role="status" にする。
+            <chakra.div pt="3">
+              <JobOutcome
+                kind={stopped.kind === "cancelled" ? "cancelled" : "error"}
+                role="status"
+                detail={{ done: stopped.done, total: stopped.total, elapsedMs: stopped.elapsedMs }}
+                message={t(STOP_MESSAGE_KEY[stopped.kind], {
+                  index: stopped.index,
+                  total: stopped.total,
+                  done: stopped.done,
+                })}
+                testId="notebook-run-stopped"
+              />
+            </chakra.div>
+          )}
+        </Flex>
+      </chakra.div>
+      <Box
+        ref={scrollHostRef}
+        data-testid="notebook-scroll-host"
+        flex="1"
+        minH={0}
+        overflowY="auto"
+        px="6"
+        py="4"
+      >
         <Flex direction="column" maxW="960px" mx="auto" gap="3">
           {mismatch && (
             <Callout tone="info" role="status">
               {t("notebookConnectionMismatch", { name: mismatch.name })}
             </Callout>
-          )}
-          {runAll && busy && (
-            <chakra.div color="app.textMuted" textStyle="caption" role="status">
-              {t("notebookRunning")}
-            </chakra.div>
           )}
           {doc.cells.length === 0 ? (
             <EmptyState

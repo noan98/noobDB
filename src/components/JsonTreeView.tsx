@@ -10,6 +10,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type CSSProperties,
   type KeyboardEvent,
 } from "react";
 import { chakra } from "@chakra-ui/react";
@@ -116,6 +117,13 @@ interface TreeActions {
 
 const TreeContext = createContext<{ store: TreeStore; actions: TreeActions } | null>(null);
 
+/** `selectedKey` が `key` の厳密な子孫か (= `key` のノードは選択行の祖先)。ガイド線の枝の強調 (#2452) に使う。
+ *  子のキーは親のキーの末尾の `]` を `,<セグメント>]` に置き換えた形 (`childKey`) なので、接頭辞で判定できる。 */
+function isSelectedDescendant(selectedKey: string | null, key: string): boolean {
+  if (selectedKey === null || selectedKey === key) return false;
+  return selectedKey.startsWith(key === "[]" ? "[" : `${key.slice(0, -1)},`);
+}
+
 /** 1 行が見る状態を 1 本の文字列に畳む。同値なら再レンダーされない。 */
 function rowSnapshot(state: TreeState, key: string, firstFocusable: boolean): string {
   const { search } = state;
@@ -124,10 +132,11 @@ function rowSnapshot(state: TreeState, key: string, firstFocusable: boolean): st
   const sel = state.selectedKey === key;
   const match = search?.matches.has(key) ?? false;
   const focusable = sel || (state.selectedKey === null && firstFocusable);
+  const selAnc = isSelectedDescendant(state.selectedKey, key);
   const shown = state.pages.get(key) ?? CHILD_PAGE_SIZE;
   // 祖先行は子を一致の枝に絞るので、検索結果が変わったら (開いているときだけ) 描き直す。
   const version = anc && open ? state.searchVersion : 0;
-  return `${open ? 1 : 0}${sel ? 1 : 0}${match ? 1 : 0}${anc ? 1 : 0}${focusable ? 1 : 0}:${shown}:${version}`;
+  return `${open ? 1 : 0}${sel ? 1 : 0}${match ? 1 : 0}${anc ? 1 : 0}${focusable ? 1 : 0}${selAnc ? 1 : 0}:${shown}:${version}`;
 }
 
 /**
@@ -509,6 +518,7 @@ const JsonTreeRow = memo(function JsonTreeRow({ node, pkey: key, segment, level,
   const count = childCount(node);
   const isSelected = state.selectedKey === key;
   const isMatch = state.search?.matches.has(key) ?? false;
+  const branchOfSelected = isSelectedDescendant(state.selectedKey, key);
   const focusable = isSelected || (state.selectedKey === null && !!firstFocusable);
   const ctx = { toggle: actions.toggle, showMore: actions.showMore };
 
@@ -632,7 +642,12 @@ const JsonTreeRow = memo(function JsonTreeRow({ node, pkey: key, segment, level,
         // 開閉の演出は `useJsonTreeReveal` (#1863) が新規に現れた行へ直接かける。
         // ネストごとの Motion コンポーネント (AnimatePresence) は常駐させない。
         open && (
-          <chakra.div role="group">
+          <chakra.div
+            role="group"
+            className="tree-guide-group"
+            data-guide-accent={branchOfSelected ? "" : undefined}
+            style={{ "--tree-level": level } as CSSProperties}
+          >
             {childRows}
             {hidden > 0 && (
               <TreeRow

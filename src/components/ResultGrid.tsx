@@ -1403,6 +1403,11 @@ interface Props {
    */
   onRunRelatedQuery?: (sql: string) => Promise<QueryResult>;
   /**
+   * FK セルの参照先カード (#2405) の取得専用 (#2444)。タイムアウトつきで、`signal` が abort されたら
+   * サーバ側の文も中止する。未指定なら `onRunRelatedQuery` で取得する。
+   */
+  onRunPeekQuery?: (sql: string, signal?: AbortSignal) => Promise<QueryResult>;
+  /**
    * FK セルの参照先カード (#2405) が、たどった先のテーブルの列メタ (PK・FK の判定) を引く。
    * `onRunRelatedQuery` と揃うときだけカードを出す。
    */
@@ -4259,6 +4264,7 @@ export const DataGrid = memo(function DataGrid({
   columnMeta,
   incomingFks,
   onRunRelatedQuery,
+  onRunPeekQuery,
   onDescribePeekTable,
   onFkJump,
   paginationState,
@@ -4434,6 +4440,11 @@ export const DataGrid = memo(function DataGrid({
    * `incomingFks` と揃うときだけタブを出す。
    */
   onRunRelatedQuery?: (sql: string) => Promise<QueryResult>;
+  /**
+   * FK セルの参照先カード (#2405) の取得専用 (#2444)。タイムアウトつきで、`signal` が abort されたら
+   * サーバ側の文も中止する。未指定なら `onRunRelatedQuery` で取得する。
+   */
+  onRunPeekQuery?: (sql: string, signal?: AbortSignal) => Promise<QueryResult>;
   /**
    * FK セルの参照先カード (#2405) が、たどった先のテーブルの列メタ (PK・FK の判定) を引く。
    * `onRunRelatedQuery` と揃うときだけカードを出す。
@@ -9198,7 +9209,7 @@ export const DataGrid = memo(function DataGrid({
           initial={peek.step}
           driver={rowSqlDriver ?? "mysql"}
           database={rowSqlDatabase ?? null}
-          runQuery={onRunRelatedQuery}
+          runQuery={onRunPeekQuery ?? onRunRelatedQuery}
           describeTable={onDescribePeekTable}
           cache={peekCache.current}
           pinned={peek.pinned}
@@ -9518,6 +9529,7 @@ export const ResultGrid = memo(
       onFkJump,
       incomingFks,
       onRunRelatedQuery,
+      onRunPeekQuery,
       onDescribePeekTable,
       pendingDeleteKeys,
       pendingInsertCount,
@@ -11478,6 +11490,7 @@ export const ResultGrid = memo(
               columnMeta={tableColumns ?? undefined}
               incomingFks={incomingFks}
               onRunRelatedQuery={onRunRelatedQuery}
+              onRunPeekQuery={onRunPeekQuery}
               onDescribePeekTable={onDescribePeekTable}
               onFkJump={onFkJump}
               columnSizingStorageKey={columnSizingStorageKey}

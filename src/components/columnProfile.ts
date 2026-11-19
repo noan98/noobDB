@@ -200,7 +200,13 @@ export function profileChartModel(
   return buildChartModel(columns, rows, { type: "bar", xCol: 0, yCols: [1], aggregation: "none" });
 }
 
-/** 縮退理由コード → i18n キー。未知のコードは汎用文言へ倒す。 */
+// 注記コードのうちパネルが直接比較するもの。`db/profile.rs` の `NOTE_SAMPLED` /
+// `NOTE_OVERVIEW_APPROX_NO_STATS` と同じ値にする (`constantParity.test.ts` が固定)。
+export const NOTE_SAMPLED = "sampled";
+export const NOTE_OVERVIEW_APPROX_NO_STATS = "overview_approx_no_stats";
+
+/** 縮退理由コード → i18n キー。未知のコードは汎用文言へ倒す。
+ *  キー集合は `db/profile.rs` の `NOTE_*` (上の 2 つを除く) と一致させる (`constantParity.test.ts`)。 */
 const NOTE_KEYS = {
   stats_unavailable: "profileNoteStatsUnavailable",
   top_values_unavailable: "profileNoteTopUnavailable",
