@@ -43,6 +43,8 @@ pub struct PostgresConn {
     tx: tokio::sync::Mutex<Option<sqlx::pool::PoolConnection<sqlx::Postgres>>>,
     /// 開いている明示トランザクションが READ ONLY か (#2243)。
     pub(super) tx_read_only: std::sync::atomic::AtomicBool,
+    /// 保持接続の `pg_backend_pid()` (#2447)。0 は未取得 / トランザクション無し。
+    tx_backend_id: std::sync::atomic::AtomicI64,
     /// AWS IAM 認証 (#734) 時、プールの新規接続用トークンを定期的に作り直す
     /// タスク。ドロップで停止する。パスワード認証では `None`。
     _iam_refresh: Option<super::aws_iam::TokenRefreshGuard>,
@@ -170,6 +172,7 @@ impl PostgresConn {
             pool,
             tx: tokio::sync::Mutex::new(None),
             tx_read_only: Default::default(),
+            tx_backend_id: Default::default(),
             _iam_refresh: iam_refresh,
             search_path,
         })
@@ -226,6 +229,12 @@ impl PostgresConn {
         }
         let mut conn = self.pool.acquire().await?;
         apply_search_path(&mut conn, database, &self.search_path).await?;
+        // ブロック中セッション数の照会 (#2447) のため、保持接続の pid を控える。失敗しても開始は妨げない。
+        let backend_id = sqlx::query_scalar::<_, i32>("SELECT pg_backend_pid()")
+            .fetch_one(&mut *conn)
+            .await
+            .map(i64::from)
+            .unwrap_or(0);
         // SQL は TxOptions が enum から組み立てた固定語彙のみ (#1166)。
         let begin = opts.postgres_begin_sql();
         sqlx::query(sqlx::AssertSqlSafe(begin))
@@ -233,6 +242,8 @@ impl PostgresConn {
             .await?;
         self.tx_read_only
             .store(opts.read_only, std::sync::atomic::Ordering::SeqCst);
+        self.tx_backend_id
+            .store(backend_id, std::sync::atomic::Ordering::SeqCst);
         *guard = Some(conn);
         Ok(())
     }
@@ -309,6 +320,8 @@ impl PostgresConn {
         let mut guard = self.tx.lock().await;
         self.tx_read_only
             .store(false, std::sync::atomic::Ordering::SeqCst);
+        self.tx_backend_id
+            .store(0, std::sync::atomic::Ordering::SeqCst);
         let mut conn = guard
             .take()
             .ok_or_else(|| AppError::InvalidInput("no active transaction".into()))?;
@@ -354,6 +367,27 @@ impl PostgresConn {
 
     pub async fn tx_active(&self) -> bool {
         self.tx.lock().await.is_some()
+    }
+
+    /// 開いているトランザクションにブロックされている他セッション数 (#2447)。
+    /// 保持接続の pid を `pg_blocking_pids()` に含むセッションを、プールの別接続から数える。
+    /// Lock 待ちの行だけ `pg_blocking_pids` を呼ぶ (全行呼ぶと lock manager に負荷をかける)。
+    pub async fn tx_blocked_sessions(&self) -> Result<Option<u32>> {
+        let pid = self.tx_backend_id.load(std::sync::atomic::Ordering::SeqCst);
+        let Ok(pid) = i32::try_from(pid) else {
+            return Ok(None);
+        };
+        if pid == 0 {
+            return Ok(None);
+        }
+        let n: i64 = sqlx::query_scalar(
+            "SELECT count(*)::int8 FROM pg_stat_activity \
+             WHERE wait_event_type = 'Lock' AND $1::int4 = ANY(pg_blocking_pids(pid))",
+        )
+        .bind(pid)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(Some(u32::try_from(n).unwrap_or(u32::MAX)))
     }
 
     pub async fn execute_stream<F>(

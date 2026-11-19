@@ -297,6 +297,14 @@ import { useConfirm, type ConfirmControls } from "./components/ConfirmDialog";
 import { SqlPreview } from "./components/SqlPreview";
 import { ContextMenu, type ContextMenuEntry } from "./components/ContextMenu";
 import { SavepointControl } from "./components/SavepointControl";
+import { TransactionStatus, TxJournalList } from "./components/TransactionStatus";
+import {
+  appendTxEntry,
+  makeTxEntry,
+  shouldReviewBeforeCommit,
+  summarizeTxJournal,
+  type TxMeta,
+} from "./txJournal";
 import {
   afterRelease,
   afterRollbackTo,
@@ -2599,7 +2607,9 @@ export default function App() {
   // トランザクション状態は接続ごとに持つ。接続の切替は背景セッションを生かしたまま
   // 差し替えるだけでサーバ側の TX は続くので、切替元の状態を捨てると戻ったときに
   // COMMIT / ROLLBACK の操作が消える。切断・喪失したセッションのぶんだけ捨てる。
-  const txBySessionRef = useRef(new Map<string, { savepoints: readonly string[]; counter: number }>());
+  const txBySessionRef = useRef(
+    new Map<string, { savepoints: readonly string[]; counter: number; meta: TxMeta }>(),
+  );
   // 現在の txActive / savepoints がどのセッションのものか (保存先のキー)。
   const txOwnerRef = useRef<string | null>(null);
   // 背景接続の TX 状態 (ref) が変わったことを接続一覧のバッジへ伝える再描画トリガ (#1536)。
@@ -2631,6 +2641,21 @@ export default function App() {
     const saved = txBySessionRef.current.get(sid);
     if (saved) txBySessionRef.current.set(sid, { ...saved, savepoints: fn(saved.savepoints) });
   }, []);
+  // トランザクション内で実行した文を、その接続のぶんの記録へ足す (#2447)。表示中でなくても接続ごとに保つ。
+  const recordTxEntry = useCallback(
+    (sid: string, sql: string, outcome: Parameters<typeof makeTxEntry>[2]) => {
+      const saved = txBySessionRef.current.get(sid);
+      if (!saved) return;
+      const driver = openConnectionsRef.current.find((c) => c.sessionId === sid)?.profile.driver;
+      const entry = makeTxEntry(sql, driver, outcome, Date.now());
+      txBySessionRef.current.set(sid, {
+        ...saved,
+        meta: { ...saved.meta, entries: appendTxEntry(saved.meta.entries, entry) },
+      });
+      setTxTick((n) => n + 1);
+    },
+    [],
+  );
   const resetTxFor = useCallback((sid: string) => {
     if (txOwnerRef.current === sid) {
       setSavepoints([]);
@@ -2665,7 +2690,13 @@ export default function App() {
     const owner = txOwnerRef.current;
     if (!owner) return;
     if (txActive) {
-      txBySessionRef.current.set(owner, { savepoints, counter: savepointCounterRef.current });
+      // 開始時刻と実行した文の記録 (meta) は、開始 / 記録の側が更新する。ここでは引き継ぐ (#2447)。
+      const prev = txBySessionRef.current.get(owner);
+      txBySessionRef.current.set(owner, {
+        savepoints,
+        counter: savepointCounterRef.current,
+        meta: prev?.meta ?? { startedAt: Date.now(), entries: [] },
+      });
     } else {
       txBySessionRef.current.delete(owner);
     }
@@ -6989,6 +7020,12 @@ export default function App() {
       }));
       try {
         const res = await api.runInTransaction(sessionId, sql);
+        recordTxEntry(sessionId, sql, {
+          ok: true,
+          returnedRows: res.rows.length,
+          affectedRows: Number(res.rows_affected ?? 0),
+          elapsedMs: res.elapsed_ms,
+        });
         patchTab(tabId, (tt) => ({
           ...tt,
           streaming: false,
@@ -7031,6 +7068,7 @@ export default function App() {
           outCtx,
         );
       } catch (e) {
+        recordTxEntry(sessionId, sql, { ok: false });
         // 失敗した文を記録しておく。エラー位置の波線・「エラー位置へ」が直前に成功した別の文を
         // 指さないように、通常の実行経路と同じく試みた SQL を lastExecutedSql に残す (#2330)。
         patchTab(tabId, (tt) => ({ ...tt, streaming: false, queryError: String(e), lastExecutedSql: sql }));
@@ -7063,6 +7101,7 @@ export default function App() {
       resolvePendingBeforeReplace,
       notifyDiscardedEdits,
       markUnseenOutcome,
+      recordTxEntry,
     ],
   );
 
@@ -7079,13 +7118,23 @@ export default function App() {
       );
       if (txOwnerRef.current !== sessionId) {
         // 開始の await 中に別の接続へ切り替わった: 状態は開始した接続のぶんとして保存する。
-        txBySessionRef.current.set(sessionId, { savepoints: [], counter: 0 });
+        txBySessionRef.current.set(sessionId, {
+          savepoints: [],
+          counter: 0,
+          meta: { startedAt: Date.now(), entries: [] },
+        });
         setTxTick((n) => n + 1);
         toast.info(translate("txBegun"));
         return;
       }
       setSavepoints([]);
       savepointCounterRef.current = 0;
+      // 開始時刻と記録を先に置く。続く保存用の effect が引き継ぐ (#2447)。
+      txBySessionRef.current.set(sessionId, {
+        savepoints: [],
+        counter: 0,
+        meta: { startedAt: Date.now(), entries: [] },
+      });
       setTxActive(true);
       toast.info(translate("txBegun"));
     } catch (e) {
@@ -7165,6 +7214,28 @@ export default function App() {
   const handleFinishTransaction = useCallback(
     async (commit: boolean) => {
       if (!sessionId) return;
+      // 本番 + confirm_writes の COMMIT は、このトランザクションで実行した文を見せてから確定する (#2447)。
+      // UI レベルの誤操作防止のみ。
+      if (commit && selectedProfile && shouldReviewBeforeCommit(selectedProfile)) {
+        const entries = txBySessionRef.current.get(sessionId)?.meta.entries ?? [];
+        const sum = summarizeTxJournal(entries);
+        const ok = await confirm({
+          title: translate("txCommitConfirmTitle"),
+          message: (
+            <Box>
+              <chakra.p mb="2">
+                {translate("txCommitConfirmBody", { statements: sum.statements, rows: sum.rows })}
+              </chakra.p>
+              <Box maxH="40vh" overflowY="auto" data-testid="tx-commit-journal">
+                <TxJournalList entries={entries} />
+              </Box>
+            </Box>
+          ),
+          confirmLabel: translate("txCommitConfirmAction"),
+          tone: "warning",
+        });
+        if (!ok) return;
+      }
       try {
         await api.finishTransaction(sessionId, commit);
         resetTxFor(sessionId);
@@ -7179,7 +7250,7 @@ export default function App() {
         );
       }
     },
-    [sessionId, toast, resetTxFor],
+    [sessionId, selectedProfile, confirm, toast, resetTxFor],
   );
 
   // EXPLAIN タブの実行を 1 か所に集約する (#1164)。推定モードは従来どおり
@@ -9461,7 +9532,19 @@ export default function App() {
               if (reason === "cancelled") setStatus({ kind: "key", key: "statusQueryCancelled" });
             },
             runInTransaction: async (stmt) => {
-              const res = await api.runInTransaction(sid, stmt);
+              let res: Awaited<ReturnType<typeof api.runInTransaction>>;
+              try {
+                res = await api.runInTransaction(sid, stmt);
+              } catch (e) {
+                recordTxEntry(sid, stmt, { ok: false });
+                throw e;
+              }
+              recordTxEntry(sid, stmt, {
+                ok: true,
+                returnedRows: res.rows.length,
+                affectedRows: Number(res.rows_affected ?? 0),
+                elapsedMs: res.elapsed_ms,
+              });
               return {
                 columns: res.columns,
                 rows: res.rows.slice(0, req.rowCap),
@@ -9551,6 +9634,7 @@ export default function App() {
       settings.flightRecorderEnabled,
       settings.flightRecorderRowCap,
       settings.flightRecorderRetentionDays,
+      recordTxEntry,
     ],
   );
 
@@ -15231,20 +15315,12 @@ export default function App() {
                         <Flex align="center" gap="2" mr="2.5">
                           {txActive ? (
                             <>
-                              <Tooltip label={t("txActiveHelp")} focusableWrapper>
-                                <chakra.span
-                                  fontSize="2xs"
-                                  fontWeight={700}
-                                  letterSpacing="wider"
-                                  px="1.5"
-                                  py="0.5"
-                                  borderRadius="sm"
-                                  bg={`color-mix(in srgb, ${semanticColorVar("warning", "solid")} 18%, transparent)`}
-                                  color="var(--text-warning)"
-                                >
-                                  {t("txActiveBadge")}
-                                </chakra.span>
-                              </Tooltip>
+                              <TransactionStatus
+                                sessionId={sessionId}
+                                driver={selectedProfile?.driver}
+                                isProduction={selectedProfile?.is_production ?? false}
+                                meta={txBySessionRef.current.get(sessionId)?.meta}
+                              />
                               <SavepointControl
                                 stack={savepoints}
                                 onCreate={() => void handleCreateSavepoint()}

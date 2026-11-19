@@ -78,6 +78,8 @@ pub mod table_ddl;
 pub mod table_partitions;
 pub mod table_triggers;
 pub mod transfer;
+/// 明示トランザクションが他セッションをブロックしている数の集計 (#2447)。
+pub mod tx_blocking;
 /// 明示トランザクション開始オプション (分離レベル / READ ONLY, #1166)。
 pub mod tx_options;
 pub mod types;
@@ -886,6 +888,17 @@ impl Connection {
             Connection::MySql(c) => c.tx_active().await,
             Connection::Postgres(c) => c.tx_active().await,
             Connection::Sqlite(c) => c.tx_active().await,
+        }
+    }
+
+    /// 開いている明示トランザクションが他セッションをブロックしている数 (#2447)。
+    /// `None` は取得できない (SQLite はサーバが無く対象外 / ID を控えられなかった / TX が無い)。
+    /// MySQL は `data_lock_waits` 等、PostgreSQL は `pg_blocking_pids()` を別のプール接続から読む。
+    pub async fn transaction_blocked_sessions(&self) -> Result<Option<u32>> {
+        match self {
+            Connection::MySql(c) => c.tx_blocked_sessions().await,
+            Connection::Postgres(c) => c.tx_blocked_sessions().await,
+            Connection::Sqlite(_) => Ok(None),
         }
     }
 

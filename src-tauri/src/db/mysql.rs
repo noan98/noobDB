@@ -40,6 +40,8 @@ pub struct MySqlConn {
     tx: tokio::sync::Mutex<Option<sqlx::pool::PoolConnection<sqlx::MySql>>>,
     /// 開いている明示トランザクションが READ ONLY か (#2243)。
     pub(super) tx_read_only: std::sync::atomic::AtomicBool,
+    /// 保持接続の `CONNECTION_ID()` (#2447)。0 は未取得 / トランザクション無し。
+    tx_backend_id: std::sync::atomic::AtomicI64,
     /// AWS IAM 認証 (#734) 時、プールの新規接続用トークンを定期的に作り直す
     /// タスク。ドロップで停止する。パスワード認証では `None`。
     _iam_refresh: Option<super::aws_iam::TokenRefreshGuard>,
@@ -124,6 +126,7 @@ impl MySqlConn {
             pool,
             tx: tokio::sync::Mutex::new(None),
             tx_read_only: Default::default(),
+            tx_backend_id: Default::default(),
             _iam_refresh: iam_refresh,
             innodb_lock_waits_missing: std::sync::atomic::AtomicBool::new(false),
             stage_check: std::sync::Mutex::new(None),
@@ -189,6 +192,13 @@ impl MySqlConn {
         }
         let mut conn = self.pool.acquire().await?;
         apply_use_database(&mut conn, database).await?;
+        // ブロック中セッション数の照会 (#2447) のため、保持接続の ID を控える。失敗しても開始は妨げない。
+        let backend_id = sqlx::query_scalar::<_, u64>("SELECT CONNECTION_ID()")
+            .fetch_one(&mut *conn)
+            .await
+            .ok()
+            .and_then(|v| i64::try_from(v).ok())
+            .unwrap_or(0);
         // Transaction-control statements go through the text protocol (raw_sql),
         // like `USE`, so they can't trip MySQL's prepared-statement error 1295.
         // 分離レベルは START TRANSACTION の前 (次の 1 トランザクションだけに効く, #1166)。
@@ -203,6 +213,8 @@ impl MySqlConn {
         .await?;
         self.tx_read_only
             .store(opts.read_only, std::sync::atomic::Ordering::SeqCst);
+        self.tx_backend_id
+            .store(backend_id, std::sync::atomic::Ordering::SeqCst);
         *guard = Some(conn);
         Ok(())
     }
@@ -270,6 +282,8 @@ impl MySqlConn {
         let mut guard = self.tx.lock().await;
         self.tx_read_only
             .store(false, std::sync::atomic::Ordering::SeqCst);
+        self.tx_backend_id
+            .store(0, std::sync::atomic::Ordering::SeqCst);
         let mut conn = guard
             .take()
             .ok_or_else(|| AppError::InvalidInput("no active transaction".into()))?;
@@ -298,6 +312,18 @@ impl MySqlConn {
 
     pub async fn tx_active(&self) -> bool {
         self.tx.lock().await.is_some()
+    }
+
+    /// 開いているトランザクションにブロックされている他セッション数 (#2447)。行ロック待ち
+    /// (`data_lock_waits` / `INNODB_LOCK_WAITS`) のブロッカーが保持接続の ID のものを数える。
+    /// 保持接続のロックを取らず、プールの別接続で読む。
+    pub async fn tx_blocked_sessions(&self) -> Result<Option<u32>> {
+        let id = self.tx_backend_id.load(std::sync::atomic::Ordering::SeqCst);
+        if id == 0 {
+            return Ok(None);
+        }
+        let pairs = self.list_lock_waits(true, false).await;
+        Ok(Some(super::tx_blocking::count_blocked_by(&pairs, id)))
     }
 
     /// Runs `sql` inside a transaction that is always rolled back. Captures

@@ -1077,6 +1077,34 @@ const en = {
     "The current connection still holds an uncommitted transaction. It stays open in the background while you switch, so its changes and row locks remain until you come back and commit or roll back.",
   connSwitchTxAction: "Switch anyway",
   txActiveHelp: "An explicit transaction is active. Queries run inside it until commit/rollback.",
+  txElapsedHelp: "Open for {elapsed}.",
+  txStaleHelp:
+    "This transaction has been open for a long time. It keeps its row locks and can block other sessions; commit or roll back soon.",
+  txSqliteLockHelp:
+    "SQLite: a write transaction holds the file lock and blocks other writers until you commit or roll back.",
+  txStaleToast: "This transaction has been open for {elapsed}. Commit or roll back to release its locks.",
+  txBlockingCount: "Blocking {count}",
+  txBlockingNone: "Blocking 0",
+  txBlockingHelp:
+    "Number of other sessions currently waiting on a lock held by this transaction. Refreshed every few seconds.",
+  txBlockingToast:
+    "This transaction is blocking {count} other session(s). Commit or roll back to release them.",
+  txBlockingUnsupported: "Blocking: n/a",
+  txBlockingUnsupportedHelp:
+    "SQLite has no server, so the number of blocked sessions is not available. Only the elapsed time is shown.",
+  txChangesSummary: "Changes ({statements} stmts / {rows} rows)",
+  txChangesTitle: "Statements run in this transaction",
+  txChangesEmpty: "No statements have been run in this transaction yet.",
+  txChangesNote:
+    "Only statements run from the editor or notebook while the transaction is open are listed. Reads are shown but not counted as changes.",
+  txChangesFailedNote: "{count} statement(s) failed and are not counted.",
+  txEntryAffected: "{rows} rows affected",
+  txEntryRead: "{rows} rows read",
+  txEntryFailed: "Failed",
+  txCommitConfirmTitle: "Commit this transaction?",
+  txCommitConfirmBody:
+    "This production connection will commit {statements} statement(s) / {rows} row(s). Review the statements below before committing.",
+  txCommitConfirmAction: "Commit",
   txIsolationLabel: "Isolation level",
   txIsolationDefault: "Server default",
   txIsolationReadCommitted: "READ COMMITTED",
@@ -10293,6 +10321,34 @@ const ja: Dict = {
     "現在の接続は未確定のトランザクションを保持しています。切り替えてもバックグラウンドで開いたままになり、戻って確定または破棄するまで変更と行ロックが残ります。",
   connSwitchTxAction: "このまま切り替える",
   txActiveHelp: "明示トランザクションが有効です。クエリは確定/破棄するまでこの中で実行されます。",
+  txElapsedHelp: "開始から {elapsed} 経過しています。",
+  txStaleHelp:
+    "このトランザクションは長く開いたままです。行ロックを保持し続け、他のセッションを止める恐れがあります。早めに確定または破棄してください。",
+  txSqliteLockHelp:
+    "SQLite: 書き込みトランザクションはファイルロックを保持し、確定または破棄するまで他の書き込みを止めます。",
+  txStaleToast:
+    "このトランザクションが {elapsed} 開いたままです。ロックを手放すため確定または破棄してください。",
+  txBlockingCount: "ブロック中 {count}",
+  txBlockingNone: "ブロック中 0",
+  txBlockingHelp: "このトランザクションが持つロックを待っている他セッションの数です。数秒ごとに更新します。",
+  txBlockingToast:
+    "このトランザクションが他の {count} セッションをブロックしています。確定または破棄して解放してください。",
+  txBlockingUnsupported: "ブロック数: 対象外",
+  txBlockingUnsupportedHelp:
+    "SQLite はサーバが無いため、ブロック中のセッション数は取得できません (表示は経過時間のみ)。",
+  txChangesSummary: "変更 ({statements} 文 / {rows} 行)",
+  txChangesTitle: "このトランザクションで実行した文",
+  txChangesEmpty: "このトランザクションではまだ文を実行していません。",
+  txChangesNote:
+    "トランザクション中にエディタ / ノートブックから実行した文を表示します。読み取りは一覧に出ますが、変更には数えません。",
+  txChangesFailedNote: "失敗した文が {count} 件あります (変更には数えません)。",
+  txEntryAffected: "{rows} 行を変更",
+  txEntryRead: "{rows} 行を取得",
+  txEntryFailed: "失敗",
+  txCommitConfirmTitle: "このトランザクションをコミットしますか?",
+  txCommitConfirmBody:
+    "本番接続で {statements} 文 / {rows} 行の変更を確定します。下の実行内容を確認してからコミットしてください。",
+  txCommitConfirmAction: "コミットする",
   txIsolationLabel: "分離レベル",
   txIsolationDefault: "サーバ既定",
   txIsolationReadCommitted: "READ COMMITTED",

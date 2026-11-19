@@ -775,6 +775,20 @@ pub async fn finish_transaction(
     Ok(())
 }
 
+/// 開いている明示トランザクションが他セッションをブロックしている数 (#2447)。
+/// `None` は取得不可 (SQLite はサーバが無く対象外 / トランザクション無し)。
+#[tauri::command]
+pub async fn transaction_blocked_sessions(
+    session_id: String,
+    state: State<'_, AppState>,
+) -> Result<Option<u32>> {
+    let session = state
+        .get(&session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+    session.conn.transaction_blocked_sessions().await
+}
+
 /// 明示トランザクション内に SAVEPOINT を作る (#1418)。名前は英数字と `_` のみ。
 #[tauri::command]
 pub async fn create_savepoint(
