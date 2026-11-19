@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, renderWithProviders, screen, waitFor } from "./testUtils";
+import { act, fireEvent, renderWithProviders, screen, waitFor, within } from "./testUtils";
 import { makeProfile } from "./fixtures/componentFixtures";
 import { t } from "../i18n";
 
@@ -224,6 +224,60 @@ describe("NotebookView (#2380)", () => {
     });
     expect(await screen.findByText(t("notebookError", { error: "syntax error" }))).toBeTruthy();
     expect(onRunSql).toHaveBeenCalledTimes(1);
+  });
+
+  it("全実行中は実行中セルだけ data-running が付き、n / m と追従スクロールが出る (#2449)", async () => {
+    seed(newSqlCell("SELECT 1"), newSqlCell("SELECT 2"));
+    const scroll = vi.fn();
+    Element.prototype.scrollIntoView = scroll;
+    let release: (v: unknown) => void = () => {};
+    const onRunSql = vi.fn().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    setup({ onRunSql });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: new RegExp(t("notebookRunAll")) }));
+    });
+    await waitFor(() => expect(onRunSql).toHaveBeenCalledTimes(1));
+    expect(document.querySelectorAll("[data-running]")).toHaveLength(1);
+    expect(document.querySelector("[data-running]")?.getAttribute("data-notebook-cell-id")).toBe(
+      getNotebookState().doc.cells[0].id,
+    );
+    expect(screen.getByTestId("notebook-run-count").textContent).toContain("1");
+    expect(scroll).toHaveBeenCalledWith(expect.objectContaining({ block: "nearest" }));
+    // 手でスクロールしたら、次のセルへ移っても追従しない
+    scroll.mockClear();
+    fireEvent.wheel(screen.getByTestId("notebook-run-progress").parentElement?.parentElement as HTMLElement);
+    await act(async () => release(OUT));
+    await waitFor(() => expect(onRunSql).toHaveBeenCalledTimes(2));
+    expect(scroll).not.toHaveBeenCalled();
+    await act(async () => release(OUT));
+    await waitFor(() => expect(document.querySelector("[data-running]")).toBeNull());
+  });
+
+  it("失敗で止まったら、停止位置を role=status で伝え、そのセルへ着地する (#2449)", async () => {
+    seed(newSqlCell("SELECT 1"), newSqlCell("SELECT bad"), newSqlCell("SELECT 3"));
+    const scroll = vi.fn();
+    Element.prototype.scrollIntoView = scroll;
+    const onRunSql = vi
+      .fn()
+      .mockResolvedValueOnce(OUT)
+      .mockRejectedValueOnce(new NotebookRunError("syntax error", false, false, false));
+    setup({ onRunSql });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: new RegExp(t("notebookRunAll")) }));
+    });
+    const outcome = await screen.findByTestId("notebook-run-stopped");
+    const msg = t("notebookStoppedFailed", { index: 2, total: 3, done: 1 });
+    expect(outcome.textContent).toContain(msg);
+    expect(within(outcome).getByRole("status").textContent).toContain(msg);
+    expect(onRunSql).toHaveBeenCalledTimes(2);
+    expect(scroll).toHaveBeenCalled();
+    const target = scroll.mock.contexts.at(-1) as HTMLElement;
+    expect(target.getAttribute("data-notebook-cell-id")).toBe(getNotebookState().doc.cells[1].id);
   });
 
   it("未接続では実行できない", () => {
