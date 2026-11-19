@@ -6,7 +6,6 @@ import {
   aiCacheKey,
   fingerprint,
   loadAiCache,
-  removeAiCache,
   saveAiCache,
 } from "../ai/aiCache";
 
@@ -73,11 +72,9 @@ describe("AI キャッシュ (#1620)", () => {
     expect(loadAiCache(keys[keys.length - 1], isObj)).not.toBeNull();
   });
 
-  it("removeAiCache で消える。localStorage が使えなくても例外にしない", () => {
+  it("localStorage が使えなくても読み出しは例外にせず null", () => {
     const k = aiCacheKey("schemaDoc", "p", "x");
     saveAiCache(k, { n: 1 });
-    removeAiCache(k);
-    expect(loadAiCache(k, isObj)).toBeNull();
     const original = Storage.prototype.getItem;
     Storage.prototype.getItem = () => {
       throw new Error("blocked");

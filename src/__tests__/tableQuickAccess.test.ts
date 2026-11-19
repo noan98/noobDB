@@ -4,9 +4,7 @@ import {
   MAX_RECENT,
   isFavorite,
   normalizeQuickAccess,
-  pruneMissing,
   recordRecent,
-  removeFavorite,
   tableRefEquals,
   toggleFavorite,
 } from "../tableQuickAccess";
@@ -29,6 +27,16 @@ describe("toggleFavorite", () => {
     expect(isFavorite(s2, ref("db", "users"))).toBe(false);
   });
 
+  it("removes only the toggled favorite and keeps the others in order", () => {
+    let s = toggleFavorite(EMPTY_QUICK_ACCESS, ref("db", "a"));
+    s = toggleFavorite(s, ref("db", "b"));
+    s = toggleFavorite(s, ref("db", "c"));
+    const s2 = toggleFavorite(s, ref("db", "b"));
+    expect(s2.favorites.map((f) => f.table)).toEqual(
+      s.favorites.map((f) => f.table).filter((t) => t !== "b"),
+    );
+  });
+
   it("does not touch recent", () => {
     const s = recordRecent(EMPTY_QUICK_ACCESS, ref("db", "a"));
     const s2 = toggleFavorite(s, ref("db", "b"));
@@ -39,15 +47,6 @@ describe("toggleFavorite", () => {
     let s = toggleFavorite(EMPTY_QUICK_ACCESS, ref("db1", "users"));
     s = toggleFavorite(s, ref("db2", "users"));
     expect(s.favorites).toHaveLength(2);
-  });
-});
-
-describe("removeFavorite", () => {
-  it("removes only the matching ref", () => {
-    let s = toggleFavorite(EMPTY_QUICK_ACCESS, ref("db", "a"));
-    s = toggleFavorite(s, ref("db", "b"));
-    s = removeFavorite(s, ref("db", "a"));
-    expect(s.favorites).toEqual([ref("db", "b")]);
   });
 });
 
@@ -96,22 +95,5 @@ describe("normalizeQuickAccess", () => {
     const recent = Array.from({ length: MAX_RECENT + 8 }, (_, i) => ref("db", `t${i}`));
     const s = normalizeQuickAccess({ recent });
     expect(s.recent).toHaveLength(MAX_RECENT);
-  });
-});
-
-describe("pruneMissing", () => {
-  it("removes refs no longer present in the schema", () => {
-    let s = toggleFavorite(EMPTY_QUICK_ACCESS, ref("db", "a"));
-    s = toggleFavorite(s, ref("db", "gone"));
-    s = recordRecent(s, ref("db", "gone"));
-    s = recordRecent(s, ref("db", "a"));
-    const pruned = pruneMissing(s, [ref("db", "a")]);
-    expect(pruned.favorites).toEqual([ref("db", "a")]);
-    expect(pruned.recent).toEqual([ref("db", "a")]);
-  });
-
-  it("returns the same reference when nothing changes", () => {
-    const s = toggleFavorite(EMPTY_QUICK_ACCESS, ref("db", "a"));
-    expect(pruneMissing(s, [ref("db", "a")])).toBe(s);
   });
 });

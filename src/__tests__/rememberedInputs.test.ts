@@ -3,7 +3,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   MAX_REMEMBERED_ENTRIES,
   asRecord,
-  forgetRemembered,
   loadRemembered,
   pickBool,
   pickNumber,
@@ -48,14 +47,6 @@ describe("rememberedInputs", () => {
     saveRemembered("f", "new", { i: -1 });
     expect(loadRemembered("f", "s0", asObj)).toEqual({ i: 0, again: true });
     expect(loadRemembered("f", "s1", asObj)).toBeNull();
-  });
-
-  it("forgetRemembered は 1 スコープだけ消す", () => {
-    saveRemembered("f", "a", { x: 1 });
-    saveRemembered("f", "b", { x: 2 });
-    forgetRemembered("f", "a");
-    expect(loadRemembered("f", "a", asObj)).toBeNull();
-    expect(loadRemembered("f", "b", asObj)).toEqual({ x: 2 });
   });
 
   it("壊れた JSON・形違いは記憶なしとして扱う", () => {
