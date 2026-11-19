@@ -3,6 +3,7 @@ import {
   TX_JOURNAL_MAX_ENTRIES,
   appendTxEntry,
   batchResultToTxOutcome,
+  createBatchTxRecorder,
   formatTxElapsed,
   isTxStale,
   makeTxEntry,
@@ -140,5 +141,45 @@ describe("oneLineSql", () => {
   it("collapses whitespace and truncates", () => {
     expect(oneLineSql("UPDATE  t\n SET a = 1")).toBe("UPDATE t SET a = 1");
     expect(oneLineSql("x".repeat(10), 5)).toBe("xxxx…");
+  });
+});
+
+describe("createBatchTxRecorder", () => {
+  const collect = (inTx: boolean) => {
+    const got: string[] = [];
+    const rec = createBatchTxRecorder(inTx, (sql) => got.push(sql));
+    return { got, rec };
+  };
+  const okRes = (sql: string) => ({ sql, status: "ok" as const, rowsAffected: 1, elapsedMs: 1 });
+
+  it("TX 外のバッチは記録しない", () => {
+    const { got, rec } = collect(false);
+    rec(okRes("UPDATE t SET a = 1"));
+    expect(got).toEqual([]);
+  });
+
+  it("skipped は記録しない", () => {
+    const { got, rec } = collect(true);
+    rec({ sql: "UPDATE t SET a = 1", status: "skipped" });
+    rec(okRes("UPDATE t SET a = 2"));
+    expect(got).toEqual(["UPDATE t SET a = 2"]);
+  });
+
+  it("COMMIT などの制御文以降は記録しない", () => {
+    const { got, rec } = collect(true);
+    rec(okRes("UPDATE t SET a = 1"));
+    rec(okRes("COMMIT"));
+    rec(okRes("UPDATE t SET a = 2"));
+    expect(got).toEqual(["UPDATE t SET a = 1"]);
+  });
+});
+
+describe("batchResultToTxOutcome truncated", () => {
+  it("切り詰められて総数が不明なら行数は null", () => {
+    expect(
+      batchResultToTxOutcome({ status: "ok", columns: [{}], rows: [[1]], truncated: true }),
+    ).toMatchObject({
+      returnedRows: null,
+    });
   });
 });

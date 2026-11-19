@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, renderWithProviders, screen, waitFor } from "./testUtils";
+import { act, fireEvent, renderWithProviders, screen, waitFor } from "./testUtils";
 import { t } from "../i18n";
 
 const blockedMock = vi.fn();
@@ -83,6 +83,29 @@ describe("TransactionStatus (#2447)", () => {
       <TransactionStatus sessionId="s1" driver="mysql" isProduction={false} meta={meta(1000)} />,
     );
     await waitFor(() => expect(screen.getByTestId("tx-blocking").textContent).toBe(t("txBlockingUnknown")));
+  });
+
+  it("ポップオーバーを開いたまま時間が進んでも、フォーカスを奪い直さずリスナーも張り直さない", () => {
+    vi.useFakeTimers();
+    try {
+      renderWithProviders(
+        <TransactionStatus sessionId="s1" driver="sqlite" isProduction={false} meta={meta(1000, "sqlite")} />,
+      );
+      fireEvent.click(screen.getByTestId("tx-changes-button"));
+      const panel = screen.getByTestId("tx-changes-popover");
+      expect(document.activeElement).toBe(panel);
+      // 利用者がフォーカスを別へ移した (ボタンへ戻した)。
+      screen.getByTestId("tx-changes-button").focus();
+      const add = vi.spyOn(document, "addEventListener");
+      act(() => {
+        vi.advanceTimersByTime(5000);
+      });
+      expect(document.activeElement).not.toBe(panel);
+      expect(add).not.toHaveBeenCalled();
+      add.mockRestore();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("SQLite は照会せず「対象外」と明示する", () => {

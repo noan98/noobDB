@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { Box, Flex, chakra } from "@chakra-ui/react";
 import { api } from "../api/tauri";
@@ -63,7 +63,9 @@ export function TxJournalList({ entries }: { entries: readonly TxJournalEntry[] 
             <chakra.span textStyle="numeric" color="app.textMuted" flexShrink={0}>
               {e.write
                 ? t("txEntryAffected", { rows: e.rows ?? 0 })
-                : t("txEntryRead", { rows: e.rows ?? 0 })}
+                : e.rows === null
+                  ? "—"
+                  : t("txEntryRead", { rows: e.rows })}
             </chakra.span>
           ) : (
             <ToneChip tone="danger">{t("txEntryFailed")}</ToneChip>
@@ -104,6 +106,7 @@ export function TransactionStatus({ sessionId, driver, isProduction, meta }: Pro
   const [blocked, setBlocked] = useState<number | null | undefined>(undefined);
   const [open, setOpen] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
+  const closePopover = useCallback(() => setOpen(false), []);
   const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
   const supportsBlocking = supportsTxBlockingCount(driver);
   const key = `${sessionId}:${startedAt}`;
@@ -256,7 +259,7 @@ export function TransactionStatus({ sessionId, driver, isProduction, meta }: Pro
           entries={entries}
           failed={summary.failed}
           anchorRef={buttonRef}
-          onClose={() => setOpen(false)}
+          onClose={closePopover}
         />
       )}
     </>
@@ -280,8 +283,11 @@ function TxChangesPopover({
   const t = useT();
   const panelRef = useRef<HTMLDivElement>(null);
   useReturnFocus();
+  // フォーカスは開いたときの 1 回だけ移す (親の毎秒の再描画で奪い直さない)。
   useEffect(() => {
     panelRef.current?.focus();
+  }, []);
+  useEffect(() => {
     const onDown = (e: MouseEvent) => {
       const el = e.target as Node;
       if (panelRef.current?.contains(el) || anchorRef.current?.contains(el)) return;

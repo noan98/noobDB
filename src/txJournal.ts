@@ -1,5 +1,6 @@
 // 明示トランザクションの経過時間・実行した文の記録・放置警告の純ロジック (#2447)。
 // 判定・整形だけを持ち、状態 (接続ごとの保持) と表示は App / TransactionStatus が担う。
+import { isTxControlStatement } from "./components/batchMarkers";
 import { isReadOnlySql } from "./dangerousSql";
 
 /** トランザクション内で実行した 1 文の記録。 */
@@ -64,7 +65,7 @@ export function supportsTxBlockingCount(driver: string | undefined): boolean {
 export function makeTxEntry(
   sql: string,
   driver: string | undefined,
-  outcome: { ok: true; returnedRows: number; affectedRows: number; elapsedMs: number } | { ok: false },
+  outcome: { ok: true; returnedRows: number | null; affectedRows: number; elapsedMs: number } | { ok: false },
   at: number,
 ): TxJournalEntry {
   const write = !isReadOnlySql(sql, driver);
@@ -88,14 +89,36 @@ export function batchResultToTxOutcome(r: {
   rowsAffected?: number;
   elapsedMs?: number;
   totalRows?: number;
+  truncated?: boolean;
 }): Parameters<typeof makeTxEntry>[2] | null {
   if (r.status === "skipped") return null;
   if (r.status === "error") return { ok: false };
   return {
     ok: true,
-    returnedRows: r.totalRows ?? r.rows?.length ?? 0,
+    // 切り詰められていて総数も分からないときは、プレビューの件数を行数と偽らず不明 (null) にする。
+    returnedRows: r.totalRows ?? (r.truncated ? null : (r.rows?.length ?? 0)),
     affectedRows: Number(r.rowsAffected ?? 0),
     elapsedMs: r.elapsedMs ?? 0,
+  };
+}
+
+/**
+ * バッチ実行の結果を TX の記録へ流す記録器。TX 中でなければ何も記録しない。トランザクション制御文
+ * (BEGIN / COMMIT / ROLLBACK など) が現れたら、その文以降は TX の境界が変わるので記録しない。
+ */
+export function createBatchTxRecorder(
+  inTx: boolean,
+  record: (sql: string, outcome: NonNullable<ReturnType<typeof batchResultToTxOutcome>>) => void,
+): (r: Parameters<typeof batchResultToTxOutcome>[0] & { sql: string }) => void {
+  let ended = false;
+  return (r) => {
+    if (!inTx || ended) return;
+    if (isTxControlStatement(r.sql)) {
+      ended = true;
+      return;
+    }
+    const outcome = batchResultToTxOutcome(r);
+    if (outcome) record(r.sql, outcome);
   };
 }
 

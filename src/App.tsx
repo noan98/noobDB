@@ -300,7 +300,7 @@ import { SavepointControl } from "./components/SavepointControl";
 import { TransactionStatus, TxJournalList, forgetTxNotifications } from "./components/TransactionStatus";
 import {
   appendTxEntry,
-  batchResultToTxOutcome,
+  createBatchTxRecorder,
   makeTxEntry,
   shouldReviewBeforeCommit,
   summarizeTxJournal,
@@ -6846,6 +6846,9 @@ export default function App() {
       // 全体を 1 つのトランザクションで包む (#1626): 設定がオン、停止モード、明示トランザクションなし。
       // 包む実行ではバックエンドが BEGIN / COMMIT などを読み飛ばす (結果が届かない) ので、エディタのマーカーへも伝える (#2331)。
       const inTx = txActiveRef.current;
+      const recordBatchTx = createBatchTxRecorder(inTx, (stmt, outcome) =>
+        recordTxEntry(sessionId, stmt, outcome),
+      );
       const wrapInTransaction = settings.batchWrapInTransaction && stopOnError && !inTx;
       patchTab(tabId, (tt) => ({
         ...tt,
@@ -6910,10 +6913,7 @@ export default function App() {
               recordOutput(toBatchOutputInput(r), tab.database ?? null, outCtx);
               results.push(toBatchResult(r));
               // 明示トランザクション中のバッチは、文ごとの結果を TX の記録へ足す (#2447)。
-              if (inTx) {
-                const outcome = batchResultToTxOutcome(r);
-                if (outcome) recordTxEntry(sessionId, r.sql, outcome);
-              }
+              recordBatchTx(r);
             }
             // 進捗を反映 (途中経過を見せる)。バックエンドが間引いた単位で 1 回だけ更新する。
             patchTab(tabId, (tt) => ({ ...tt, batchResults: [...results] }));

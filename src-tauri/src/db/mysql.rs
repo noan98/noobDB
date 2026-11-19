@@ -326,9 +326,16 @@ impl MySqlConn {
         if id == 0 {
             return Ok(None);
         }
+        // performance_schema が OFF だと data_lock_waits は空で成功し「0 件」と誤報するので、
+        // ON のときだけそちらを使う (OFF の 8.0 は INNODB_LOCK_WAITS も無く None=不明になる)。
+        let perf_on = sqlx::query_scalar::<_, i64>("SELECT CAST(@@performance_schema AS SIGNED)")
+            .fetch_one(&self.pool)
+            .await
+            .ok();
+        let perf_ok = super::tx_blocking::perf_schema_usable(perf_on);
         // 行ロック待ちを読めなかったら 0 件ではなく「不明」(None) を返す (#2447)。
         Ok(self
-            .row_lock_waits(true)
+            .row_lock_waits(perf_ok)
             .await
             .map(|pairs| super::tx_blocking::count_blocked_by(&pairs, id)))
     }

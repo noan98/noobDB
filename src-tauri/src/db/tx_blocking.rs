@@ -16,6 +16,13 @@ pub fn count_blocked_by(pairs: &[(i64, i64)], holder: i64) -> u32 {
     u32::try_from(waiters.len()).unwrap_or(u32::MAX)
 }
 
+/// `SELECT @@performance_schema` の値から、`performance_schema` 側の行ロック表を信用してよいか。
+/// OFF (0) では `data_lock_waits` が空のまま成功するので、「ブロック 0 件」と誤報しないよう
+/// `information_schema.INNODB_LOCK_WAITS` (5.7 / MariaDB のみ) へ回す。読めなかったときも安全側 (false)。
+pub fn perf_schema_usable(value: Option<i64>) -> bool {
+    value == Some(1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -32,5 +39,12 @@ mod tests {
         assert_eq!(count_blocked_by(&[], 1), 0);
         assert_eq!(count_blocked_by(&[(5, 6)], 1), 0);
         assert_eq!(count_blocked_by(&[(1, 1)], 1), 0);
+    }
+
+    #[test]
+    fn perf_schema_only_trusted_when_on() {
+        assert!(perf_schema_usable(Some(1)));
+        assert!(!perf_schema_usable(Some(0)));
+        assert!(!perf_schema_usable(None));
     }
 }
