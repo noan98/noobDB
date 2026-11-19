@@ -12,12 +12,7 @@
 
 import { maskLiterals } from "./dangerousSql";
 import { qualifiedTableName } from "./components/sqlDialect";
-import {
-  buildCloneStatements,
-  buildCopyRowsSql,
-  fitIdent,
-  type PgColumnFlags,
-} from "./tableClone";
+import { buildCloneStatements, buildCopyRowsSql, fitIdent, type PgColumnFlags } from "./tableClone";
 
 /** 退避の対象になる破壊的操作。 */
 export type BackupKind = "drop" | "truncate" | "deleteNoWhere";
