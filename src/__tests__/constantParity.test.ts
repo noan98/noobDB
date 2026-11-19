@@ -5,6 +5,7 @@ import deadlockRs from "../../src-tauri/src/db/deadlock.rs?raw";
 import profileRs from "../../src-tauri/src/db/profile.rs?raw";
 import flightRecorderRs from "../../src-tauri/src/flight_recorder/mod.rs?raw";
 import historyStoreRs from "../../src-tauri/src/history/store.rs?raw";
+import dbModRs from "../../src-tauri/src/db/mod.rs?raw";
 import cleanupRs from "../../src-tauri/src/profiles/cleanup.rs?raw";
 import aiRs from "../../src-tauri/src/commands/ai.rs?raw";
 import cellBlobRs from "../../src-tauri/src/commands/cell_blob.rs?raw";
@@ -30,6 +31,7 @@ import backupRs from "../../src-tauri/src/profiles/backup.rs?raw";
 import tasksRs from "../../src-tauri/src/tasks/mod.rs?raw";
 import timelapseRs from "../../src-tauri/src/timelapse/mod.rs?raw";
 import appTsx from "../App.tsx?raw";
+import connectionFormTsx from "../components/ConnectionForm.tsx?raw";
 import columnProfileTs from "../components/columnProfile.ts?raw";
 import deadlockTs from "../components/deadlock.ts?raw";
 import conversationTs from "../ai/conversation.ts?raw";
@@ -123,9 +125,18 @@ const PROFILE_RS = src("db/profile.rs", profileRs);
 const FLIGHT_RECORDER_RS = src("flight_recorder/mod.rs", flightRecorderRs);
 const HISTORY_STORE_RS = src("history/store.rs", historyStoreRs);
 const CLEANUP_RS = src("profiles/cleanup.rs", cleanupRs);
+const DB_MOD_RS = src("db/mod.rs", dbModRs);
+const CONNECTION_FORM_TSX = src("components/ConnectionForm.tsx", connectionFormTsx);
 
 /** 対応表: [TS の定数名, Rust の定数名]。名前が違うものもあるので明示する。 */
 const PAIRS: { ts: Src; rs: Src; names: [string, string][] }[] = [
+  // #2464: 放置トランザクション自動切断 (分) の上限。フォームの検証と保存・接続時の検証がズレると、
+  // フォームで通った値が保存時に弾かれる (または逆)。
+  {
+    ts: CONNECTION_FORM_TSX,
+    rs: DB_MOD_RS,
+    names: [["IDLE_IN_TX_TIMEOUT_MAX_MIN", "IDLE_IN_TX_TIMEOUT_MAX_MIN"]],
+  },
   // #2446: Rust 側のコメントでフロントとの一致を求めている定数。
   // ID の除外キーがズレると、起動時の孤立データ掃除 (sweep_orphans_once) がローカル接続 /
   // サンドボックスのデータを「存在しないプロファイルのもの」として黙って消す。

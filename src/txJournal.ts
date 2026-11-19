@@ -207,28 +207,44 @@ export function isIdleInTxTimeoutError(raw: string | null | undefined): boolean 
   return /idle-in-transaction timeout|idle_in_transaction_session_timeout|\b25P03\b/i.test(raw);
 }
 
-/** トランザクションで最後に動きがあった時刻 (epoch ms)。文を実行していなければ BEGIN した時刻。 */
+/**
+ * トランザクションで最後に成功した動きの時刻 (epoch ms)。成功した文が無ければ BEGIN の時刻。
+ * 失敗した文は数えない (接続断で失敗した文が「今動いた」ことにして推定を外さないため)。
+ */
 export function txLastActivityAt(meta: TxMeta): number {
-  const last = meta.entries[meta.entries.length - 1];
-  return last ? Math.max(meta.startedAt, last.at) : meta.startedAt;
+  for (let i = meta.entries.length - 1; i >= 0; i -= 1) {
+    const e = meta.entries[i];
+    if (e.ok) return Math.max(meta.startedAt, e.at);
+  }
+  return meta.startedAt;
 }
 
+/** `confirmed` = サーバがそう返した (エラー文)、`likely` = 設定と経過時間からの推定。 */
+export type IdleTxDisconnectKind = "confirmed" | "likely";
+
 /**
- * 接続断が「放置トランザクションの自動切断」によるものか (#2464)。エラー文が
- * idle-in-transaction timeout を示していれば確実。FATAL を読む前に接続が閉じて単なる
- * 接続断に見える場合は、接続に自動切断が設定済みで、最後の動きから設定の分数が過ぎて
- * いるときだけそう推定する (トランザクション中でなければ該当しない)。
+ * 失敗が「放置トランザクションの自動切断」によるものかを分類する (#2464)。エラー文が
+ * idle-in-transaction timeout / SQLSTATE 25P03 を示していれば `confirmed`。FATAL を読む前に接続が
+ * 閉じて単なる接続断に見える場合は、接続断 (`connectionLost`) で、接続に自動切断が設定済みで、最後の
+ * 動きから設定の分数が過ぎているときだけ `likely` と推定する (トランザクション中でなければ該当しない)。
  */
-export function isIdleTxDisconnect(args: {
+export function idleTxDisconnectKind(args: {
   error?: string | null;
   inTransaction: boolean;
+  connectionLost: boolean;
   timeoutMin: number | null | undefined;
   lastActivityAt: number | null;
   now: number;
-}): boolean {
-  if (isIdleInTxTimeoutError(args.error)) return true;
-  if (!args.inTransaction || !args.timeoutMin || args.timeoutMin <= 0 || args.lastActivityAt === null) {
-    return false;
+}): IdleTxDisconnectKind | null {
+  if (isIdleInTxTimeoutError(args.error)) return "confirmed";
+  if (
+    !args.connectionLost ||
+    !args.inTransaction ||
+    !args.timeoutMin ||
+    args.timeoutMin <= 0 ||
+    args.lastActivityAt === null
+  ) {
+    return null;
   }
-  return args.now - args.lastActivityAt >= args.timeoutMin * 60_000;
+  return args.now - args.lastActivityAt >= args.timeoutMin * 60_000 ? "likely" : null;
 }

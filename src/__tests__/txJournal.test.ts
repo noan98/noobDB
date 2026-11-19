@@ -3,7 +3,7 @@ import {
   TX_JOURNAL_MAX_ENTRIES,
   appendTxEntry,
   isIdleInTxTimeoutError,
-  isIdleTxDisconnect,
+  idleTxDisconnectKind,
   txLastActivityAt,
   newTxMeta,
   recordTxMeta,
@@ -216,38 +216,43 @@ describe("放置トランザクションの自動切断 (#2464)", () => {
         "error returned from database: terminating connection due to idle-in-transaction timeout",
       ),
     ).toBe(true);
-    expect(isIdleInTxTimeoutError("FATAL 25P03")).toBe(true);
+    // ロケールで訳された文言でも、バックエンドが付ける SQLSTATE で判定できる。
+    expect(isIdleInTxTimeoutError("トランザクション内アイドルタイムアウト (SQLSTATE 25P03)")).toBe(true);
     expect(isIdleInTxTimeoutError("connection reset by peer")).toBe(false);
     expect(isIdleInTxTimeoutError(null)).toBe(false);
     expect(isIdleInTxTimeoutError(undefined)).toBe(false);
   });
 
-  it("最後の動きは最後の文の時刻、文が無ければ BEGIN の時刻", () => {
+  it("最後の動きは最後に成功した文の時刻、無ければ BEGIN の時刻 (失敗した文は数えない)", () => {
     expect(txLastActivityAt(newTxMeta(500))).toBe(500);
-    expect(txLastActivityAt(recordTxMeta(newTxMeta(500), ok("UPDATE t SET a = 1", 1)))).toBe(1000);
+    const met = recordTxMeta(newTxMeta(500), ok("UPDATE t SET a = 1", 1));
+    expect(txLastActivityAt(met)).toBe(1000);
+    const failed = recordTxMeta(met, makeTxEntry("SELECT 1", "postgres", { ok: false }, 9_000_000));
+    expect(txLastActivityAt(failed)).toBe(1000);
   });
 
-  const base = { inTransaction: true, timeoutMin: 10, lastActivityAt: 0, now: 0 };
-  it("エラー文が自動切断を示せば、設定や経過に関係なく該当する", () => {
+  const base = { inTransaction: true, connectionLost: true, timeoutMin: 10, lastActivityAt: 0, now: 0 };
+  it("エラー文が自動切断を示せば、設定や経過に関係なく confirmed", () => {
     expect(
-      isIdleTxDisconnect({
+      idleTxDisconnectKind({
         ...base,
         timeoutMin: null,
         error: "terminating connection due to idle-in-transaction timeout",
       }),
-    ).toBe(true);
+    ).toBe("confirmed");
   });
 
-  it("接続断だけのときは、設定済みで最後の動きから設定分が過ぎていれば推定する (境界は 10 分ちょうど)", () => {
-    expect(isIdleTxDisconnect({ ...base, now: 10 * 60_000 - 1 })).toBe(false);
-    expect(isIdleTxDisconnect({ ...base, now: 10 * 60_000 })).toBe(true);
+  it("接続断だけのときは、設定済みで最後の動きから設定分が過ぎていれば likely (境界は 10 分ちょうど)", () => {
+    expect(idleTxDisconnectKind({ ...base, now: 10 * 60_000 - 1 })).toBeNull();
+    expect(idleTxDisconnectKind({ ...base, now: 10 * 60_000 })).toBe("likely");
   });
 
-  it("設定が無い・TX 中でない・時刻不明なら推定しない", () => {
+  it("設定が無い・TX 中でない・接続断でない・時刻不明なら推定しない", () => {
     const now = 99 * 60_000;
-    expect(isIdleTxDisconnect({ ...base, now, timeoutMin: null })).toBe(false);
-    expect(isIdleTxDisconnect({ ...base, now, timeoutMin: 0 })).toBe(false);
-    expect(isIdleTxDisconnect({ ...base, now, inTransaction: false })).toBe(false);
-    expect(isIdleTxDisconnect({ ...base, now, lastActivityAt: null })).toBe(false);
+    expect(idleTxDisconnectKind({ ...base, now, timeoutMin: null })).toBeNull();
+    expect(idleTxDisconnectKind({ ...base, now, timeoutMin: 0 })).toBeNull();
+    expect(idleTxDisconnectKind({ ...base, now, inTransaction: false })).toBeNull();
+    expect(idleTxDisconnectKind({ ...base, now, connectionLost: false })).toBeNull();
+    expect(idleTxDisconnectKind({ ...base, now, lastActivityAt: null })).toBeNull();
   });
 });

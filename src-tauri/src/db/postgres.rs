@@ -263,7 +263,27 @@ impl PostgresConn {
             .as_mut()
             .ok_or_else(|| AppError::InvalidInput("no active transaction".into()))?;
         let (result, messages) = capture(run_sql_on(conn, sql)).await;
-        Ok(result?.with_server_messages(messages))
+        match result {
+            Ok(r) => Ok(r.with_server_messages(messages)),
+            Err(e) => {
+                // 接続が落ちた (放置トランザクションの自動切断を含む) なら、死んだ接続を握り続けない (#2464)。
+                if e.is_connection_lost() {
+                    self.drop_dead_tx(&mut guard);
+                }
+                Err(e)
+            }
+        }
+    }
+
+    /// 保持していたトランザクション接続が死んでいたとき、ガードから外して状態を戻す (#2464)。
+    fn drop_dead_tx(&self, guard: &mut Option<sqlx::pool::PoolConnection<sqlx::Postgres>>) {
+        if let Some(conn) = guard.take() {
+            drop(conn.detach());
+        }
+        self.tx_read_only
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        self.tx_backend_id
+            .store(0, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// 保持接続のトランザクションで文を流し、`RETURNING` のように行を返す書き込み文でも
@@ -341,6 +361,11 @@ impl PostgresConn {
             if let Err(sqlx::Error::Database(db)) =
                 sqlx::query("SELECT 1").execute(&mut *conn).await
             {
+                // 放置トランザクションの自動切断 (25P03, #2464) は接続断として返す (kind = connectionLost)。
+                if db.code().as_deref() == Some("25P03") {
+                    drop(conn.detach());
+                    return Err(AppError::Sqlx(sqlx::Error::Database(db)));
+                }
                 // 25P02 以外 (例: 57014 キャンセル) でも、このまま COMMIT すると
                 // 黙って ROLLBACK 扱いになり得るので、コードを問わず ROLLBACK してエラーで返す。
                 let msg = if db.code().as_deref() == Some("25P02") {

@@ -307,7 +307,8 @@ import { ContextMenu, type ContextMenuEntry } from "./components/ContextMenu";
 import { SavepointControl } from "./components/SavepointControl";
 import { TransactionStatus, TxJournalList, forgetTxNotifications } from "./components/TransactionStatus";
 import {
-  isIdleTxDisconnect,
+  idleTxDisconnectKind,
+  type IdleTxDisconnectKind,
   newTxMeta,
   recordTxMeta,
   txLastActivityAt,
@@ -4730,6 +4731,25 @@ export default function App() {
   // 死んだセッションを完全に破棄して手動再接続 UI に倒す。自動再接続を行わない
   // (無効設定・トランザクション中・リトライ上限到達) ときの共通後始末。
   // `inTransaction` のときは「中途半端なコミットを避けて再接続しなかった」旨を示す。
+  // 放置トランザクションの自動切断 (#2464) を知らせる。確定 (サーバのエラー) と推定で文言を分ける。
+  const announceIdleTxDisconnect = useCallback(
+    (kind: IdleTxDisconnectKind, name: string) => {
+      setStatus({
+        kind: "key",
+        key: kind === "confirmed" ? "statusIdleTxDisconnected" : "statusIdleTxDisconnectedLikely",
+        error: true,
+      });
+      toast.notify({
+        message: translate(
+          kind === "confirmed" ? "toastIdleTxDisconnected" : "toastIdleTxDisconnectedLikely",
+          { name },
+        ),
+        tone: "info",
+        severity: "warning",
+      });
+    },
+    [toast],
+  );
   const tearDownLostSession = useCallback(
     async (
       profile: ConnectionProfile | null,
@@ -4738,7 +4758,7 @@ export default function App() {
         inTransaction?: boolean;
         gaveUpAfter?: number;
         /** サーバが放置トランザクションを自動切断した (#2464)。 */
-        idleTxDisconnect?: boolean;
+        idleTxDisconnect?: IdleTxDisconnectKind;
       },
     ) => {
       const lostProfileId = profile?.id ?? null;
@@ -4772,12 +4792,7 @@ export default function App() {
       setErrorProfileId(lostProfileId);
       if (opts?.idleTxDisconnect) {
         // 放置トランザクションの自動切断 (#2464): サーバがロールバック済み。TX 状態は上で破棄している。
-        setStatus({ kind: "key", key: "statusIdleTxDisconnected", error: true });
-        toast.notify({
-          message: translate("toastIdleTxDisconnected", { name: profile?.name ?? "" }),
-          tone: "info",
-          severity: "warning",
-        });
+        announceIdleTxDisconnect(opts.idleTxDisconnect, profile?.name ?? "");
       } else if (opts?.inTransaction) {
         setStatus({ kind: "key", key: "statusReconnectTx", error: true });
       } else if (opts?.gaveUpAfter != null && profile) {
@@ -4798,6 +4813,7 @@ export default function App() {
       clearEmergencyFor,
       forgetClosedTabs,
       forgetTxState,
+      announceIdleTxDisconnect,
       tabsRef,
       toast,
     ],
@@ -4924,17 +4940,18 @@ export default function App() {
       // サーバの放置トランザクション自動切断か (#2464)。エラー文、または自動切断の設定と
       // 最後の動きからの経過で判定し、該当すれば再接続せず専用の文言で知らせる。
       const txMeta = txBySessionRef.current.get(oldSessionId)?.meta;
-      if (
-        profile &&
-        isIdleTxDisconnect({
-          error,
-          inTransaction,
-          timeoutMin: profile.driver === "postgres" ? profile.idle_in_tx_timeout_min : null,
-          lastActivityAt: txMeta ? txLastActivityAt(txMeta) : null,
-          now: Date.now(),
-        })
-      ) {
-        await tearDownLostSession(profile, oldSessionId, { idleTxDisconnect: true });
+      const idleKind = profile
+        ? idleTxDisconnectKind({
+            error,
+            inTransaction,
+            connectionLost: true,
+            timeoutMin: profile.driver === "postgres" ? profile.idle_in_tx_timeout_min : null,
+            lastActivityAt: txMeta ? txLastActivityAt(txMeta) : null,
+            now: Date.now(),
+          })
+        : null;
+      if (profile && idleKind) {
+        await tearDownLostSession(profile, oldSessionId, { idleTxDisconnect: idleKind });
         return;
       }
       if (
@@ -7151,6 +7168,8 @@ export default function App() {
           txDatabaseRef.current,
           outCtx,
         );
+        // 放置トランザクションの自動切断など、TX 接続が落ちた失敗 (#2464)。TX 状態を破棄して知らせる。
+        if (errorKindOf(e) === "connectionLost") void handleConnectionLostRef.current(String(e));
       }
     },
     [
@@ -7304,8 +7323,22 @@ export default function App() {
         resetTxFor(sessionId);
         toast.success(commit ? translate("txCommitted") : translate("txRolledBack"));
       } catch (e) {
+        // 放置トランザクションの自動切断で TX 接続が落ちていた場合は、専用の文言で知らせる (#2464)。
+        const txMeta = txBySessionRef.current.get(sessionId)?.meta;
+        const idleKind = idleTxDisconnectKind({
+          error: String(e),
+          inTransaction: true,
+          connectionLost: errorKindOf(e) === "connectionLost",
+          timeoutMin: selectedProfile?.driver === "postgres" ? selectedProfile.idle_in_tx_timeout_min : null,
+          lastActivityAt: txMeta ? txLastActivityAt(txMeta) : null,
+          now: Date.now(),
+        });
         // バックエンドは失敗時もトランザクションを終了扱いにする (接続は破棄/ロールバック済み)。
         resetTxFor(sessionId);
+        if (idleKind) {
+          announceIdleTxDisconnect(idleKind, selectedProfile?.name ?? "");
+          return;
+        }
         toast.error(
           String(e).includes("25P02")
             ? translate("txAbortedRolledBack")
@@ -7313,7 +7346,7 @@ export default function App() {
         );
       }
     },
-    [sessionId, selectedProfile, confirm, toast, resetTxFor],
+    [sessionId, selectedProfile, confirm, toast, resetTxFor, announceIdleTxDisconnect],
   );
 
   // EXPLAIN タブの実行を 1 か所に集約する (#1164)。推定モードは従来どおり

@@ -303,6 +303,8 @@ impl Serialize for AppError {
 ///   ` (position n)` として末尾に足す。出力タブの「エラー位置へ移動」が使う。内部生成クエリ側の
 ///   位置 (`p`) は元の文のオフセットではないので載せない。
 ///
+/// - 放置トランザクションの自動切断 (25P03) には ` (SQLSTATE 25P03)` を付ける (#2464)。
+///
 /// - デッドロック (40P01) だけは、循環の相手と対象が DETAIL / CONTEXT にしか無いので、
 ///   `\nDETAIL: …` / `\nCONTEXT: …` を足す (#2328。`analyze_deadlock` が読む)。
 ///
@@ -338,6 +340,13 @@ pub fn sqlx_message(e: &sqlx::Error) -> String {
     } else {
         base
     };
+    // 放置トランザクションの自動切断 (25P03, #2464)。サーバのメッセージはロケールで訳されうるので、
+    // フロントが文言に頼らず判定できるよう SQLSTATE を末尾に残す。
+    let base = if pg.code() == "25P03" {
+        format!("{base} (SQLSTATE 25P03)")
+    } else {
+        base
+    };
     match pg.position() {
         Some(sqlx::postgres::PgErrorPosition::Original(n)) => format!("{base} (position {n})"),
         _ => base,
@@ -358,6 +367,56 @@ mod tests {
         assert!(!AppError::Sqlx(sqlx::Error::RowNotFound)
             .to_string()
             .contains("position"));
+    }
+
+    /// ロケールで訳されたメッセージでも、SQLSTATE 25P03 (放置トランザクションの自動切断, #2464) は
+    /// 接続断として分類する。
+    #[derive(Debug)]
+    struct FakeDbError {
+        code: &'static str,
+        msg: &'static str,
+    }
+    impl std::fmt::Display for FakeDbError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str(self.msg)
+        }
+    }
+    impl std::error::Error for FakeDbError {}
+    impl sqlx::error::DatabaseError for FakeDbError {
+        fn message(&self) -> &str {
+            self.msg
+        }
+        fn code(&self) -> Option<std::borrow::Cow<'_, str>> {
+            Some(self.code.into())
+        }
+        fn as_error(&self) -> &(dyn std::error::Error + Send + Sync + 'static) {
+            self
+        }
+        fn as_error_mut(&mut self) -> &mut (dyn std::error::Error + Send + Sync + 'static) {
+            self
+        }
+        fn into_error(self: Box<Self>) -> Box<dyn std::error::Error + Send + Sync + 'static> {
+            self
+        }
+        fn kind(&self) -> sqlx::error::ErrorKind {
+            sqlx::error::ErrorKind::Other
+        }
+    }
+
+    #[test]
+    fn idle_in_transaction_timeout_is_connection_lost_regardless_of_locale() {
+        let e = AppError::Sqlx(sqlx::Error::Database(Box::new(FakeDbError {
+            code: "25P03",
+            msg: "トランザクション内アイドルタイムアウトのため接続を終了しています",
+        })));
+        assert!(e.is_connection_lost());
+        assert_eq!(e.kind(), "connectionLost");
+        // 他の SQLSTATE の日本語メッセージは接続断にしない。
+        let other = AppError::Sqlx(sqlx::Error::Database(Box::new(FakeDbError {
+            code: "23505",
+            msg: "一意制約違反です",
+        })));
+        assert!(!other.is_connection_lost());
     }
 
     #[test]

@@ -1410,6 +1410,10 @@ const en = {
     "The connection dropped during a transaction. To avoid a partial commit it was not auto-reconnected — please reconnect and re-run the transaction.",
   statusIdleTxDisconnected:
     "The server disconnected an abandoned transaction (idle-in-transaction timeout) and rolled it back. The session was closed — please reconnect and re-run the transaction.",
+  statusIdleTxDisconnectedLikely:
+    "The connection dropped during a transaction left open past the auto-disconnect time, so the server most likely ended the abandoned transaction (idle-in-transaction timeout) and rolled it back. The session was closed — please reconnect and re-run the transaction.",
+  toastIdleTxDisconnectedLikely:
+    "{name}: the transaction was most likely disconnected by the server for being left idle, and rolled back. Reconnect and re-run it.",
   toastIdleTxDisconnected:
     "{name}: the server disconnected an abandoned transaction and rolled it back. Reconnect and re-run it.",
   statusDismiss: "Close this message",
@@ -1718,7 +1722,7 @@ const en = {
   formIdleTxLabel: "Disconnect after (minutes)",
   formIdleTxPlaceholder: "Off",
   formIdleTxHelp:
-    "Sets idle_in_transaction_session_timeout on each new connection: if a transaction is left open without running anything for this many minutes, the server ends the session and rolls it back. Leave empty to keep the server default (off by default). PostgreSQL only.",
+    "Sets idle_in_transaction_session_timeout on each new connection: if a transaction is left open without running anything for this many minutes, the server ends the session and rolls it back. Leave empty to keep the server default (off by default). PostgreSQL only. Note: with PgBouncer in transaction pooling mode, a session-level SET can leak to other clients, so do not use this option there.",
   formIdleTxInvalid: "Enter a whole number of minutes between 1 and {max}, or leave it empty.",
   formConnectionOk: "Connection OK.",
   formInvalidPort: "Enter a port number between 1 and 65535.",
@@ -10714,6 +10718,10 @@ const ja: Dict = {
     "トランザクション中に接続が切れました。中途半端なコミットを避けるため自動再接続しません。再接続してトランザクションをやり直してください。",
   statusIdleTxDisconnected:
     "放置されたトランザクションをサーバが切断しました (idle-in-transaction タイムアウト)。ロールバック済みで、セッションは閉じられました。再接続してトランザクションをやり直してください。",
+  statusIdleTxDisconnectedLikely:
+    "自動切断の時間を過ぎて開いたままだったトランザクションの途中で接続が切れました。放置によりサーバが切断し (idle-in-transaction タイムアウト)、ロールバックした可能性が高いです。セッションは閉じられました。再接続してトランザクションをやり直してください。",
+  toastIdleTxDisconnectedLikely:
+    "{name}: 放置されたトランザクションをサーバが切断し、ロールバックした可能性が高いです。再接続してやり直してください。",
   toastIdleTxDisconnected:
     "{name}: 放置されたトランザクションをサーバが切断し、ロールバックしました。再接続してやり直してください。",
   statusDismiss: "このメッセージを閉じる",
@@ -11023,7 +11031,7 @@ const ja: Dict = {
   formIdleTxLabel: "切断するまでの時間 (分)",
   formIdleTxPlaceholder: "オフ",
   formIdleTxHelp:
-    "新しい接続ごとに idle_in_transaction_session_timeout を設定します。トランザクションを開いたまま何も実行せずにこの時間が過ぎると、サーバがセッションを切断してロールバックします。空欄ならサーバの既定 (通常はオフ) のままです。PostgreSQL のみ。",
+    "新しい接続ごとに idle_in_transaction_session_timeout を設定します。トランザクションを開いたまま何も実行せずにこの時間が過ぎると、サーバがセッションを切断してロールバックします。空欄ならサーバの既定 (通常はオフ) のままです。PostgreSQL のみ。PgBouncer のトランザクションモードではセッション単位の SET が他のクライアントへ漏れるため、その構成では使わないでください。",
   formIdleTxInvalid: "1〜{max} の整数 (分) を入力するか、空欄にしてください。",
   formConnectionOk: "接続に成功しました。",
   formInvalidPort: "ポート番号は 1〜65535 の範囲で入力してください。",

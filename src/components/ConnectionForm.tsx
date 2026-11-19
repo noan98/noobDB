@@ -383,10 +383,10 @@ function isValidSsmTarget(target: string): boolean {
   return /^(?:i|mi)-[0-9a-f]{8,17}$/.test(target);
 }
 
-/** Bordered field group, spanning both columns of the form grid. */
 /** 放置トランザクション自動切断 (分) の上限 (Rust の `IDLE_IN_TX_TIMEOUT_MAX_MIN` と揃える)。 */
 const IDLE_IN_TX_TIMEOUT_MAX_MIN = 10_080;
 
+/** Bordered field group, spanning both columns of the form grid. */
 function Fieldset({ children }: { children: ReactNode }) {
   return (
     <Box
