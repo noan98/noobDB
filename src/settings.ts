@@ -183,6 +183,11 @@ export interface Settings {
    */
   columnDistribution: boolean;
   /**
+   * スキーマツリー・JSON ツリー・階層ビューのインデントのガイド線 (#2452)。選択行の祖先の枝だけ
+   * アクセント色になる。表示専用 (App.tsx が `data-tree-guides` 属性へ反映し App.css が描く)。
+   */
+  treeGuides: boolean;
+  /**
    * 結果グリッドの機微カラム表示マスキング (#1069) の ON/OFF。列名が
    * `columnMaskPatterns` に一致する列 (と列ヘッダメニューで個別に指定した列) を
    * 伏せ字で表示する。表示専用で、実値・編集バッファ・エクスポートは不変。
@@ -513,6 +518,9 @@ export const DEFAULT_RICH_CELL_RENDERING = true;
 /** Column NULL-rate mini bars are on by default; display-only like rich cells (#911). */
 export const DEFAULT_COLUMN_NULL_BARS = true;
 export const DEFAULT_COLUMN_DISTRIBUTION = true;
+
+/** Tree indent guide lines are on by default; display-only (#2452). */
+export const DEFAULT_TREE_GUIDES = true;
 
 /** 機微カラムの表示マスキング (#1069) は既定オン (受け入れ条件: 既定パターンで自動マスク)。 */
 export const DEFAULT_COLUMN_MASK_ENABLED = true;
@@ -915,6 +923,7 @@ export const DEFAULT_SETTINGS: Settings = {
   richCellRendering: DEFAULT_RICH_CELL_RENDERING,
   columnNullBars: DEFAULT_COLUMN_NULL_BARS,
   columnDistribution: DEFAULT_COLUMN_DISTRIBUTION,
+  treeGuides: DEFAULT_TREE_GUIDES,
   columnMaskEnabled: DEFAULT_COLUMN_MASK_ENABLED,
   columnMaskPatterns: [...DEFAULT_MASK_PATTERNS],
   columnMaskCopyPlaceholder: DEFAULT_COLUMN_MASK_COPY_PLACEHOLDER,
@@ -1180,6 +1189,7 @@ export function normalizeSettings(input: unknown): Settings {
     richCellRendering?: unknown;
     columnNullBars?: unknown;
     columnDistribution?: unknown;
+    treeGuides?: unknown;
     columnMaskEnabled?: unknown;
     columnMaskPatterns?: unknown;
     columnMaskCopyPlaceholder?: unknown;
@@ -1305,6 +1315,7 @@ export function normalizeSettings(input: unknown): Settings {
       typeof parsed.columnDistribution === "boolean"
         ? parsed.columnDistribution
         : DEFAULT_COLUMN_DISTRIBUTION,
+    treeGuides: typeof parsed.treeGuides === "boolean" ? parsed.treeGuides : DEFAULT_TREE_GUIDES,
     columnMaskEnabled:
       typeof parsed.columnMaskEnabled === "boolean" ? parsed.columnMaskEnabled : DEFAULT_COLUMN_MASK_ENABLED,
     columnMaskPatterns: sanitizeMaskPatterns(parsed.columnMaskPatterns, DEFAULT_MASK_PATTERNS),
@@ -1854,6 +1865,13 @@ export function setColumnNullBars(value: boolean): void {
 export function setColumnDistribution(value: boolean): void {
   if (current.columnDistribution === value) return;
   current = { ...current, columnDistribution: value };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setTreeGuides(value: boolean): void {
+  if (current.treeGuides === value) return;
+  current = { ...current, treeGuides: value };
   persist();
   listeners.forEach((cb) => cb());
 }

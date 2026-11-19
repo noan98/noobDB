@@ -38,6 +38,7 @@ const DEF_BY_KIND = new Map<RulerKind, RulerKindDef>(RULER_KINDS.map((d) => [d.k
 /** 「変更」として F8 で辿る種別 (検索ヒットは検索バーの Enter で辿るので含めない)。 */
 export const RULER_CHANGE_MASK = RULER_KINDS.filter((d) => d.kind !== "find").reduce((m, d) => m | d.bit, 0);
 
+/** @public 純ロジックを単体テストするために公開。本番の呼び出し元は無い (#2445 のトリアージで削除せず許可。不要と確認できれば削除する) */
 export function rulerKindBit(kind: RulerKind): number {
   return DEF_BY_KIND.get(kind)?.bit ?? 0;
 }

@@ -50,7 +50,7 @@ export function firstBatchRevealDelayMs(index: number): number {
   return Math.round(Math.min(index, FIRST_BATCH_REVEAL_MAX_STEPS - 1) * staggerTiming.each * 1000);
 }
 
-/** リビール全体の最大所要時間 (ms) = 最終行の遅延 + 1 行ぶんの再生時間。テスト・見積もり用。 */
+/** リビール全体の最大所要時間 (ms) = 最終行の遅延 + 1 行ぶんの再生時間。テスト・見積もり用。 @public 純ロジックを単体テストするために公開。本番の呼び出し元は無い (#2445 のトリアージで削除せず許可。不要と確認できれば削除する) */
 export function firstBatchRevealTotalMs(count: number): number {
   if (count <= 0) return 0;
   return firstBatchRevealDelayMs(count - 1) + Math.round(durations.base * 1000);

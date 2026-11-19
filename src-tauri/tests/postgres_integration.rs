@@ -5057,6 +5057,16 @@ async fn postgres_timeout_stops_statement_server_side_when_env_set() {
     common::assert_timeout_stops_statement_server_side(&opts, &postgres_stop_sql(), "pg").await;
 }
 
+/// FK カードのホバー取得をキャンセル (abort) したら、サーバの `pg_stat_activity` から文が消える (#2444)。
+#[tokio::test]
+async fn postgres_cancel_stops_statement_server_side_when_env_set() {
+    let Some(url) = common::require_env("NOOBDB_TEST_POSTGRES_URL") else {
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    common::assert_cancel_stops_statement_server_side(&opts, &postgres_stop_sql(), "pg").await;
+}
+
 /// キャンセル / タイムアウト直後に同じプールで流した別の文が、遅れて届いた停止要求で
 /// 止められない (誤 KILL の回帰防止、a32a680)。
 #[tokio::test]

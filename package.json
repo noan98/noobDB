@@ -15,6 +15,7 @@
     "bench:ui": "vitest run --config vitest.perf.config.ts",
     "lint": "biome check --max-diagnostics=none src e2e",
     "knip": "knip",
+    "knip:production": "knip --production --config knip.production.json --include exports,types,files",
     "mutants:js": "stryker run",
     "bundle-size": "node scripts/bundle-size.mjs",
     "test:scripts": "node --test 'scripts/*.test.mjs'",

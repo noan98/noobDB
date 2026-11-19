@@ -6,10 +6,7 @@ import {
   isFullScanAccess,
   normalizePlan,
   opsFromSnapshot,
-  planFingerprint,
   resultFromSnapshot,
-  rowsMagnitude,
-  snapshotFromResult,
   type PlanOp,
 } from "../components/planDiff";
 
@@ -163,7 +160,7 @@ describe("normalizePlan (sqlite)", () => {
   });
 });
 
-describe("isFullScanAccess / rowsMagnitude", () => {
+describe("isFullScanAccess", () => {
   it("recognizes full scans across dialects", () => {
     expect(isFullScanAccess("ALL")).toBe(true);
     expect(isFullScanAccess("Seq Scan")).toBe(true);
@@ -174,37 +171,6 @@ describe("isFullScanAccess / rowsMagnitude", () => {
     expect(isFullScanAccess("Index Scan")).toBe(false);
     expect(isFullScanAccess("SEARCH USING INDEX")).toBe(false);
     expect(isFullScanAccess(null)).toBe(false);
-  });
-
-  it("buckets estimates by order of magnitude", () => {
-    expect(rowsMagnitude(null)).toBeNull();
-    expect(rowsMagnitude(0)).toBe(0);
-    expect(rowsMagnitude(9)).toBe(0);
-    expect(rowsMagnitude(10)).toBe(1);
-    expect(rowsMagnitude(99_999)).toBe(4);
-  });
-});
-
-// --- フィンガープリント (dedupe) ----------------------------------------------
-
-describe("planFingerprint", () => {
-  it("is stable for the same plan and ignores cost-only fluctuations", () => {
-    const a = opsFor("mysql", mysqlResult(mysqlPlanJson({ usersRows: 100 })));
-    const b = opsFor("mysql", mysqlResult(mysqlPlanJson({ usersRows: 120 })));
-    // 100 → 120 は同じ桁なのでフィンガープリントは変わらない (世代を増やさない)。
-    expect(planFingerprint(a)).toBe(planFingerprint(b));
-  });
-
-  it("changes when the access method changes", () => {
-    const a = opsFor("mysql", mysqlResult(mysqlPlanJson()));
-    const b = opsFor("mysql", mysqlResult(mysqlPlanJson({ usersAccess: "ALL", usersKey: null })));
-    expect(planFingerprint(a)).not.toBe(planFingerprint(b));
-  });
-
-  it("changes when the row estimate jumps an order of magnitude", () => {
-    const a = opsFor("mysql", mysqlResult(mysqlPlanJson({ usersRows: 100 })));
-    const b = opsFor("mysql", mysqlResult(mysqlPlanJson({ usersRows: 100_000 })));
-    expect(planFingerprint(a)).not.toBe(planFingerprint(b));
   });
 });
 
@@ -305,39 +271,28 @@ describe("comparePlans", () => {
   });
 });
 
-// --- スナップショット直列化 ----------------------------------------------------
+// --- スナップショット復元 ------------------------------------------------------
 
-describe("snapshot round-trip", () => {
-  it("mysql/postgres: stores the raw JSON cell and restores identical ops", () => {
+describe("resultFromSnapshot", () => {
+  it("mysql/postgres: restores ops identical to the original EXPLAIN result", () => {
     const result = mysqlResult(mysqlPlanJson());
-    const snapshot = snapshotFromResult("mysql", result)!;
-    expect(snapshot.payloadKind).toBe("json");
+    const snapshot = { driver: "mysql", payloadKind: "json" as const, payload: String(result.rows[0][0]) };
     expect(opsFromSnapshot(snapshot)).toEqual(opsFor("mysql", result));
   });
 
-  it("sqlite: stores rows and restores a 4-column result", () => {
-    const result = sqliteResult([
-      [2, 0, 0, "SCAN users"],
-      [3, 2, 0, "USE TEMP B-TREE FOR ORDER BY"],
-    ]);
-    const snapshot = snapshotFromResult("sqlite", result)!;
-    expect(snapshot.payloadKind).toBe("sqliteRows");
+  it("sqlite: restores a 4-column result from stored rows", () => {
+    const snapshot = {
+      driver: "sqlite",
+      payloadKind: "sqliteRows" as const,
+      payload: JSON.stringify([
+        [2, 0, "SCAN users"],
+        [3, 2, "USE TEMP B-TREE FOR ORDER BY"],
+      ]),
+    };
     const restored = resultFromSnapshot(snapshot);
     expect(restored.rows).toEqual([
       [2, 0, 0, "SCAN users"],
       [3, 2, 0, "USE TEMP B-TREE FOR ORDER BY"],
     ]);
-    expect(opsFromSnapshot(snapshot)).toEqual(opsFor("sqlite", result));
-  });
-
-  it("returns null for an empty EXPLAIN result", () => {
-    expect(
-      snapshotFromResult("mysql", {
-        columns: [],
-        rows: [],
-        rows_affected: 0,
-        elapsed_ms: 0,
-      }),
-    ).toBeNull();
   });
 });

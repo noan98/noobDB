@@ -159,6 +159,7 @@ export interface ExplorerTableGroups {
   foreignKeys: ExplorerForeignKey[];
 }
 
+/** @public 純ロジックを単体テストするために公開。本番の呼び出し元は無い (#2445 のトリアージで削除せず許可。不要と確認できれば削除する) */
 export function tableChildGroups(
   columns: readonly TableColumnInfo[],
   indexes: readonly IndexInfo[] | undefined,

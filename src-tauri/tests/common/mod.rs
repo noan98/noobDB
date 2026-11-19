@@ -427,6 +427,49 @@ pub async fn assert_timeout_stops_statement_server_side(
     assert!(session.conn.execute("SELECT 1", None).await.is_ok());
 }
 
+/// 4. キャンセル (タスクの abort) したら、サーバ側の文が一定時間内に消える (#2444)。
+///    FK 参照先カードのホバー取得が通る経路 (`run_query_stream` の `autoRefresh` = 読み取り専用 +
+///    サーバ側停止) と同じ形: `StopGuard` + `server_stop_scope` + `read_only_scope` の中で眠る文を
+///    流し、サーバで走っていることを確かめてから `abort` し、`active_count == 0` を待つ。
+pub async fn assert_cancel_stops_statement_server_side(
+    opts: &t::DbConnectOptions,
+    sql: &StopSql,
+    tag: &str,
+) {
+    let marker = format!("noobdb_2444_{tag}_cancel");
+    let poller = t::connect(opts).await.expect("connect poller");
+    let runner = t::connect(opts).await.expect("connect runner");
+    let session = Arc::new(t::make_session("s2444", runner, opts.clone(), false));
+    let sleep_sql = (sql.sleep_30)(&marker);
+
+    let ctx = t::ServerStopCtx::new(None);
+    let task = {
+        let session = session.clone();
+        tokio::spawn(async move {
+            let _guard = t::StopGuard::new(ctx.clone(), session.clone());
+            let _ = t::read_only_scope(t::server_stop_scope(ctx, async {
+                session
+                    .conn
+                    .execute_stream(&sleep_sql, None, 10, 10, |_| Ok(()))
+                    .await
+            }))
+            .await;
+        })
+    };
+    poll_until("the hover statement appears", POLL_LIMIT, || async {
+        active_count(&poller, sql, &marker).await > 0
+    })
+    .await;
+    task.abort();
+    let _ = task.await; // abort の完了 (= StopGuard の Drop 済み) を待つ
+    poll_until(
+        "the cancelled hover statement is stopped server-side",
+        STOP_WAIT_LIMIT,
+        || async { active_count(&poller, sql, &marker).await == 0 },
+    )
+    .await;
+}
+
 /// 2. キャンセル直後に同じプールで実行した別の文が、遅れて届いた停止要求で止められない
 ///    (a32a680 の競合の回帰防止)。ストリーム経路と、ドライラン経路 (接続がトランザクションごと
 ///    プールへ戻って再利用される) の両方で、停止の直後に 2 秒の文を流して完走を確かめる。

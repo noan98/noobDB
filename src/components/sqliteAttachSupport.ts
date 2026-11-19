@@ -16,7 +16,7 @@ export type AttachedRejectedOperation =
   | "transferCreateReplace"
   | "indexWhatIf";
 
-/** 操作 → バックエンドの `what` 文言 (パリティテスト用)。 */
+/** 操作 → バックエンドの `what` 文言 (パリティテスト用)。 @public sqliteAttach テストが拒否操作の一覧を Rust と突き合わせるために公開 */
 export const ATTACHED_REJECTED_OPERATIONS: Record<AttachedRejectedOperation, string> = {
   rebuildTable: "table rebuild",
   syncApply: "sync apply",

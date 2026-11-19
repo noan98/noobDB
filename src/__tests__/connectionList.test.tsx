@@ -559,6 +559,28 @@ describe("Database Explorer の階層 (#1112)", () => {
       });
     }
 
+    it("スキーマツリーのガイド線は、フォーカス行の祖先の段だけ data-guide-accent になる (#2452)", async () => {
+      const row = await openColumnRow({});
+      // 列行を包む入れ子の枠線 (内側から外側へ)。最後の 1 つは接続の枝。
+      const branches = () => {
+        const out: HTMLElement[] = [];
+        for (let el = row.parentElement; el; el = el.parentElement) {
+          if (el.classList.contains("tree-guide-branch")) out.push(el);
+        }
+        return out.slice(0, -1);
+      };
+      expect(branches().length).toBeGreaterThanOrEqual(2);
+      // 列行自身にフォーカス: 自分の段までのすべてが祖先の枝。
+      act(() => row.focus());
+      expect(branches().every((b) => b.hasAttribute("data-guide-accent"))).toBe(true);
+      // 親のテーブル行へ移ると、列行の最も内側の段 (テーブルの子の段) は枝から外れる。
+      const table = screen.getByRole("treeitem", { name: "tbl1" });
+      act(() => table.focus());
+      const after = branches();
+      expect(after[0]).not.toHaveAttribute("data-guide-accent");
+      expect(after[after.length - 1]).toHaveAttribute("data-guide-accent");
+    });
+
     it("挿入 → 修飾名 → コピー → 区切り線 → 参照元検索の順で並び、各項目が引数つきで呼ばれる", async () => {
       const onInsertColumn = vi.fn();
       const onCopyColumnName = vi.fn();

@@ -191,6 +191,7 @@ function columnReplaceParts(
  * セル文字列 1 件へ置換を適用する (在グリッドモード用)。
  * 正規表現モードは JS の置換記法 (`$1` / `$&`)、通常モードは置換文字列を文字どおりに扱う。
  * 正規表現が不正なら null。
+ * @public 本番の buildReplacer (RegExp を 1 回だけコンパイルする版) の 1 回限りの薄いラッパー (テスト用)
  */
 export function replaceInText(
   text: string,

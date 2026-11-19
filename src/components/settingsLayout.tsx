@@ -17,10 +17,6 @@ import { Tooltip } from "./Tooltip";
  * / `.settings-help` クラスを使っているため、対応する CSS ルールは当面残している。
  */
 
-export const SettingsHelp = chakra("p", {
-  base: { margin: 0, fontSize: "sm", color: "app.textMuted" },
-});
-
 const SettingsInfoButton = chakra("button", {
   base: {
     display: "inline-flex",

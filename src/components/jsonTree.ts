@@ -405,7 +405,7 @@ export function searchJsonTree(
   return { matches, ancestors, paths, truncated };
 }
 
-/** パスを辿ってノードを取り出す (無ければ null)。 */
+/** パスを辿ってノードを取り出す (無ければ null)。 @public 純ロジックを単体テストするために公開。本番の呼び出し元は無い (#2445 のトリアージで削除せず許可。不要と確認できれば削除する) */
 export function nodeAtPath(root: JsonNode, path: readonly JsonPathSegment[]): JsonNode | null {
   let cur: JsonNode = root;
   for (const seg of path) {

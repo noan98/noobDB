@@ -1,12 +1,12 @@
-import { lazy, memo, Suspense, useCallback, useMemo, useRef, useState } from "react";
+import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Box, Flex, chakra } from "@chakra-ui/react";
-import { AnimatePresence, Reorder, useDragControls, useReducedMotionConfig } from "motion/react";
+import { AnimatePresence, motion, Reorder, useDragControls, useReducedMotionConfig } from "motion/react";
 import { open as openFileDialog, save as saveFileDialog } from "@tauri-apps/plugin-dialog";
 import { api } from "../api/tauri";
 import type { ConnectionProfile, QueryResult, TableSchema } from "../api/tauri";
 import { useT, getLocale, t as translate } from "../i18n";
 import { useSettings } from "../settings";
-import { transitions, variants } from "../motion";
+import { springs, transitions, variants } from "../motion";
 import {
   buildErrorSnapshot,
   buildSnapshot,
@@ -67,10 +67,12 @@ import { redactErrorText } from "../sqlCredentials";
 import { Callout } from "./Callout";
 import { useConfirm } from "./ConfirmDialog";
 import { EmptyState } from "./EmptyState";
-import { Icon, ICON_SIZES } from "./Icon";
+import { Icon, ICON_SIZES, type IconName } from "./Icon";
 import { ListboxSelect, type ListboxSelectOption } from "./ListboxSelect";
 import { MarkdownView } from "./MarkdownView";
 import { ErrorNote } from "./modalForm";
+import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
+import { contextMenuTriggerFromRect } from "./contextMenuKeyboard";
 import { ProductionBadge } from "./ProfileBadge";
 import { ResultViewSwitch } from "./ResultViewSwitch";
 import { SqlPreview } from "./SqlPreview";
@@ -79,6 +81,12 @@ import { useToast } from "./Toast";
 import { Tooltip } from "./Tooltip";
 import { Button, Heading, Input, Textarea } from "./ui";
 import { prefersStaticMotion } from "./revealOrigin";
+import { pulseFocusLanding } from "./focusLandingPulse";
+import { followScrollOptions, useFollowLatch } from "./notebookRunFollow";
+import { CountUpText } from "./CountUp";
+import { JobOutcome, JobPresence } from "./JobProgress";
+import { DeterminateProgressBar } from "./StreamProgressBar";
+import { progressRatio } from "../progressEta";
 
 const QueryEditor = lazy(() => import("./QueryEditor").then((m) => ({ default: m.QueryEditor })));
 const ChartView = lazy(() => import("./ChartView").then((m) => ({ default: m.ChartView })));
@@ -436,10 +444,41 @@ interface CellPin {
   sessionId: string;
 }
 
+/** 「すべて実行」が止まったセルと、そのときの進捗 (#2449)。 */
+interface RunStop {
+  cellId: string;
+  /** 実行対象の中での 1 始まりの位置。 */
+  index: number;
+  total: number;
+  /** 完了した件数 (止まったセルは含まない)。 */
+  done: number;
+  kind: "error" | "cancelled" | "connection";
+  elapsedMs: number;
+  /** 止まったときの文書の世代 (新規 / 読み込みで入れ替わったら表示しない)。 */
+  epoch: number;
+}
+
+const STOP_MESSAGE_KEY = {
+  error: "notebookStoppedFailed",
+  cancelled: "notebookStoppedCancelled",
+  connection: "notebookStoppedConnChanged",
+} as const;
+
+/** スクロール領域内で、指定セルの枠 (`data-notebook-cell-id`) を探す。 */
+function findCellSection(host: HTMLElement | null, cellId: string): HTMLElement | null {
+  if (!host) return null;
+  for (const el of host.querySelectorAll<HTMLElement>("[data-notebook-cell-id]")) {
+    if (el.dataset.notebookCellId === cellId) return el;
+  }
+  return null;
+}
+
 interface CellShellProps {
   cell: NotebookCell;
   index: number;
   count: number;
+  /** SQL セルの中での 1 始まりの位置 (= 「すべて実行」の実行順。空の SQL セル・Markdown セルは実行されないので null)。 */
+  runOrder: number | null;
   still: boolean;
   running: boolean;
   runDisabled: string | null;
@@ -471,6 +510,95 @@ interface CellShellProps {
   onAddAfter: (id: string, kind: "markdown" | "sql") => void;
 }
 
+/** SQL セルの左端レールが示す状態 (#2453)。 */
+type RailStatus = "idle" | "ok" | "error" | "stale" | "running";
+
+/** 状態の色 (意味色トークン)。色だけに頼らず、アイコンとツールチップ / aria-label も併用する。 */
+const RAIL_COLOR: Record<RailStatus, string> = {
+  idle: "app.textMuted",
+  ok: "app.textSuccess",
+  error: "app.textError",
+  stale: "app.textWarning",
+  running: "app.accent",
+};
+const RAIL_ICON: Record<Exclude<RailStatus, "running">, IconName> = {
+  idle: "clock",
+  ok: "check",
+  error: "alert-circle",
+  stale: "warning",
+};
+const RAIL_TEXT_KEY = {
+  idle: "notebookRailIdle",
+  ok: "notebookRailOk",
+  error: "notebookRailError",
+  stale: "notebookRailStale",
+  running: "notebookRailRunning",
+} as const;
+
+/**
+ * セルの下の挿入ライン。ホバーかキーボードフォーカスで細い線と「+」ボタンが現れる (#2453)。
+ * ボタンは DOM に常に置く (Tab で届く) ので、フォーカスが入ったら線を出す。出入りは `AnimatePresence` +
+ * `variants.fadeScale`。静止 (reduced-motion) では即時。
+ */
+const InsertLine = memo(function InsertLine(p: {
+  still: boolean;
+  onAdd: (kind: "markdown" | "sql") => void;
+}) {
+  const t = useT();
+  const [hot, setHot] = useState(false);
+  // ホバーできない端末 (タッチ) では出す契機が無いので常時表示する。
+  const touch = typeof window.matchMedia === "function" && window.matchMedia("(hover: none)").matches;
+  const shown = hot || touch;
+  const tr = p.still ? ({ duration: 0 } as const) : transitions.enter;
+  return (
+    <Flex
+      position="relative"
+      align="center"
+      justify="center"
+      h="7"
+      data-testid="notebook-insert-line"
+      data-hot={hot ? "" : undefined}
+      onMouseEnter={() => setHot(true)}
+      onMouseLeave={() => setHot(false)}
+      onFocus={() => setHot(true)}
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setHot(false);
+      }}
+    >
+      <AnimatePresence initial={false}>
+        {shown && (
+          <motion.div
+            key="rule"
+            aria-hidden="true"
+            className="notebook-insert-rule"
+            variants={variants.fadeScale}
+            initial="initial"
+            animate="animate"
+            exit="exit"
+            transition={tr}
+          />
+        )}
+      </AnimatePresence>
+      <motion.div
+        variants={variants.fadeScale}
+        initial={false}
+        animate={shown ? "animate" : "initial"}
+        transition={tr}
+        style={{ display: "flex", gap: "var(--space-2)", position: "relative" }}
+      >
+        <Button size="sm" variant="secondary" onClick={() => p.onAdd("sql")}>
+          <Icon name="plus" size={ICON_SIZES.sm} />
+          {t("notebookAddSql")}
+        </Button>
+        <Button size="sm" variant="secondary" onClick={() => p.onAdd("markdown")}>
+          <Icon name="plus" size={ICON_SIZES.sm} />
+          {t("notebookAddMarkdown")}
+        </Button>
+      </motion.div>
+    </Flex>
+  );
+});
+
 /** セル 1 つぶんの枠。並べ替え (`Reorder.Item`)・折りたたみ・追加/削除の出入りの動きを持つ。 */
 const CellShell = memo(function CellShell(p: CellShellProps) {
   const t = useT();
@@ -481,6 +609,23 @@ const CellShell = memo(function CellShell(p: CellShellProps) {
   const label = isSql ? t("notebookCellSql") : t("notebookCellMarkdown");
   const instant = { duration: 0 } as const;
   const summary = cell.kind === "sql" ? cell.sql.trim().split("\n")[0] : cell.text.trim().split("\n")[0];
+  // 読んでいる最中の説明セルは枠と背景を外して本文として見せる (編集中・空・折りたたみ中は枠付き)。
+  const plain = cell.kind === "markdown" && !p.editing && cell.text.trim() !== "" && !cell.collapsed;
+  const status: RailStatus | null =
+    cell.kind !== "sql"
+      ? null
+      : p.running
+        ? "running"
+        : !cell.snapshot
+          ? "idle"
+          : cell.snapshot.error
+            ? "error"
+            : snapshotFreshness(cell, p.driver).kind === "stale"
+              ? "stale"
+              : "ok";
+  const railLabel = status
+    ? t("notebookRailLabel", { n: p.runOrder ?? "–", state: t(RAIL_TEXT_KEY[status]) })
+    : "";
 
   return (
     <Reorder.Item
@@ -499,94 +644,194 @@ const CellShell = memo(function CellShell(p: CellShellProps) {
       data-testid="notebook-cell"
       data-cell-kind={cell.kind}
     >
-      <chakra.div pb="3">
+      <chakra.div>
         <chakra.section
           aria-label={`${label} ${p.index + 1}`}
+          display="flex"
           border="1px solid"
-          borderColor={writes ? semanticColorToken("warning", "border") : "app.border"}
+          borderColor={
+            plain
+              ? "transparent"
+              : p.running
+                ? "app.accent"
+                : writes
+                  ? semanticColorToken("warning", "border")
+                  : "app.border"
+          }
           borderRadius="lg"
-          bg="app.surface"
+          bg={plain ? "transparent" : "app.surface"}
+          position="relative"
+          transition="border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease)"
+          className={p.running ? "notebook-cell-running" : undefined}
+          css={{
+            // 常時出す操作 (実行 / 種別 / 接続) 以外は、ホバーとキーボードフォーカスで不透明度を上げる (#2453)。
+            // `:focus-within` を必ず含め、Tab で届いた操作が見えないまま残らないようにする。
+            "& [data-cell-hover]": {
+              opacity: 0,
+              transitionProperty: "opacity",
+              transitionDuration: "var(--dur-fast)",
+              transitionTimingFunction: "var(--ease)",
+            },
+            "&:hover [data-cell-hover], &:focus-within [data-cell-hover], &[data-tools-pinned] [data-cell-hover]":
+              { opacity: 1 },
+            "@media (hover: none)": { "& [data-cell-hover]": { opacity: 1 } },
+            // 本文として読ませる Markdown セルは、ホバー / フォーカスで左端に細いレールを出す。
+            "&[data-plain]": { borderLeftWidth: "var(--space-1)" },
+            "&[data-plain]:hover, &[data-plain]:focus-within": { borderLeftColor: "var(--accent)" },
+          }}
+          data-plain={plain ? "" : undefined}
+          data-tools-pinned={cell.collapsed ? "" : undefined}
+          data-running={p.running ? "" : undefined}
+          data-notebook-cell-id={cell.id}
+          data-focus-landing-region
         >
-          <Flex
-            align="center"
-            gap="1.5"
-            px="2"
-            py="1.5"
-            bg="app.toolbar"
-            borderBottom={cell.collapsed ? "none" : "1px solid"}
-            borderColor="app.border"
-            borderTopRadius="lg"
-          >
-            <Tooltip label={t("notebookDragHandle")}>
-              <chakra.span
-                role="img"
-                aria-label={t("notebookDragHandle")}
-                display="inline-flex"
-                cursor="grab"
-                color="app.textMuted"
-                css={{ touchAction: "none" }}
-                onPointerDown={(e) => controls.start(e)}
-              >
-                <Icon name="grip" size={ICON_SIZES.md} />
+          {isSql && status && (
+            <Flex
+              direction="column"
+              align="center"
+              gap="1"
+              px="1.5"
+              py="2"
+              minW="9"
+              bg="app.toolbar"
+              borderRight="1px solid"
+              borderRightColor="app.border"
+              borderLeft="var(--space-1) solid"
+              borderTopLeftRadius="lg"
+              borderBottomLeftRadius="lg"
+              color={RAIL_COLOR[status]}
+              transition="color var(--dur-fast) var(--ease)"
+              data-testid="notebook-cell-rail"
+              data-status={status}
+            >
+              <chakra.span textStyle="caption" color="app.textMuted" data-testid="notebook-cell-order">
+                {p.runOrder ?? "–"}
               </chakra.span>
-            </Tooltip>
-            <chakra.span textStyle="overline" color="app.textMuted">
-              {label}
-            </chakra.span>
-            {isSql && (
-              <>
-                <ListboxSelect
-                  ariaLabel={t("notebookCellConn")}
-                  disabled={p.connectionLocked}
-                  css={{ minWidth: "160px", maxWidth: "240px" }}
-                  value={cell.connection?.profileId ?? ""}
-                  options={
-                    cell.connection &&
-                    !p.connectionOptions.some((o) => o.value === cell.connection?.profileId)
-                      ? [
-                          ...p.connectionOptions,
-                          { value: cell.connection.profileId, label: cell.connection.name },
-                        ]
-                      : p.connectionOptions
-                  }
-                  onChange={(v) => p.onConnectionChange(cell.id, v)}
-                />
-                {p.targetKind !== "current" && p.profile?.is_production && <ProductionBadge />}
-              </>
-            )}
-            {writes && (
-              <Tooltip label={t("notebookWritesTip")}>
+              <Tooltip label={railLabel}>
                 <chakra.span
-                  tabIndex={0}
+                  role="img"
+                  aria-label={railLabel}
                   display="inline-flex"
-                  alignItems="center"
-                  gap="1"
-                  fontSize="xs"
-                  color="app.textWarning"
-                  data-testid="notebook-writes-badge"
+                  data-testid="notebook-cell-status"
                 >
-                  <Icon name="warning" size={ICON_SIZES.sm} />
-                  {t("notebookWritesBadge")}
+                  <AnimatePresence mode="popLayout" initial={false}>
+                    <motion.span
+                      key={status}
+                      variants={variants.fadeScale}
+                      initial="initial"
+                      animate="animate"
+                      exit="exit"
+                      transition={p.still ? instant : springs.gentle}
+                      style={{ display: "inline-flex" }}
+                    >
+                      {status === "running" ? (
+                        <Spinner size={12} />
+                      ) : (
+                        <Icon name={RAIL_ICON[status]} size={ICON_SIZES.sm} />
+                      )}
+                    </motion.span>
+                  </AnimatePresence>
                 </chakra.span>
               </Tooltip>
-            )}
-            {cell.collapsed && summary && (
-              <chakra.span
-                flex="1"
-                minW={0}
-                overflow="hidden"
-                textOverflow="ellipsis"
-                whiteSpace="nowrap"
-                color="app.textMuted"
-                fontFamily={isSql ? "mono" : undefined}
-                fontSize="sm"
-              >
-                {summary}
+            </Flex>
+          )}
+          <Flex direction="column" flex="1" minW={0}>
+            <Flex
+              align="center"
+              gap="1.5"
+              px="2"
+              py="1.5"
+              bg={plain ? "app.surface" : "app.toolbar"}
+              borderBottom={cell.collapsed || plain ? "none" : "1px solid"}
+              borderColor="app.border"
+              borderTopRightRadius="lg"
+              borderTopLeftRadius={isSql ? 0 : "lg"}
+              // 本文として読ませるときは、本文を押しのけず右上に重ねる。
+              {...(plain
+                ? {
+                    position: "absolute",
+                    top: "-3",
+                    right: "2",
+                    zIndex: 1,
+                    border: "1px solid",
+                    borderRadius: "md",
+                    boxShadow: "var(--shadow-sm)",
+                  }
+                : {})}
+              data-cell-hover={plain ? "" : undefined}
+              data-testid="notebook-cell-toolbar"
+            >
+              <span data-cell-hover="" style={{ display: "inline-flex" }}>
+                <Tooltip label={t("notebookDragHandle")}>
+                  <chakra.span
+                    role="img"
+                    aria-label={t("notebookDragHandle")}
+                    display="inline-flex"
+                    cursor="grab"
+                    color="app.textMuted"
+                    css={{ touchAction: "none" }}
+                    onPointerDown={(e) => controls.start(e)}
+                  >
+                    <Icon name="grip" size={ICON_SIZES.md} />
+                  </chakra.span>
+                </Tooltip>
+              </span>
+              <chakra.span textStyle="overline" color="app.textMuted">
+                {label}
               </chakra.span>
-            )}
-            {!cell.collapsed && <chakra.span flex="1" />}
-            {isSql && (
-              <>
+              {isSql && (
+                <>
+                  <ListboxSelect
+                    ariaLabel={t("notebookCellConn")}
+                    disabled={p.connectionLocked}
+                    css={{ minWidth: "160px", maxWidth: "240px" }}
+                    value={cell.connection?.profileId ?? ""}
+                    options={
+                      cell.connection &&
+                      !p.connectionOptions.some((o) => o.value === cell.connection?.profileId)
+                        ? [
+                            ...p.connectionOptions,
+                            { value: cell.connection.profileId, label: cell.connection.name },
+                          ]
+                        : p.connectionOptions
+                    }
+                    onChange={(v) => p.onConnectionChange(cell.id, v)}
+                  />
+                  {p.targetKind !== "current" && p.profile?.is_production && <ProductionBadge />}
+                </>
+              )}
+              {writes && (
+                <Tooltip label={t("notebookWritesTip")}>
+                  <chakra.span
+                    tabIndex={0}
+                    display="inline-flex"
+                    alignItems="center"
+                    gap="1"
+                    fontSize="xs"
+                    color="app.textWarning"
+                    data-testid="notebook-writes-badge"
+                  >
+                    <Icon name="warning" size={ICON_SIZES.sm} />
+                    {t("notebookWritesBadge")}
+                  </chakra.span>
+                </Tooltip>
+              )}
+              {cell.collapsed && summary && (
+                <chakra.span
+                  flex="1"
+                  minW={0}
+                  overflow="hidden"
+                  textOverflow="ellipsis"
+                  whiteSpace="nowrap"
+                  color="app.textMuted"
+                  fontFamily={isSql ? "mono" : undefined}
+                  fontSize="sm"
+                >
+                  {summary}
+                </chakra.span>
+              )}
+              {!cell.collapsed && <chakra.span flex="1" />}
+              {isSql && (
                 <Tooltip label={p.runDisabled ?? t("notebookRunCell")}>
                   <Button
                     size="sm"
@@ -598,169 +843,171 @@ const CellShell = memo(function CellShell(p: CellShellProps) {
                     {p.running ? <Spinner size={12} /> : <Icon name="play" size={ICON_SIZES.sm} />}
                   </Button>
                 </Tooltip>
-                <Tooltip label={p.runDisabled ?? t("notebookRunFrom")}>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    disabled={!!p.runDisabled}
-                    onClick={() => p.onRunFrom(cell.id)}
-                    aria-label={t("notebookRunFrom")}
-                  >
-                    <Icon name="play" size={ICON_SIZES.sm} />
-                    {t("notebookRunFromShort")}
-                  </Button>
-                </Tooltip>
-                <Tooltip
-                  label={
-                    p.targetKind !== "current"
-                      ? t("notebookOpenInEditorOtherConn")
-                      : t("notebookOpenInEditor")
-                  }
-                >
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    disabled={p.targetKind !== "current"}
-                    onClick={() => p.onOpenInEditor(cell.id)}
-                    aria-label={t("notebookOpenInEditor")}
-                  >
-                    <Icon name="external-link" size={ICON_SIZES.sm} />
-                  </Button>
-                </Tooltip>
-              </>
-            )}
-            {!isSql && (
-              <Button size="sm" variant="ghost" onClick={() => p.onEditing(cell.id, !p.editing)}>
-                <Icon name={p.editing ? "check" : "pencil"} size={ICON_SIZES.sm} />
-                {p.editing ? t("notebookDoneEditing") : t("notebookEdit")}
-              </Button>
-            )}
-            <Tooltip label={t("notebookMoveUp")}>
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={p.index === 0}
-                onClick={() => p.onMove(cell.id, -1)}
-                aria-label={t("notebookMoveUp")}
-              >
-                <Icon name="chevron-up" size={ICON_SIZES.sm} />
-              </Button>
-            </Tooltip>
-            <Tooltip label={t("notebookMoveDown")}>
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={p.index === p.count - 1}
-                onClick={() => p.onMove(cell.id, 1)}
-                aria-label={t("notebookMoveDown")}
-              >
-                <Icon name="chevron-down" size={ICON_SIZES.sm} />
-              </Button>
-            </Tooltip>
-            <Tooltip label={cell.collapsed ? t("notebookExpand") : t("notebookCollapse")}>
-              <Button
-                size="sm"
-                variant="ghost"
-                aria-expanded={!cell.collapsed}
-                onClick={() => p.onToggleCollapse(cell.id)}
-                aria-label={cell.collapsed ? t("notebookExpand") : t("notebookCollapse")}
-              >
-                <chakra.span
-                  display="inline-flex"
-                  transform={cell.collapsed ? "rotate(-90deg)" : "none"}
-                  transition="transform var(--dur-fast) var(--ease)"
-                >
-                  <Icon name="chevron-down" size={ICON_SIZES.sm} />
-                </chakra.span>
-              </Button>
-            </Tooltip>
-            <Tooltip label={t("notebookDelete")}>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => p.onRemove(cell.id)}
-                aria-label={t("notebookDelete")}
-              >
-                <Icon name="trash" size={ICON_SIZES.sm} />
-              </Button>
-            </Tooltip>
-          </Flex>
-          {!cell.collapsed && (
-            <Flex direction="column" gap="3" p="3">
-              {cell.kind === "sql" ? (
-                <>
-                  <Flex
-                    direction="column"
-                    h="200px"
-                    border="1px solid"
-                    borderColor="app.border"
-                    borderRadius="md"
-                    overflow="hidden"
-                  >
-                    <Suspense fallback={<Spinner size={16} />}>
-                      <QueryEditor
-                        initialSql={cell.sql}
-                        onChange={(sql) => p.onSql(cell.id, sql)}
-                        onRun={() => p.onRun(cell.id)}
-                        running={p.running}
-                        sessionId={p.sessionId}
-                        driver={p.profile?.driver ?? "mysql"}
-                        databaseSchema={p.databaseSchema}
-                        defaultDatabase={p.defaultDatabase}
-                        readOnly={p.profile?.read_only ?? false}
-                        isProduction={p.profile?.is_production ?? false}
-                        emergencyMode={p.emergencyMode}
-                      />
-                    </Suspense>
-                  </Flex>
-                  {(p.targetKind === "missing" || p.targetKind === "closed") && cell.connection && (
-                    <Callout tone="warning" role="status" data-testid="notebook-cell-conn-note">
-                      {t(p.targetKind === "missing" ? "notebookCellConnMissing" : "notebookCellConnNotOpen", {
-                        name: cell.connection.name,
-                      })}
-                    </Callout>
-                  )}
-                  <CellResult
-                    cell={cell}
-                    driver={p.profile?.driver}
-                    onRerun={p.onRun}
-                    rerunDisabled={p.runDisabled}
-                    running={p.running}
-                    onViewChange={p.onViewChange}
-                    onChartChange={p.onChartChange}
-                  />
-                </>
-              ) : p.editing || cell.text.trim() === "" ? (
-                <Textarea
-                  value={cell.text}
-                  rows={5}
-                  autoFocus={p.editing}
-                  aria-label={t("notebookCellMarkdown")}
-                  placeholder={t("notebookMarkdownPlaceholder")}
-                  onChange={(e) => p.onMarkdown(cell.id, e.target.value)}
-                  fontFamily="mono"
-                />
-              ) : (
-                <chakra.div
-                  onDoubleClick={() => p.onEditing(cell.id, true)}
-                  data-testid="notebook-markdown-view"
-                >
-                  <MarkdownView source={cell.text} />
-                </chakra.div>
               )}
+              {!isSql && (
+                <Button size="sm" variant="ghost" onClick={() => p.onEditing(cell.id, !p.editing)}>
+                  <Icon name={p.editing ? "check" : "pencil"} size={ICON_SIZES.sm} />
+                  {p.editing ? t("notebookDoneEditing") : t("notebookEdit")}
+                </Button>
+              )}
+              {/* 残りの操作 (ここから実行・エディタで開く・移動・折りたたみ・削除) はホバー / フォーカスで見せる。
+                DOM には常に置くので Tab 順と aria-label はそのまま。 */}
+              <Flex align="center" gap="1.5" data-cell-hover="" data-testid="notebook-cell-more-tools">
+                {isSql && (
+                  <>
+                    <Tooltip label={p.runDisabled ?? t("notebookRunFrom")}>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={!!p.runDisabled}
+                        onClick={() => p.onRunFrom(cell.id)}
+                        aria-label={t("notebookRunFrom")}
+                      >
+                        <Icon name="play" size={ICON_SIZES.sm} />
+                        {t("notebookRunFromShort")}
+                      </Button>
+                    </Tooltip>
+                    <Tooltip
+                      label={
+                        p.targetKind !== "current"
+                          ? t("notebookOpenInEditorOtherConn")
+                          : t("notebookOpenInEditor")
+                      }
+                    >
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={p.targetKind !== "current"}
+                        onClick={() => p.onOpenInEditor(cell.id)}
+                        aria-label={t("notebookOpenInEditor")}
+                      >
+                        <Icon name="external-link" size={ICON_SIZES.sm} />
+                      </Button>
+                    </Tooltip>
+                  </>
+                )}
+                <Tooltip label={t("notebookMoveUp")}>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={p.index === 0}
+                    onClick={() => p.onMove(cell.id, -1)}
+                    aria-label={t("notebookMoveUp")}
+                  >
+                    <Icon name="chevron-up" size={ICON_SIZES.sm} />
+                  </Button>
+                </Tooltip>
+                <Tooltip label={t("notebookMoveDown")}>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={p.index === p.count - 1}
+                    onClick={() => p.onMove(cell.id, 1)}
+                    aria-label={t("notebookMoveDown")}
+                  >
+                    <Icon name="chevron-down" size={ICON_SIZES.sm} />
+                  </Button>
+                </Tooltip>
+                <Tooltip label={cell.collapsed ? t("notebookExpand") : t("notebookCollapse")}>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    aria-expanded={!cell.collapsed}
+                    onClick={() => p.onToggleCollapse(cell.id)}
+                    aria-label={cell.collapsed ? t("notebookExpand") : t("notebookCollapse")}
+                  >
+                    <chakra.span
+                      display="inline-flex"
+                      transform={cell.collapsed ? "rotate(-90deg)" : "none"}
+                      transition="transform var(--dur-fast) var(--ease)"
+                    >
+                      <Icon name="chevron-down" size={ICON_SIZES.sm} />
+                    </chakra.span>
+                  </Button>
+                </Tooltip>
+                <Tooltip label={t("notebookDelete")}>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => p.onRemove(cell.id)}
+                    aria-label={t("notebookDelete")}
+                  >
+                    <Icon name="trash" size={ICON_SIZES.sm} />
+                  </Button>
+                </Tooltip>
+              </Flex>
             </Flex>
-          )}
+            {!cell.collapsed && (
+              <Flex direction="column" gap="3" p="3">
+                {cell.kind === "sql" ? (
+                  <>
+                    <Flex
+                      direction="column"
+                      h="200px"
+                      border="1px solid"
+                      borderColor="app.border"
+                      borderRadius="md"
+                      overflow="hidden"
+                    >
+                      <Suspense fallback={<Spinner size={16} />}>
+                        <QueryEditor
+                          initialSql={cell.sql}
+                          onChange={(sql) => p.onSql(cell.id, sql)}
+                          onRun={() => p.onRun(cell.id)}
+                          running={p.running}
+                          sessionId={p.sessionId}
+                          driver={p.profile?.driver ?? "mysql"}
+                          databaseSchema={p.databaseSchema}
+                          defaultDatabase={p.defaultDatabase}
+                          readOnly={p.profile?.read_only ?? false}
+                          isProduction={p.profile?.is_production ?? false}
+                          emergencyMode={p.emergencyMode}
+                        />
+                      </Suspense>
+                    </Flex>
+                    {(p.targetKind === "missing" || p.targetKind === "closed") && cell.connection && (
+                      <Callout tone="warning" role="status" data-testid="notebook-cell-conn-note">
+                        {t(
+                          p.targetKind === "missing" ? "notebookCellConnMissing" : "notebookCellConnNotOpen",
+                          {
+                            name: cell.connection.name,
+                          },
+                        )}
+                      </Callout>
+                    )}
+                    <CellResult
+                      cell={cell}
+                      driver={p.profile?.driver}
+                      onRerun={p.onRun}
+                      rerunDisabled={p.runDisabled}
+                      running={p.running}
+                      onViewChange={p.onViewChange}
+                      onChartChange={p.onChartChange}
+                    />
+                  </>
+                ) : p.editing || cell.text.trim() === "" ? (
+                  <Textarea
+                    value={cell.text}
+                    rows={5}
+                    autoFocus={p.editing}
+                    aria-label={t("notebookCellMarkdown")}
+                    placeholder={t("notebookMarkdownPlaceholder")}
+                    onChange={(e) => p.onMarkdown(cell.id, e.target.value)}
+                    fontFamily="mono"
+                  />
+                ) : (
+                  <chakra.div
+                    onDoubleClick={() => p.onEditing(cell.id, true)}
+                    data-testid="notebook-markdown-view"
+                  >
+                    <MarkdownView source={cell.text} />
+                  </chakra.div>
+                )}
+              </Flex>
+            )}
+          </Flex>
         </chakra.section>
-        <Flex gap="2" pt="1.5" justify="center" opacity={0.85}>
-          <Button size="sm" variant="ghost" onClick={() => p.onAddAfter(cell.id, "sql")}>
-            <Icon name="plus" size={ICON_SIZES.sm} />
-            {t("notebookAddSql")}
-          </Button>
-          <Button size="sm" variant="ghost" onClick={() => p.onAddAfter(cell.id, "markdown")}>
-            <Icon name="plus" size={ICON_SIZES.sm} />
-            {t("notebookAddMarkdown")}
-          </Button>
-        </Flex>
+        <InsertLine still={p.still} onAdd={(kind) => p.onAddAfter(cell.id, kind)} />
       </chakra.div>
     </Reorder.Item>
   );
@@ -771,12 +1018,19 @@ export function NotebookView(props: NotebookViewProps) {
   const toast = useToast();
   const { confirm, dialog } = useConfirm();
   const settings = useSettings();
-  const { doc, filePath, dirty } = useNotebookState();
+  const { doc, filePath, dirty, epoch } = useNotebookState();
   const reduced = useReducedMotionConfig() ?? false;
   const still = reduced || prefersStaticMotion();
   const [editingIds, setEditingIds] = useState<ReadonlySet<string>>(() => new Set());
   const [runningId, setRunningId] = useState<string | null>(null);
   const [runAll, setRunAll] = useState(false);
+  const moreButtonRef = useRef<HTMLButtonElement>(null);
+  const [headerMenu, setHeaderMenu] = useState<{ x: number; y: number } | null>(null);
+  // 「すべて実行」の進捗 (完了した件数 / 実行対象の件数) と、止まったセル (#2449)。
+  const [progress, setProgress] = useState({ done: 0, total: 0 });
+  const [stopped, setStopped] = useState<RunStop | null>(null);
+  const scrollHostRef = useRef<HTMLDivElement>(null);
+  const following = useFollowLatch(scrollHostRef, runAll);
   const streamRef = useRef<string | null>(null);
   const cancelRef = useRef(false);
 
@@ -845,12 +1099,12 @@ export function NotebookView(props: NotebookViewProps) {
   );
 
   /**
-   * 1 セルを実行してスナップショットを書き戻す。続けてよいなら true。
+   * 1 セルを実行してスナップショットを書き戻す。続けてよいなら "ok" (失敗は "error"、取りやめ・中止は "cancelled")。
    * 実行先は `pin` (実行開始時点に解決した接続 + セッション) に固定し、省略しない (実行中にアクティブ接続が
    * 切り替わっても別の接続で流さない)。
    */
   const runOne = useCallback(
-    async (cell: NotebookSqlCell, pin: CellPin): Promise<boolean> => {
+    async (cell: NotebookSqlCell, pin: CellPin): Promise<"ok" | "error" | "cancelled"> => {
       setRunningId(cell.id);
       const started = Date.now();
       // 別の接続で流すセルには、文書の実行先 DB (既定の接続の DB 名) を持ち込まない。接続の既定 DB へ寄せる。
@@ -868,7 +1122,7 @@ export function NotebookView(props: NotebookViewProps) {
           },
           isCancelled: () => cancelRef.current,
         });
-        if (out === null) return false;
+        if (out === null) return "cancelled";
         const source = {
           sql: cell.sql,
           connection: { profileId: pin.profile.id, name: pin.profile.name },
@@ -876,9 +1130,9 @@ export function NotebookView(props: NotebookViewProps) {
         };
         const snapshot = buildSnapshot({ ...out, error: null }, limit, maskRef.current, new Date(), source);
         patchCell(cell.id, { snapshot });
-        return true;
+        return "ok";
       } catch (e) {
-        if (e instanceof NotebookRunError && e.cancelled) return false;
+        if (e instanceof NotebookRunError && e.cancelled) return "cancelled";
         const raw = e instanceof Error ? e.message : String(e);
         // エラー文は SQL の断片を引用する。資格情報リテラル (`IDENTIFIED BY '…'` など) は、ファイルへ残す前に伏せる (#2174)。
         const message = redactErrorText(raw, cell.sql, driverOfCell);
@@ -889,7 +1143,7 @@ export function NotebookView(props: NotebookViewProps) {
             database: runDatabase,
           }),
         });
-        return false;
+        return "error";
       } finally {
         streamRef.current = null;
         setRunningId(null);
@@ -987,9 +1241,19 @@ export function NotebookView(props: NotebookViewProps) {
       if (!(await confirmConnection(pinList.find((p) => p.isDefault)?.profile ?? null))) return;
       if (!(await confirmCellConnections(pinList))) return;
       cancelRef.current = false;
+      setStopped(null);
+      setProgress({ done: 0, total: cells.length });
       setRunAll(all);
-      for (const c of cells) {
-        if (cancelRef.current) break;
+      const startedAt = Date.now();
+      // 実行中に新規 / 開くで文書が入れ替わっても、停止表示を元の文書に結び付けるため開始時に控える。
+      const startEpoch = getNotebookState().epoch;
+      let stop: Pick<RunStop, "cellId" | "index" | "kind"> | null = null;
+      for (const [i, c] of cells.entries()) {
+        setProgress({ done: i, total: cells.length });
+        if (cancelRef.current) {
+          stop = { cellId: c.id, index: i + 1, kind: "cancelled" };
+          break;
+        }
         // 実行直前の最新の SQL を使う (編集直後の実行でも取りこぼさない)。
         const latest = docRef.current.cells.find((x) => x.id === c.id);
         const pin = pins.get(c.id);
@@ -997,15 +1261,50 @@ export function NotebookView(props: NotebookViewProps) {
         // 確認した後にセルの接続が変えられていたら、確認なしでは流さず止める。
         if ((latest.connection?.profileId ?? null) !== (c.connection?.profileId ?? null)) {
           toast.error(t("notebookCellConnChanged"));
+          stop = { cellId: c.id, index: i + 1, kind: "connection" };
           break;
         }
         // 失敗・取りやめ・中止のセルで止める (後続は前のセルの結果を前提にしがち)。
-        if (!(await runOne(latest, pin))) break;
+        const outcome = await runOne(latest, pin);
+        if (outcome !== "ok") {
+          stop = { cellId: c.id, index: i + 1, kind: outcome };
+          break;
+        }
+      }
+      if (all && stop) {
+        setStopped({
+          ...stop,
+          total: cells.length,
+          done: stop.index - 1,
+          elapsedMs: Date.now() - startedAt,
+          epoch: startEpoch,
+        });
+      } else {
+        setProgress({ done: cells.length, total: cells.length });
       }
       setRunAll(false);
     },
     [busy, runOne, props.sessionId, toast],
   );
+
+  // 全実行中は実行中のセルへ追従する (手でスクロールしたら止める)。画面内なら動かさない (block: nearest)。
+  useEffect(() => {
+    if (!runAll || !runningId || !following.current) return;
+    findCellSection(scrollHostRef.current, runningId)?.scrollIntoView?.(followScrollOptions(still));
+  }, [runAll, runningId, still, following]);
+
+  // 止まったセルへは追従の有無に関わらず着地させ、外枠を 1 回光らせる (reduced-motion / hc-* は光らせない)。
+  useEffect(() => {
+    if (!stopped) return;
+    // 進捗ブロックの退場で高さが縮むので、1 フレーム待ってから位置を決める。
+    const raf = requestAnimationFrame(() => {
+      const el = findCellSection(scrollHostRef.current, stopped.cellId);
+      if (!el) return;
+      el.scrollIntoView?.(followScrollOptions(still));
+      pulseFocusLanding(el);
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [stopped, still]);
 
   const onRunCell = useCallback(
     (id: string) => {
@@ -1253,11 +1552,27 @@ export function NotebookView(props: NotebookViewProps) {
     }
   };
 
+  // 補助操作 (新規・開く・別名保存・書き出し) は 1 つのメニューにまとめる (#2453)。
+  const headerMenuItems: ContextMenuEntry[] = [
+    { label: t("notebookNew"), disabled: saving, onSelect: () => void onNew() },
+    { label: t("notebookOpen"), disabled: saving, onSelect: () => void onOpen() },
+    { label: t("notebookSaveAs"), onSelect: () => void onSave(true) },
+    { separator: true },
+    { label: t("notebookExportMd"), onSelect: () => void onExport("md") },
+    { label: t("notebookExportHtml"), onSelect: () => void onExport("html") },
+  ];
+
   const sqlCount = doc.cells.filter((c) => c.kind === "sql").length;
   const staleCount = countStaleCells(doc.cells, driverOfCell);
   const mismatch =
     doc.connection && props.profile && doc.connection.profileId !== props.profile.id ? doc.connection : null;
   const ids = doc.cells.map((c) => c.id);
+  // 実行順 (1 始まり)。「すべて実行」が流すセル (`sqlCellsToRun`、空の SQL は飛ばす) だけを 1 回の走査で数える。
+  const runOrders = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const c of sqlCellsToRun(doc.cells)) m.set(c.id, m.size + 1);
+    return m;
+  }, [doc.cells]);
 
   return (
     <Flex direction="column" flex="1" minH={0} onKeyDown={onKeyDown} data-testid="notebook-view">
@@ -1339,26 +1654,26 @@ export function NotebookView(props: NotebookViewProps) {
             }
           />
         </chakra.label>
-        <Button size="sm" variant="secondary" disabled={saving} onClick={() => void onNew()}>
-          {t("notebookNew")}
-        </Button>
-        <Button size="sm" variant="secondary" disabled={saving} onClick={() => void onOpen()}>
-          {t("notebookOpen")}
-        </Button>
         <Button size="sm" variant="secondary" onClick={() => void onSave(false)}>
           {t("notebookSave")}
         </Button>
-        <Button size="sm" variant="ghost" onClick={() => void onSave(true)}>
-          {t("notebookSaveAs")}
-        </Button>
-        <Button size="sm" variant="ghost" onClick={() => void onExport("md")}>
-          <Icon name="download" size={ICON_SIZES.sm} />
-          {t("notebookExportMd")}
-        </Button>
-        <Button size="sm" variant="ghost" onClick={() => void onExport("html")}>
-          <Icon name="download" size={ICON_SIZES.sm} />
-          {t("notebookExportHtml")}
-        </Button>
+        <Tooltip label={t("notebookMoreActions")}>
+          <Button
+            size="sm"
+            variant="ghost"
+            aria-label={t("notebookMoreActions")}
+            ref={moreButtonRef}
+            aria-haspopup="menu"
+            aria-expanded={headerMenu !== null}
+            onClick={(e) => {
+              const at = contextMenuTriggerFromRect(e.currentTarget.getBoundingClientRect());
+              setHeaderMenu({ x: at.clientX, y: at.clientY });
+            }}
+            data-testid="notebook-more-actions"
+          >
+            <Icon name="more" size={ICON_SIZES.sm} />
+          </Button>
+        </Tooltip>
         <Tooltip label={t("notebookClose")}>
           <Button
             minWidth="28px"
@@ -1372,17 +1687,58 @@ export function NotebookView(props: NotebookViewProps) {
           </Button>
         </Tooltip>
       </chakra.header>
-      <Box flex="1" minH={0} overflowY="auto" px="6" py="4">
+      <chakra.div px="6" data-testid="notebook-run-status-area">
+        <Flex direction="column" maxW="960px" mx="auto" gap="3">
+          <JobPresence show={runAll}>
+            <Flex direction="column" gap="1.5" pt="3" data-testid="notebook-run-progress">
+              <chakra.div color="app.textMuted" textStyle="caption" role="status">
+                {t("notebookRunning")}
+              </chakra.div>
+              <Flex align="center" gap="3">
+                <Box flex="1">
+                  <DeterminateProgressBar value={progressRatio(progress.done, progress.total) ?? 0} />
+                </Box>
+                <chakra.span textStyle="numeric" color="app.textMuted" data-testid="notebook-run-count">
+                  <CountUpText
+                    values={[Math.min(progress.done + 1, progress.total), progress.total]}
+                    render={([current, total]) => t("notebookRunProgress", { current, total })}
+                  />
+                </chakra.span>
+              </Flex>
+            </Flex>
+          </JobPresence>
+          {stopped && stopped.epoch === epoch && !runAll && (
+            // 停止位置は割り込まず読み上げたいので、失敗も role="status" にする。
+            <chakra.div pt="3">
+              <JobOutcome
+                kind={stopped.kind === "cancelled" ? "cancelled" : "error"}
+                role="status"
+                detail={{ done: stopped.done, total: stopped.total, elapsedMs: stopped.elapsedMs }}
+                message={t(STOP_MESSAGE_KEY[stopped.kind], {
+                  index: stopped.index,
+                  total: stopped.total,
+                  done: stopped.done,
+                })}
+                testId="notebook-run-stopped"
+              />
+            </chakra.div>
+          )}
+        </Flex>
+      </chakra.div>
+      <Box
+        ref={scrollHostRef}
+        data-testid="notebook-scroll-host"
+        flex="1"
+        minH={0}
+        overflowY="auto"
+        px="6"
+        py="4"
+      >
         <Flex direction="column" maxW="960px" mx="auto" gap="3">
           {mismatch && (
             <Callout tone="info" role="status">
               {t("notebookConnectionMismatch", { name: mismatch.name })}
             </Callout>
-          )}
-          {runAll && busy && (
-            <chakra.div color="app.textMuted" textStyle="caption" role="status">
-              {t("notebookRunning")}
-            </chakra.div>
           )}
           {doc.cells.length === 0 ? (
             <EmptyState
@@ -1415,6 +1771,7 @@ export function NotebookView(props: NotebookViewProps) {
                       cell={cell}
                       index={i}
                       count={doc.cells.length}
+                      runOrder={runOrders.get(cell.id) ?? null}
                       still={still}
                       running={runningId === cell.id}
                       runDisabled={cell.kind === "sql" ? blockReason(target) : null}
@@ -1451,6 +1808,17 @@ export function NotebookView(props: NotebookViewProps) {
           )}
         </Flex>
       </Box>
+      {headerMenu && (
+        <ContextMenu
+          x={headerMenu.x}
+          y={headerMenu.y}
+          items={headerMenuItems}
+          onClose={() => {
+            setHeaderMenu(null);
+            moreButtonRef.current?.focus();
+          }}
+        />
+      )}
       {dialog}
     </Flex>
   );

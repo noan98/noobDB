@@ -115,6 +115,7 @@ export function recordRecent(state: QuickAccessState, ref: TableRef): QuickAcces
 
 /**
  * お気に入りから 1 件除去する (純粋)。クイックアクセスセクションの★解除に使う。
+ * @public 配線漏れの疑い、要調査 (お気に入り解除が本番から呼ばれていない。単体テストでのみ検証)
  */
 export function removeFavorite(state: QuickAccessState, ref: TableRef): QuickAccessState {
   return { ...state, favorites: state.favorites.filter((f) => !tableRefEquals(f, ref)) };
@@ -123,6 +124,7 @@ export function removeFavorite(state: QuickAccessState, ref: TableRef): QuickAcc
 /**
  * もう存在しないテーブル (スキーマ変更で消えた等) をクイックアクセスから取り除く。
  * `available` は現在のスキーマに実在するテーブル参照の集合。純粋。
+ * @public 配線漏れの疑い、要調査 (テーブル一覧に無いお気に入りを掃除する処理が本番から呼ばれていない。単体テストでのみ検証)
  */
 export function pruneMissing(state: QuickAccessState, available: TableRef[]): QuickAccessState {
   const exists = (r: TableRef) => available.some((a) => tableRefEquals(a, r));

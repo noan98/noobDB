@@ -246,5 +246,6 @@ export function resolveErrorHint(err: { kind?: string | null; message: string })
  * ケースが全キーを少なくとも 1 回踏んでいるかを動的に検証するために公開する
  * (到達しない = dead なヒントの検出)。新しい PATTERNS エントリを追加すれば、この
  * 配列にも自動的に反映される。
+ * @public errorHints テストが全ヒントキーを網羅検証するために公開
  */
 export const ALL_ERROR_HINT_KEYS: I18nKey[] = PATTERNS.map((p) => p.key);

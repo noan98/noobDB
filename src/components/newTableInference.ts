@@ -216,6 +216,7 @@ export function inferColumnTypeDetail(
  * 列の値 (NULL は `null`) から型を推論する。NULL は判定に使わない。すべて NULL
  * (またはデータ行なし) なら何でも入る文字列。MySQL では真偽を文字列へ落とす
  * (`newColumnTypeOptions` の注記を参照)。根拠が要るときは {@link inferColumnTypeDetail}。
+ * @public 本番の inferColumnTypeDetail の薄いラッパー (テスト用: 型だけを比較する)
  */
 export function inferColumnType(values: readonly (string | null)[], driver: DriverKind): NewColumnType {
   return inferColumnTypeDetail(values, driver).type;

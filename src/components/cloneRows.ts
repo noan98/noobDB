@@ -18,7 +18,7 @@ export const CLONE_DEFAULT_CHILD_DEPTH = 3;
 export const CLONE_MAX_CHILD_DEPTH = 5;
 export const CLONE_DEFAULT_CHILD_LIMIT = 1000;
 export const CLONE_MAX_CHILD_LIMIT = 10_000;
-/** 複製する行数の上限 (バックエンド `db::clone_rows::MAX_CLONE_ROWS` と揃える)。 */
+/** 複製する行数の上限 (バックエンド `db::clone_rows::MAX_CLONE_ROWS` と揃える)。 @public cloneRows テストが上限境界を検証するために公開 */
 export const CLONE_MAX_ROWS = 10_000;
 
 export interface CloneInputs {

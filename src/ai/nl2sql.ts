@@ -353,7 +353,7 @@ export function buildNl2SqlSystemParts(input: Nl2SqlSystemInput): Nl2SqlSystemPa
   return { cached: lines.join("\n"), variable };
 }
 
-/** system プロンプト全体 (固定部分 + 可変部分)。分けて送れない呼び出し側向け。 */
+/** system プロンプト全体 (固定部分 + 可変部分)。分けて送れない呼び出し側向け。 @public 純ロジックを単体テストするために公開。本番の呼び出し元は無い (#2445 のトリアージで削除せず許可。不要と確認できれば削除する) */
 export function buildNl2SqlSystem(input: Nl2SqlSystemInput): string {
   const { cached, variable } = buildNl2SqlSystemParts(input);
   return variable ? `${cached}\n\n${variable}` : cached;

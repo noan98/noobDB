@@ -116,28 +116,6 @@ export function normalizePlan(root: PlanNode | null, driver: string): PlanOp[] {
   return ops;
 }
 
-/**
- * 推定行数の「桁」(log10 の床)。フィンガープリントと桁違い判定に使う。
- * null は不明 (SQLite 等)、0 以下は 0 桁として扱う。
- */
-export function rowsMagnitude(rows: number | null): number | null {
-  if (rows === null) return null;
-  if (rows <= 0) return 0;
-  return Math.floor(Math.log10(rows));
-}
-
-/**
- * 計画の同一判定に使うフィンガープリント。構造 (パス・種別) とアクセス方式・
- * インデックス・結合方式、および推定行数の**桁**のみを含める。コスト値や行数の
- * 微変動では変わらないため、「同一計画では世代を増やさない」dedupe と
- * 「桁違いの行数変化では世代が増えて検知される」性質を両立する。
- */
-export function planFingerprint(ops: PlanOp[]): string {
-  return JSON.stringify(
-    ops.map((o) => [o.path, o.kind, o.object, o.access, o.index, o.join, rowsMagnitude(o.estRows)]),
-  );
-}
-
 export type PlanChangeKind = "access" | "index" | "join" | "estRows" | "opAdded" | "opRemoved";
 
 export type PlanChangeSeverity = "info" | "warning";
@@ -315,25 +293,6 @@ export interface PlanSnapshot {
   driver: string;
   payloadKind: PlanPayloadKind;
   payload: string;
-}
-
-/**
- * EXPLAIN の QueryResult から保存用スナップショットを作る。空結果 (EXPLAIN が
- * 何も返さなかった) は null。
- */
-export function snapshotFromResult(driver: string, result: QueryResult): PlanSnapshot | null {
-  if (result.rows.length === 0) return null;
-  if (driver === "sqlite") {
-    const rows = result.rows.map((r) => [
-      Number(r[0]) || 0,
-      Number(r[1]) || 0,
-      String(r[3] ?? r[r.length - 1] ?? ""),
-    ]);
-    return { driver, payloadKind: "sqliteRows", payload: JSON.stringify(rows) };
-  }
-  const cell = result.rows[0] && result.rows[0].length > 0 ? result.rows[0][0] : null;
-  if (cell === null || cell === undefined) return null;
-  return { driver, payloadKind: "json", payload: String(cell) };
 }
 
 /**

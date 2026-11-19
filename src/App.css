@@ -2546,6 +2546,25 @@ body, #root {
 }
 :root[data-motion="reduced"] .cm-editor .cm-stmt-flash { animation: none; }
 
+/* グリッド / ツリー / スニペットから差し込んだテキストの着地点 (#2451)。一度だけ薄く光って消える。
+   reduced-motion / モーション抑制 / hc-* では JS 側で装飾自体を付けない (スクロールのみ)。
+   念のため CSS でも同じ抑制を重ねる。 */
+.cm-editor .cm-insert-flash {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  border-radius: 2px;
+  animation: cm-insert-flash-fade 0.65s var(--ease, ease) both;
+}
+@keyframes cm-insert-flash-fade {
+  from { background: color-mix(in srgb, var(--accent) 38%, transparent); }
+  to { background: color-mix(in srgb, var(--accent) 0%, transparent); }
+}
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion="full"]) .cm-editor .cm-insert-flash { animation: none; background: none; }
+}
+:root[data-motion="reduced"] .cm-editor .cm-insert-flash { animation: none; background: none; }
+:root[data-theme="hc-light"] .cm-editor .cm-insert-flash,
+:root[data-theme="hc-dark"] .cm-editor .cm-insert-flash { animation: none; background: none; }
+
 /* カーソル位置の文 (文単位実行の対象) の常時表示 (#2354)。複数文のときだけ、その文の各行に
    淡い帯と左端のバーを付ける。色は動的アクセント経由のみ (ライト/ダーク/ハイコントラストで
    テキストを妨げないよう帯は薄くする。選択範囲があるときは帯を消すので選択色と重ならない)。
@@ -3165,6 +3184,41 @@ td.is-find-current::after {
   animation: focus-landing-pulse 0.6s var(--ease-out);
 }
 
+/* ノートブックの「すべて実行」で実行中のセル (#2449)。枠の色は Chakra 側 (app.accent) で常時強調し、
+   ここでは外周リングだけを既存の `streaming-pulse` で呼吸させる (レイアウトは動かさない)。
+   reduced-motion / hc-* / forced-colors では呼吸だけ止め、強調 (枠色 + 静止リング) は残す。
+   止まったセルの着地パルス (`is-focus-landing`) は実行が終わってから付くので、::after は競合しない。 */
+.notebook-cell-running { position: relative; }
+.notebook-cell-running::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow: 0 0 0 var(--focus-ring-width) var(--focus-ring-color);
+  animation: streaming-pulse 1.2s ease-in-out infinite;
+}
+:root[data-motion="reduced"] .notebook-cell-running::after,
+:root[data-theme="hc-light"] .notebook-cell-running::after,
+:root[data-theme="hc-dark"] .notebook-cell-running::after { animation: none; }
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion="full"]) .notebook-cell-running::after { animation: none; }
+}
+@media (forced-colors: active) {
+  .notebook-cell-running::after { animation: none; }
+}
+.is-focus-landing[data-notebook-cell-id]::after { border-radius: inherit; }
+
+/* セル間の挿入ライン (#2453)。ホバー / フォーカスで現れる細い線 (出入りは motion の fadeScale)。
+   線は枠色ではなくアクセント色にして、挿入位置が分かるようにする。 */
+.notebook-insert-rule {
+  position: absolute;
+  inset-inline: 0;
+  top: 50%;
+  border-top: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  pointer-events: none;
+}
+
 /* 無効な主アクションへの Cmd/Ctrl+Enter (Modal の submitDisabled) を「拒否」で返す共有
    キーフレーム (#1831)。`components/submitRejectFeedback.ts` が `data-submit-rejected` を
    付け、animationend で外す。motion/react が `transform` をインラインで持つため、衝突しない
@@ -3225,6 +3279,98 @@ td.is-find-current::after {
 
 .tree-row-enter {
   animation: tree-row-enter var(--dur-med, 200ms) var(--ease-out, ease-out);
+}
+
+/* ツリーのインデントガイド線 (#2452)。スキーマツリー・JSON ツリー・階層ビューで共通。
+   線は疑似要素 / 既存の入れ子コンテナの枠線だけで描き、DOM を増やさない。
+   色は --border を薄めた --tree-guide、選択行へ至る祖先の枝だけ --tree-guide-accent。
+   設定「表示」で切ると (data-tree-guides="off") どちらも透明になり、字下げの幅は変わらない。
+   位置は --space-* から算出するので、表示密度とフォント拡大に追従する。 */
+:root {
+  --tree-guide: color-mix(in srgb, var(--border) 70%, transparent);
+  --tree-guide-accent: var(--accent);
+  --tree-guide-step: var(--space-4);
+  /* 行の左端 (パディングボックス) から、1 段目の線 (= 開閉 chevron の中心) までの距離。 */
+  --tree-guide-x0: calc(var(--space-1-5) * 2);
+}
+:root[data-tree-guides="off"] {
+  --tree-guide: transparent;
+  --tree-guide-accent: transparent;
+}
+/* 平らなリスト (階層ビュー) の行: --tree-level 本ぶんの線 (::before) と、先頭 --tree-accent 本だけを
+   重ねるアクセントの線 (::after)。アクセントは opacity で切り替える (背景のグラデーションは補間できない)。 */
+.tree-guide-row {
+  position: relative;
+}
+.tree-guide-row::before,
+.tree-guide-row::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--tree-guide-x0);
+  pointer-events: none;
+}
+.tree-guide-row::before {
+  width: calc(var(--tree-level, 0) * var(--tree-guide-step));
+  background-image: repeating-linear-gradient(
+    to right,
+    var(--tree-guide) 0 1px,
+    transparent 1px var(--tree-guide-step)
+  );
+}
+.tree-guide-row::after {
+  width: calc(var(--tree-accent, 0) * var(--tree-guide-step));
+  background-image: repeating-linear-gradient(
+    to right,
+    var(--tree-guide-accent) 0 1px,
+    transparent 1px var(--tree-guide-step)
+  );
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+.tree-guide-row[data-guide-accent]::after {
+  opacity: 1;
+}
+/* 入れ子のコンテナ (JSON ツリーの role="group"): 子の行の左に 1 本の縦線を、コンテナ全体の高さで引く。 */
+.tree-guide-group {
+  position: relative;
+}
+.tree-guide-group::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--space-0-5) + var(--tree-guide-x0) + var(--tree-level, 0) * var(--tree-guide-step));
+  width: 1px;
+  pointer-events: none;
+  background: var(--tree-guide);
+  transition: background-color var(--dur-fast) var(--ease);
+}
+.tree-guide-group[data-guide-accent]::before {
+  background: var(--tree-guide-accent);
+}
+/* スキーマツリーの入れ子の枠線 (TreeChildren)。 */
+.tree-guide-branch {
+  border-left-color: var(--tree-guide);
+  transition: border-color var(--dur-fast) var(--ease);
+}
+.tree-guide-branch[data-guide-accent],
+.tree-guide-branch:has(> [data-guide-selected]) {
+  border-left-color: var(--tree-guide-accent);
+}
+/* reduced-motion では色を即時に切り替える (下の Reduced motion の節と同じ 2 ブロック構成)。 */
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion="full"]) .tree-guide-row::after,
+  :root:not([data-motion="full"]) .tree-guide-group::before,
+  :root:not([data-motion="full"]) .tree-guide-branch {
+    transition: none;
+  }
+}
+:root[data-motion="reduced"] .tree-guide-row::after,
+:root[data-motion="reduced"] .tree-guide-group::before,
+:root[data-motion="reduced"] .tree-guide-branch {
+  transition: none;
 }
 
 /* ---------- Reduced motion ----------
@@ -4007,3 +4153,75 @@ td.is-find-current::after {
   :root:not([data-motion="full"]) .th-dist-bin-fill,
   :root:not([data-motion="full"]) .th-dist-seg { transition: none; }
 }
+
+/* ガターの実行ボタンと CTE 名の横の実行ウィジェット (#2450)。ガターの ▶ は帯 (#2354) の文の先頭行に出し、
+   ホバー / フォーカスで不透明度を上げる。CTE バッジは実行後の行数で、編集後は薄くする (stale)。
+   動きは reduced-motion (OS 設定 / モーション量コントロール #787) で止め、即時に切り替える。 */
+.cm-editor .cm-run-gutter .cm-gutterElement { padding: 0 var(--space-1); }
+.cm-editor .cm-run-gutter-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  opacity: 0.55;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+.cm-editor .cm-run-gutter-btn:hover,
+.cm-editor .cm-run-gutter-btn:focus-visible { opacity: 1; }
+.cm-editor .cm-run-gutter-glyph {
+  display: inline-block;
+  width: 1.1em;
+  text-align: center;
+  font-size: var(--text-2xs);
+  line-height: 1;
+}
+.cm-editor .cm-run-gutter-glyph::before { content: "\25B6\FE0E"; }
+.cm-editor .cm-cte-run {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-left: var(--space-2);
+  vertical-align: baseline;
+  font-family: var(--font-sans, inherit);
+  font-size: var(--text-3xs);
+  user-select: none;
+}
+.cm-editor .cm-cte-run-btn {
+  padding: 0 var(--space-1-5);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease);
+}
+.cm-editor .cm-cte-run-btn::after { content: " \25B6\FE0E"; }
+.cm-editor .cm-cte-run-btn:hover,
+.cm-editor .cm-cte-run-btn:focus-visible { opacity: 1; background: color-mix(in srgb, var(--accent) 20%, transparent); }
+.cm-editor .cm-cte-run-btn-disabled { color: var(--text-muted); border-color: var(--border); background: transparent; cursor: not-allowed; }
+.cm-editor .cm-cte-run-btn-disabled:hover { opacity: 0.7; background: transparent; }
+.cm-editor .cm-cte-badge {
+  padding: 0 var(--space-1-5);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--text-muted);
+  white-space: nowrap;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+.cm-editor .cm-cte-badge-stale { opacity: 0.45; }
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion="full"]) .cm-editor .cm-run-gutter-btn,
+  :root:not([data-motion="full"]) .cm-editor .cm-cte-run-btn,
+  :root:not([data-motion="full"]) .cm-editor .cm-cte-badge { transition: none; }
+}
+:root[data-motion="reduced"] .cm-editor .cm-run-gutter-btn,
+:root[data-motion="reduced"] .cm-editor .cm-cte-run-btn,
+:root[data-motion="reduced"] .cm-editor .cm-cte-badge { transition: none; }

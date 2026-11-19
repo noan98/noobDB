@@ -67,6 +67,9 @@ const RUST_ONLY: Record<string, string> = {
   "queryShapeVectors.json": "実行経路の振り分けはバックエンドのみ (#971)",
   // フィンガープリント正規化は #1259 で JS から Rust へ移管済みでフロント実装が無い。
   "sqlFingerprintVectors.json": "正規化は Rust へ移管済み (#1259)",
+  // フロントは `schemaMayChange` をバックから受け取るだけで判定を持たない。本番で使われない
+  // TS 側の `isSchemaMutatingSql` は #2445 で削除した。
+  "schemaMutatingVectors.json": "スキーマ変更検出はバックエンドのみ (#2445)",
 };
 const TS_ONLY: Record<string, string> = {
   // 結果グリッド選択範囲のコピー書式はフロントの純関数 (gridCopyFormats.ts) だけが持ち、

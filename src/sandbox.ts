@@ -24,7 +24,9 @@ export const SANDBOX_SHADOW_PREFIX = "__noobdb_sandbox_base__";
 export const SANDBOX_BAND_COLOR = "#8b5cf6";
 
 /** 合成 (非永続) プロファイルの id プレフィックス。通常のプロファイル id
- *  (8 文字スラッグ) とは絶対に衝突しない形にしてある。 */
+ *  (8 文字スラッグ) とは絶対に衝突しない形にしてある。
+ *  `profiles/cleanup.rs` の `SANDBOX_ID_PREFIX` と同じ値にする (起動時の孤立データ掃除が
+ *  この接頭辞の ID を残すための除外キー。`constantParity.test.ts` が固定)。 */
 const SANDBOX_PROFILE_ID_PREFIX = "sandbox:";
 
 /** サンドボックス id から、`ConnectionList` / タブ切替の既存機構に乗せるための
@@ -39,6 +41,7 @@ export function isSandboxProfileId(id: string): boolean {
 }
 
 /** 合成プロファイル id から元のサンドボックス id を取り出す。合成 id でなければ
+ * @public 純ロジックを単体テストするために公開。本番の呼び出し元は無い (#2445 のトリアージで削除せず許可。不要と確認できれば削除する)
  *  `null`。 */
 export function sandboxIdFromProfileId(id: string): string | null {
   return isSandboxProfileId(id) ? id.slice(SANDBOX_PROFILE_ID_PREFIX.length) : null;

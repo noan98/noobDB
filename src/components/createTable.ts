@@ -226,6 +226,7 @@ export function formatDefault(
 /**
  * フォーム定義から CREATE TABLE 文を生成する。空のテーブル名/カラム名はそのまま
  * (UI 側でバリデーション)。SQLite の `INTEGER PRIMARY KEY AUTOINCREMENT` 特殊形に対応。
+ * @public 本番の buildCreateTableStatements の薄いラッパー (テスト用: 文を改行連結して比較する)
  */
 export function buildCreateTableSql(driver: string, form: CreateTableForm): string {
   return buildCreateTableStatements(driver, form).join("\n");

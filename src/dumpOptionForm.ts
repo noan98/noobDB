@@ -130,6 +130,7 @@ export const DUMP_TOOL: Partial<Record<DriverKind, "mysqldump" | "pg_dump">> = {
  * - `pgSchema`: PostgreSQL のスキーマ入力
  * - `masks`: ネイティブ生成のマスキング (タスク画面のみ。DumpModal は持たない)
  * - `scope`: テーブル指定 (スキーマツリーから渡される DumpModal のみ)
+ * @public dumpOptionForm テストが Rust 側のオプション種別との対応を検証するために公開
  */
 export const DUMP_OPTION_KEY_KINDS = {
   singleTransaction: "toggle",

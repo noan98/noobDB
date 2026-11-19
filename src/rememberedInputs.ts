@@ -84,7 +84,7 @@ export function saveRemembered(feature: string, scope: string, value: unknown): 
   writeBucket(feature, bucket);
 }
 
-/** 1 スコープの記憶を消す。 */
+/** 1 スコープの記憶を消す。 @public 配線漏れの疑い、要調査 (入力記憶の削除が本番から呼ばれていない。単体テストでのみ検証) */
 export function forgetRemembered(feature: string, scope: string): void {
   const bucket = readBucket(feature);
   if (!(scope in bucket.entries)) return;

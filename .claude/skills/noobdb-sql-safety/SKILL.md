@@ -17,7 +17,7 @@ description: noobDB の SQL 安全網を変更するとき — 読み取り専�
    | フィクスチャ | 固定する対象 |
    |---|---|
    | `readOnlySqlVectors.json` | `is_read_only_sql` / `isReadOnlySql` |
-   | `schemaMutatingVectors.json` | `sql_may_change_schema` / `isSchemaMutatingSql` (スキーマ変更検出、#1221)。Rust `tests/schema_mutating_golden.rs` と `schemaMutatingGolden.test.ts` |
+   | `schemaMutatingVectors.json` | `sql_may_change_schema` (スキーマ変更検出、#1221)。**Rust 専用** — `tests/schema_mutating_golden.rs` のみ。TS 側の実装 `isSchemaMutatingSql` は本番から使われないため #2445 で削除した (フロントは `schemaMayChange` を受け取るだけ) |
    | `dangerousSqlVectors.json` | 危険文検出 `classify_dangerous` (Rust `db/script_analysis.rs`、スクリプト事前確認が使う) と `analyzeDangerousSql` (#1535)。Rust `tests/dangerous_sql_golden.rs` と `dangerousSqlGolden.test.ts`。1 文ずつの判定で、`kindMysql` はバックスラッシュエスケープ / `#` コメント解釈の差、`kindUnknown` はフロントだけの「ドライバ不明」の期待値。先頭の U+FEFF / U+0085・括弧で囲んだ文・CRLF・`$$`・`/*!` も固定 |
 | `maskVectors.json` | コメント/リテラルのマスク (全判定の土台) |
    | `statementSplitVectors.json` | 文境界 (`splitSqlStatements` / `isMultiStatement`、#1074) |

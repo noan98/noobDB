@@ -17,6 +17,7 @@ import {
 import { Box, Flex, chakra } from "@chakra-ui/react";
 import { AnimatePresence, motion } from "motion/react";
 import { api, ConnectionProfile, QueryResult, Snippet, TableSchema } from "../api/tauri";
+import { runPeekQuery } from "../fkPeekRun";
 import { countEditedCells, countEditedRows, type PendingEdits, type PendingInsertRow } from "./cellEdit";
 import { type BulkEditTarget } from "./bulkEdit";
 import { TabDirtyWatcher } from "../tabSqlStore";
@@ -32,6 +33,7 @@ import { showsResultSkeletonFallback } from "./resultSkeleton";
 import { Spinner } from "./Spinner";
 import type { QueryEditorHandle } from "./QueryEditor";
 import type { CteRunBlock } from "../cteRun";
+import { collectCteRuns, sameCteRuns } from "../cteRunBadge";
 import type { PreflightResult } from "./usePreflight";
 import type { ResultGridHandle } from "./ResultGrid";
 import { ResultExplainContext, type ResultViewKind } from "./ResultViewSwitch";
@@ -452,6 +454,8 @@ export const PaneView = memo(
       },
       sameTabs,
     );
+    // CTE 単体実行の直近の結果 (行数バッジ用、#2450)。全ペインのタブから集める。
+    const cteRuns = useStoreSelector(store, store.getTabs, collectCteRuns, sameCteRuns);
     // TabBar (memo) へ渡すペイン単位のコールバック。`actions` も `paneId` も不変なので参照が固定される。
     const onSelectTab = useCallback((id: string) => actions.selectTab(paneId, id), [actions, paneId]);
     const onNewTab = useCallback(() => actions.handleNewTab(paneId), [actions, paneId]);
@@ -794,6 +798,7 @@ export const PaneView = memo(
                         onCteRunBlocked={reportCteBlocked}
                         cteRunUnsupported={cteRunUnsupported}
                         cteRunLimit={cteRunLimit}
+                        cteRuns={cteRuns}
                         runNewTabCombo={shortcutBindings.runNewTab}
                         onPreview={
                           tab.kind === "explain"
@@ -1484,6 +1489,20 @@ export const PaneView = memo(
                                     sessionId
                                       ? gridStable.fn(`${tab.id}:relatedQuery`, (sql: string) =>
                                           api.runQuery(sessionId, sql, tab.database ?? null),
+                                        )
+                                      : undefined
+                                  }
+                                  onRunPeekQuery={
+                                    sessionId
+                                      ? gridStable.fn(
+                                          `${tab.id}:peekQuery`,
+                                          (sql: string, signal?: AbortSignal) =>
+                                            runPeekQuery({
+                                              sessionId,
+                                              database: tab.database ?? null,
+                                              sql,
+                                              signal,
+                                            }),
                                         )
                                       : undefined
                                   }

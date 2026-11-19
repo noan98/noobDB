@@ -28,7 +28,8 @@
   `pnpm run build` に続けて `pnpm run lint` (Biome の lint + 整形チェック =
   `biome check`。#1176 / #1636。新しい必須チェックは増やさずこのジョブ内のステップ)、
   `pnpm run bundle-size` (バンドルサイズ計測 → Job Summary。#443)、`pnpm run knip`
-  (未使用エクスポート/到達不能コード検出。#470)、さらに `pnpm exec playwright install` +
+  (未使用エクスポート/到達不能コード検出。#470)、`pnpm run knip:production`
+  (本番の入口から到達しない = テストからしか使われない export の検出。`knip.production.json`、#2445)、さらに `pnpm exec playwright install` +
   `pnpm test:browser` (Vitest ブラウザモード。#306) を順に実行します。
   バンドルサイズはカバレッジと同じく当面は閾値による fail を設けず可視化のみで、
   `dist/` の JS/CSS の gzip 後サイズを Node 標準の zlib だけで集計します
