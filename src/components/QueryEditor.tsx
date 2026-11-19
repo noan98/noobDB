@@ -257,12 +257,15 @@ function insertFlashSuppressed(): boolean {
   return reducedMotionActive() || prefersStaticMotion();
 }
 
-/** 挿入済みの範囲 (挿入後の座標) を見える位置へ寄せ、光らせる effect 群。 */
-function insertLandingEffects(from: number, length: number): StateEffect<unknown>[] {
+/**
+ * 挿入済みの範囲 (挿入後の座標) を見える位置へ寄せ、光らせる effect 群。
+ * `scroll: false` は光らせるだけ (スニペット展開のように、呼び出し側がすでに入力位置へ寄せている場合)。
+ */
+function insertLandingEffects(from: number, length: number, scroll = true): StateEffect<unknown>[] {
   const to = from + length;
-  const effects: StateEffect<unknown>[] = [
-    EditorView.scrollIntoView(EditorSelection.range(from, to), { y: "nearest" }),
-  ];
+  const effects: StateEffect<unknown>[] = scroll
+    ? [EditorView.scrollIntoView(EditorSelection.range(from, to), { y: "nearest" })]
+    : [];
   if (length > 0 && !insertFlashSuppressed()) effects.push(insertFlashEffect.of({ from, to }));
   return effects;
 }
@@ -2307,10 +2310,12 @@ export const QueryEditor = memo(
       const sel = view.state.selection.main;
       const before = view.state.doc.length;
       snippet(snippetToCodeMirrorTemplate(text))(view, null, sel.from, sel.to);
-      // 展開後の増分 + 置き換えた長さ = 挿入されたテキストの長さ。着地点を寄せて光らせる (#2451)。
+      // 展開後の増分 + 置き換えた長さ = 挿入されたテキストの長さ。光らせる (#2451)。
+      // スクロールは snippet() が最初のタブストップへ寄せているので上書きしない
+      // (範囲全体へ寄せると、長いスニペットで入力中のフィールドが画面外へ出る)。
       const len = view.state.doc.length - before + (sel.to - sel.from);
       if (len > 0) {
-        view.dispatch({ effects: insertLandingEffects(sel.from, len) });
+        view.dispatch({ effects: insertLandingEffects(sel.from, len, false) });
         clearInsertFlashLater(view);
       }
       view.focus();

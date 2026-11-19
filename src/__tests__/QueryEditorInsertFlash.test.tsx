@@ -77,6 +77,21 @@ describe("QueryEditor の挿入フラッシュ (#2451)", () => {
     expect(flashed().join("")).toBe("SELECT col");
   });
 
+  it("スニペット展開では範囲全体へスクロールし直さない (最初のタブストップへの寄せを保つ)", () => {
+    const ref = createRef<QueryEditorHandle>();
+    renderWithProviders(<QueryEditor ref={ref} onRun={() => {}} initialSql="" />);
+    const spy = vi.spyOn(EditorView, "scrollIntoView");
+    try {
+      act(() => {
+        ref.current?.insertSnippet("SELECT ${1:col}\nFROM t\nWHERE x = 1");
+      });
+      expect(flashed().join("")).toContain("SELECT col");
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it("ツリー経由 (insertAtEditorCaret) の挿入でも光る", () => {
     renderWithProviders(<QueryEditor onRun={() => {}} initialSql="SELECT  FROM t" />);
     const el = document.querySelector(".cm-editor") as HTMLElement;
