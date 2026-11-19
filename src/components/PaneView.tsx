@@ -32,6 +32,7 @@ import { showsResultSkeletonFallback } from "./resultSkeleton";
 import { Spinner } from "./Spinner";
 import type { QueryEditorHandle } from "./QueryEditor";
 import type { CteRunBlock } from "../cteRun";
+import { collectCteRuns, sameCteRuns } from "../cteRunBadge";
 import type { PreflightResult } from "./usePreflight";
 import type { ResultGridHandle } from "./ResultGrid";
 import { ResultExplainContext, type ResultViewKind } from "./ResultViewSwitch";
@@ -452,6 +453,8 @@ export const PaneView = memo(
       },
       sameTabs,
     );
+    // CTE 単体実行の直近の結果 (行数バッジ用、#2450)。全ペインのタブから集める。
+    const cteRuns = useStoreSelector(store, store.getTabs, collectCteRuns, sameCteRuns);
     // TabBar (memo) へ渡すペイン単位のコールバック。`actions` も `paneId` も不変なので参照が固定される。
     const onSelectTab = useCallback((id: string) => actions.selectTab(paneId, id), [actions, paneId]);
     const onNewTab = useCallback(() => actions.handleNewTab(paneId), [actions, paneId]);
@@ -794,6 +797,7 @@ export const PaneView = memo(
                         onCteRunBlocked={reportCteBlocked}
                         cteRunUnsupported={cteRunUnsupported}
                         cteRunLimit={cteRunLimit}
+                        cteRuns={cteRuns}
                         runNewTabCombo={shortcutBindings.runNewTab}
                         onPreview={
                           tab.kind === "explain"

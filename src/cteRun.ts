@@ -53,6 +53,18 @@ export type CteRunPlan =
   | { ok: true; sql: string; name: string; title: string; recursive: boolean; keptNames: string[] }
   | { ok: false; reason: CteRunBlock };
 
+/** 単体実行の結果タブのタイトル接頭辞。エディタの行数バッジが結果タブを CTE 名へ結び付けるのにも使う。 */
+export const CTE_TITLE_PREFIX = "CTE: ";
+
+/**
+ * 1 文 `stmt` の CTE 定義の一覧 (エディタの「CTE まで ▶」ウィジェット用)。位置は `stmt` の先頭からの相対。
+ * WITH で始まらない / 1 つも読めないときは空配列。
+ */
+export function listCteDefs(stmt: string, driver: string): CteDef[] {
+  const masked = maskLiterals(stmt, driver, { keepQuotedIdentifiers: true, cache: false });
+  return parseCteDefs(masked, driver)?.defs ?? [];
+}
+
 const IDENT_RE = /`[^`]+`|"[^"]+"|\[[^\]]+\]|[A-Za-z_]\w*/g;
 const WRITE_KW = /\b(?:INSERT|UPDATE|DELETE|MERGE)\b(?!\s*\()/i;
 /** `FOR UPDATE` / `FOR NO KEY UPDATE` はロックであってデータ変更ではない (可否は読み取り専用ガードに任せる)。 */
@@ -150,7 +162,7 @@ export function buildCteRun(opts: {
     ok: true,
     sql,
     name: target0.name,
-    title: `CTE: ${target0.name}`,
+    title: `${CTE_TITLE_PREFIX}${target0.name}`,
     recursive: isRecursive,
     keptNames: kept.map((i) => defs[i].name),
   };
