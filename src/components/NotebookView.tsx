@@ -1561,7 +1561,7 @@ export function NotebookView(props: NotebookViewProps) {
     // 保存行数はヘッダに常置せずメニューへ置く (#2469。サイドバー表示中の 1280px でヘッダを 1 行に収める)。
     // 現在値は親項目のラベルに出し、選択中の候補にはチェックを付ける。
     {
-      label: `${t("notebookRowLimit")}: ${doc.snapshotRowLimit.toLocaleString()}`,
+      label: t("notebookRowLimitValue", { limit: doc.snapshotRowLimit.toLocaleString() }),
       items: SNAPSHOT_ROW_LIMIT_CHOICES.map((n) => ({
         label: n.toLocaleString(),
         icon: n === doc.snapshotRowLimit ? ("check" as const) : undefined,
@@ -1629,17 +1629,22 @@ export function NotebookView(props: NotebookViewProps) {
             {t("notebookUnsaved")}
           </chakra.span>
         )}
-        <chakra.span flex="1" />
+        {/* 右寄せの起点は右側の先頭要素の ms="auto"。spacer を置くと余り幅が入力へ回らずタイトルが切れる (#2469)。 */}
         {staleCount > 0 && (
           <Tooltip label={t("notebookStaleCountTip")}>
-            <chakra.span color="app.textWarning" textStyle="caption" data-testid="notebook-stale-count">
+            <chakra.span
+              ms="auto"
+              color="app.textWarning"
+              textStyle="caption"
+              data-testid="notebook-stale-count"
+            >
               {t("notebookStaleCount", { count: staleCount })}
             </chakra.span>
           </Tooltip>
         )}
         {busy ? (
           <Tooltip label={props.transactionActive ? t("notebookStopInTransaction") : t("notebookStop")}>
-            <Button size="sm" variant="secondary" onClick={stop}>
+            <Button size="sm" variant="secondary" onClick={stop} ms={staleCount > 0 ? undefined : "auto"}>
               <Icon name="stop" size={ICON_SIZES.sm} />
               {t("notebookStop")}
             </Button>
@@ -1649,6 +1654,7 @@ export function NotebookView(props: NotebookViewProps) {
             <Button
               size="sm"
               variant="primary"
+              ms={staleCount > 0 ? undefined : "auto"}
               disabled={!!runDisabled || sqlCount === 0}
               onClick={() => void runCells(sqlCellsToRun(doc.cells), true)}
             >

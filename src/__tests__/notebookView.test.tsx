@@ -379,9 +379,11 @@ describe("NotebookView (#2380)", () => {
     // ヘッダには常置しない
     expect(screen.queryByRole("combobox", { name: t("notebookRowLimit") })).toBeNull();
     openHeaderMenu();
-    const parent = await screen.findByRole("menuitem", { name: `${t("notebookRowLimit")}: 200` });
+    const parent = await screen.findByRole("menuitem", {
+      name: t("notebookRowLimitValue", { limit: (200).toLocaleString() }),
+    });
     fireEvent.keyDown(parent, { key: "ArrowRight" });
-    const sub = await screen.findAllByRole("menuitem", { name: "1,000" });
+    const sub = await screen.findAllByRole("menuitem", { name: (1000).toLocaleString() });
     fireEvent.click(sub[0]);
     expect(getNotebookState().doc.snapshotRowLimit).toBe(1000);
     await act(async () => {
@@ -391,7 +393,11 @@ describe("NotebookView (#2380)", () => {
     expect(onRunSql.mock.calls[0][1]).toMatchObject({ rowCap: 1000 });
     // 再度開くと現在値が親項目に出る
     openHeaderMenu();
-    expect(await screen.findByRole("menuitem", { name: `${t("notebookRowLimit")}: 1,000` })).toBeTruthy();
+    expect(
+      await screen.findByRole("menuitem", {
+        name: t("notebookRowLimitValue", { limit: (1000).toLocaleString() }),
+      }),
+    ).toBeTruthy();
   });
 
   it("保存は .noobnb をファイルへ書き、秘密情報を含まない (マスクも掛かる)", async () => {

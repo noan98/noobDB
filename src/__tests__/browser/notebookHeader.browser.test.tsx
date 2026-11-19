@@ -3,7 +3,7 @@ import { page } from "vitest/browser";
 import { renderInBrowser } from "./render";
 import { NotebookView } from "../../components/NotebookView";
 import { makeProfile } from "../fixtures/componentFixtures";
-import { t } from "../../i18n";
+import { setLocale, t } from "../../i18n";
 import { createEmptyNotebook, newSqlCell } from "../../notebook";
 import { replaceNotebook, updateNotebook } from "../../notebookStore";
 
@@ -53,6 +53,8 @@ const centerY = (el: Element) => {
 
 describe("SQL ノートブックのヘッダ (#2469, 実ブラウザ)", () => {
   beforeEach(() => {
+    // 日本語の方が文言が長く (プレースホルダも切れやすい)、実機の主な使われ方でもあるので日本語で測る。
+    setLocale("ja");
     const d = createEmptyNotebook(null);
     d.cells = [newSqlCell("SELECT 1")];
     replaceNotebook(d, null);
@@ -92,6 +94,15 @@ describe("SQL ノートブックのヘッダ (#2469, 実ブラウザ)", () => {
     const tops = parts.map((el) => el.getBoundingClientRect().top);
     expect(Math.max(...tops) - Math.min(...tops)).toBeLessThan(header.getBoundingClientRect().height / 2);
     expect(header.getBoundingClientRect().height).toBeLessThan(parts[0].getBoundingClientRect().height * 2);
+    // タイトル入力のプレースホルダが切れない (入力が余り幅を取れている)。
+    const title = parts[0] as HTMLInputElement;
+    const probe = document.createElement("span");
+    probe.textContent = title.placeholder;
+    probe.style.cssText = `position:absolute;visibility:hidden;white-space:nowrap;font:${getComputedStyle(title).font}`;
+    document.body.appendChild(probe);
+    const need = probe.getBoundingClientRect().width;
+    probe.remove();
+    expect(title.clientWidth).toBeGreaterThanOrEqual(need);
     expect(header.scrollWidth).toBeLessThanOrEqual(header.clientWidth + 1);
   });
 });
