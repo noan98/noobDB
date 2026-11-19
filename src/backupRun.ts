@@ -144,9 +144,7 @@ export async function runBackup(api: BackupApi, req: BackupRequest): Promise<Bac
     pgColumns,
   });
   if (plan.statements.length === 0 || plan.errors.length > 0) {
-    throw new Error(
-      `cannot build a backup copy of ${table}${plan.errors.length ? `: ${plan.errors.join(" / ")}` : ""}`,
-    );
+    throw new Error(translate("backupCannotBuild", { table: actual, detail: plan.errors.join(" / ") }));
   }
   try {
     await api.runQueryTransaction(sessionId, plan.statements, database);
@@ -163,7 +161,7 @@ export async function runBackup(api: BackupApi, req: BackupRequest): Promise<Bac
       // 一覧が取れなければ残骸の有無は不明のまま (本来のエラーだけを返す)
     }
     throw new Error(
-      partial ? `${String(e)} (partial backup table "${plan.backupName}" may remain)` : String(e),
+      partial ? translate("backupPartial", { error: String(e), name: plan.backupName }) : String(e),
     );
   }
   return { backupName: plan.backupName, restoreSql: plan.restoreSql };

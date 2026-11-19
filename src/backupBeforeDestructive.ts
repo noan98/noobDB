@@ -119,9 +119,17 @@ export function buildBackupPlan(i: BackupPlanInput): BackupPlan {
     existingNames: [...(i.existingTables ?? [])],
     backup: true,
   });
+  // PostgreSQL: 行レベルセキュリティ (FORCE ROW LEVEL SECURITY など) が効いていると、INSERT ... SELECT は
+  // 見える行だけをコピーして成功し、DROP / TRUNCATE は全行を消してしまう。退避のトランザクション内だけ
+  // row_security を切る (RLS で絞られる場合は「query would be affected by row-level security policy」で
+  // 退避が失敗し、本操作は実行されない)。
+  const statements =
+    i.driver === "postgres" && clone.statements.length > 0
+      ? ["SET LOCAL row_security = off", ...clone.statements]
+      : clone.statements;
   return {
     backupName,
-    statements: clone.statements,
+    statements,
     restoreSql: buildRestoreSql(i.driver, i.database, i.table, backupName, i.kind, i.columns),
     errors: clone.errors,
   };
@@ -149,8 +157,8 @@ const DROP_RE = new RegExp(
   `^drop\\s+table\\s+(?<ie>if\\s+exists\\s+)?(?<name>${QUALIFIED})(?:\\s+(?:cascade|restrict))?$`,
   "di",
 );
-const TRUNCATE_RE = new RegExp(`^truncate(?:\\s+table)?\\s+(?:only\\s+)?(?<name>${QUALIFIED})$`, "di");
-const DELETE_RE = new RegExp(`^delete\\s+from\\s+(?:only\\s+)?(?<name>${QUALIFIED})$`, "di");
+const TRUNCATE_RE = new RegExp(`^truncate(?:\\s+table)?\\s+(?<name>${QUALIFIED})$`, "di");
+const DELETE_RE = new RegExp(`^delete\\s+from\\s+(?<name>${QUALIFIED})$`, "di");
 
 /**
  * `a.b` / `"a"."b"` / `` `a`.`b` `` の生の文字列を、クオートを外した部品の配列にする。
@@ -206,8 +214,10 @@ export function parseQualifiedName(raw: string, driver?: string): string[] | nul
  * (複数文・別名・JOIN / USING / RETURNING / LIMIT 付きの DELETE・`TRUNCATE ... CASCADE`・複数テーブルの
  * DROP は退避だけでは戻しきれないので出さない)。
  *   - `DROP TABLE [IF EXISTS] t [CASCADE | RESTRICT]`
- *   - `TRUNCATE [TABLE] [ONLY] t`
- *   - `DELETE FROM [ONLY] t` (WHERE なし)
+ *   - `TRUNCATE [TABLE] t`
+ *   - `DELETE FROM t` (WHERE なし)
+ * PostgreSQL の `ONLY` 付き (`DELETE FROM ONLY t` / `TRUNCATE ONLY t`) は対象外: 継承の子表を除く操作だが、退避の
+ * `SELECT ... FROM t` は子表の行まで含み、復元で親に重複して入るため。
  * テーブル名は、リテラル・コメントをマスクした文で構造を確かめたうえで、**元の文の同じ位置**から字句として読む
  * (`analyzeDangerousSql` の対象名はクオートの有無を失うので使わない)。パーサではなく、迷ったら null (= 出さない)。
  */

@@ -80,7 +80,9 @@ describe("buildBackupPlan", () => {
       pgColumns: { generated: [], identity: ["id"], serial: [] },
     });
     expect(p.errors).toEqual([]);
-    expect(p.statements[0]).toBe(
+    // RLS で見える行だけがコピーされないよう、最初に row_security を切る (INSERT より前)
+    expect(p.statements[0]).toBe("SET LOCAL row_security = off");
+    expect(p.statements[1]).toBe(
       `CREATE TABLE "public"."orders_bak_202611190905" (LIKE "public"."orders" INCLUDING ALL)`,
     );
     expect(
@@ -90,6 +92,17 @@ describe("buildBackupPlan", () => {
     expect(p.restoreSql).toBe(
       `INSERT INTO "public"."orders" ("id") OVERRIDING SYSTEM VALUE SELECT "id" FROM "public"."orders_bak_202611190905";`,
     );
+  });
+  it("row_security の無効化は PostgreSQL だけで、コピーより前", () => {
+    const base = { database: "d", table: "orders", kind: "truncate" as const, now: NOW, columns: ["id"] };
+    const pg = buildBackupPlan({ ...base, driver: "postgres", ddl: PG_DDL });
+    const iSet = pg.statements.indexOf("SET LOCAL row_security = off");
+    const iIns = pg.statements.findIndex((x) => x.startsWith("INSERT INTO"));
+    expect(iSet).toBe(0);
+    expect(iIns).toBeGreaterThan(iSet);
+    const my = buildBackupPlan({ ...base, driver: "mysql", ddl: MYSQL_DDL });
+    const sq = buildBackupPlan({ ...base, driver: "sqlite", ddl: SQLITE_DDL });
+    for (const x of [...my.statements, ...sq.statements]) expect(x).not.toMatch(/row_security/i);
   });
   it("PostgreSQL: serial 列は専用シーケンスで退避元と共有しない", () => {
     const p = buildBackupPlan({
@@ -261,6 +274,11 @@ describe("backupTargetFor", () => {
     expect(backupTargetFor("DELETE FROM t LIMIT 5", "mysql")).toBeNull();
     expect(backupTargetFor("DROP TABLE t; DROP TABLE u", "mysql")).toBeNull();
     expect(backupTargetFor("DROP TABLE a.b.c", "postgres")).toBeNull();
+    // PostgreSQL の ONLY (継承の子表を除く) は退避の SELECT と範囲が食い違うので対象外
+    expect(backupTargetFor("DELETE FROM ONLY parent", "postgres")).toBeNull();
+    expect(backupTargetFor("TRUNCATE ONLY parent", "postgres")).toBeNull();
+    expect(backupTargetFor("TRUNCATE TABLE ONLY parent", "postgres")).toBeNull();
+    expect(backupTargetFor("DELETE FROM parent", "postgres")?.kind).toBe("deleteNoWhere");
   });
 });
 
@@ -362,6 +380,21 @@ describe("runBackup", () => {
     const r = await runBackup(api, req);
     expect(r?.backupName).toBe("ORDERS_bak_202611190905");
     expect(calls[0][0]).toContain("`ORDERS`");
+  });
+  it("PostgreSQL: 退避は row_security を切った 1 つのトランザクションで流す (失敗なら例外 = 本操作へ進まない)", async () => {
+    const calls: string[][] = [];
+    const { api } = make({
+      listTables: async () => ["orders"],
+      runQueryTransaction: async (_s: string, stmts: string[]) => {
+        calls.push(stmts);
+        throw new Error('query would be affected by row-level security policy for table "orders"');
+      },
+    });
+    await expect(runBackup(api, { ...req, driver: "postgres", database: "public" })).rejects.toThrow(
+      /row-level security/,
+    );
+    expect(calls).toHaveLength(1);
+    expect(calls[0][0]).toBe("SET LOCAL row_security = off");
   });
   it("MySQL: Users と users が併存しても、完全一致の表を退避する", async () => {
     const { api, calls } = make({ listTables: async () => ["Users", "users"] });

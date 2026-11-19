@@ -65,6 +65,7 @@
       ],
       "checkSql": "SELECT id, parent_id, price, total, label FROM \"nb2448_backup\".\"Odd \"\"Name\"\" drop\" ORDER BY id",
       "backupStatements": [
+        "SET LOCAL row_security = off",
         "CREATE TABLE \"nb2448_backup\".\"Odd \"\"Name\"\" drop_bak_202611190905\" (LIKE \"nb2448_backup\".\"Odd \"\"Name\"\" drop\" INCLUDING ALL)",
         "INSERT INTO \"nb2448_backup\".\"Odd \"\"Name\"\" drop_bak_202611190905\" (\"id\", \"parent_id\", \"price\", \"label\") OVERRIDING SYSTEM VALUE SELECT \"id\", \"parent_id\", \"price\", \"label\" FROM \"nb2448_backup\".\"Odd \"\"Name\"\" drop\"",
         "SELECT setval(pg_get_serial_sequence('\"nb2448_backup\".\"Odd \"\"Name\"\" drop_bak_202611190905\"', 'id'), max(\"id\")) FROM \"nb2448_backup\".\"Odd \"\"Name\"\" drop_bak_202611190905\" HAVING max(\"id\") >= (SELECT seqmin FROM pg_sequence WHERE seqrelid = pg_get_serial_sequence('\"nb2448_backup\".\"Odd \"\"Name\"\" drop_bak_202611190905\"', 'id')::regclass)"
@@ -91,6 +92,7 @@
       ],
       "checkSql": "SELECT id, parent_id, price, total, label FROM \"nb2448_backup\".\"serial_drop\" ORDER BY id",
       "backupStatements": [
+        "SET LOCAL row_security = off",
         "CREATE TABLE \"nb2448_backup\".\"serial_drop_bak_202611190905\" (LIKE \"nb2448_backup\".\"serial_drop\" INCLUDING ALL)",
         "CREATE SEQUENCE \"nb2448_backup\".\"serial_drop_bak_202611190905_id_seq\" OWNED BY \"nb2448_backup\".\"serial_drop_bak_202611190905\".\"id\"",
         "ALTER TABLE \"nb2448_backup\".\"serial_drop_bak_202611190905\" ALTER COLUMN \"id\" SET DEFAULT nextval('\"nb2448_backup\".\"serial_drop_bak_202611190905_id_seq\"'::regclass)",
@@ -169,6 +171,7 @@
       ],
       "checkSql": "SELECT id, parent_id, price, total, label FROM \"nb2448_backup\".\"Odd \"\"Name\"\" truncate\" ORDER BY id",
       "backupStatements": [
+        "SET LOCAL row_security = off",
         "CREATE TABLE \"nb2448_backup\".\"Odd \"\"Name\"\" truncate_bak_202611190905\" (LIKE \"nb2448_backup\".\"Odd \"\"Name\"\" truncate\" INCLUDING ALL)",
         "INSERT INTO \"nb2448_backup\".\"Odd \"\"Name\"\" truncate_bak_202611190905\" (\"id\", \"parent_id\", \"price\", \"label\") OVERRIDING SYSTEM VALUE SELECT \"id\", \"parent_id\", \"price\", \"label\" FROM \"nb2448_backup\".\"Odd \"\"Name\"\" truncate\"",
         "SELECT setval(pg_get_serial_sequence('\"nb2448_backup\".\"Odd \"\"Name\"\" truncate_bak_202611190905\"', 'id'), max(\"id\")) FROM \"nb2448_backup\".\"Odd \"\"Name\"\" truncate_bak_202611190905\" HAVING max(\"id\") >= (SELECT seqmin FROM pg_sequence WHERE seqrelid = pg_get_serial_sequence('\"nb2448_backup\".\"Odd \"\"Name\"\" truncate_bak_202611190905\"', 'id')::regclass)"
@@ -195,6 +198,7 @@
       ],
       "checkSql": "SELECT id, parent_id, price, total, label FROM \"nb2448_backup\".\"serial_truncate\" ORDER BY id",
       "backupStatements": [
+        "SET LOCAL row_security = off",
         "CREATE TABLE \"nb2448_backup\".\"serial_truncate_bak_202611190905\" (LIKE \"nb2448_backup\".\"serial_truncate\" INCLUDING ALL)",
         "CREATE SEQUENCE \"nb2448_backup\".\"serial_truncate_bak_202611190905_id_seq\" OWNED BY \"nb2448_backup\".\"serial_truncate_bak_202611190905\".\"id\"",
         "ALTER TABLE \"nb2448_backup\".\"serial_truncate_bak_202611190905\" ALTER COLUMN \"id\" SET DEFAULT nextval('\"nb2448_backup\".\"serial_truncate_bak_202611190905_id_seq\"'::regclass)",
@@ -248,6 +252,7 @@
       ],
       "checkSql": "SELECT id, parent_id, price, total, label FROM \"nb2448_backup\".\"ああああああああああああああああああああz\" ORDER BY id",
       "backupStatements": [
+        "SET LOCAL row_security = off",
         "CREATE TABLE \"nb2448_backup\".\"あああああああああああああああ_bak_202611190905\" (LIKE \"nb2448_backup\".\"ああああああああああああああああああああz\" INCLUDING ALL)",
         "INSERT INTO \"nb2448_backup\".\"あああああああああああああああ_bak_202611190905\" (\"id\", \"parent_id\", \"price\", \"label\") OVERRIDING SYSTEM VALUE SELECT \"id\", \"parent_id\", \"price\", \"label\" FROM \"nb2448_backup\".\"ああああああああああああああああああああz\"",
         "SELECT setval(pg_get_serial_sequence('\"nb2448_backup\".\"あああああああああああああああ_bak_202611190905\"', 'id'), max(\"id\")) FROM \"nb2448_backup\".\"あああああああああああああああ_bak_202611190905\" HAVING max(\"id\") >= (SELECT seqmin FROM pg_sequence WHERE seqrelid = pg_get_serial_sequence('\"nb2448_backup\".\"あああああああああああああああ_bak_202611190905\"', 'id')::regclass)"
