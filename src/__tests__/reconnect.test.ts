@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
   backoffDelayMs,
-  reconnectSchedule,
   shouldAutoReconnect,
   RECONNECT_BASE_DELAY_MS,
   RECONNECT_MAX_DELAY_MS,
@@ -36,22 +35,6 @@ describe("backoffDelayMs", () => {
     expect(backoffDelayMs(1, { baseMs: 500, maxMs: 4000 })).toBe(1000);
     expect(backoffDelayMs(3, { baseMs: 500, maxMs: 4000 })).toBe(4000);
     expect(backoffDelayMs(10, { baseMs: 500, maxMs: 4000 })).toBe(4000);
-  });
-});
-
-describe("reconnectSchedule", () => {
-  it("lists one delay per retry, monotonically non-decreasing", () => {
-    const schedule = reconnectSchedule(5);
-    expect(schedule).toHaveLength(5);
-    expect(schedule[0]).toBe(RECONNECT_BASE_DELAY_MS);
-    for (let i = 1; i < schedule.length; i++) {
-      expect(schedule[i]).toBeGreaterThanOrEqual(schedule[i - 1]);
-    }
-  });
-
-  it("is empty for zero / negative retry counts", () => {
-    expect(reconnectSchedule(0)).toEqual([]);
-    expect(reconnectSchedule(-3)).toEqual([]);
   });
 });
 

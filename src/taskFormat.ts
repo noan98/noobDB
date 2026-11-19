@@ -94,11 +94,6 @@ export function utcToLocalClock(hour: number, minute: number, at: Date, timeZone
   return shiftClock(hour, minute, tzOffsetMinutes(at, timeZone));
 }
 
-/** 入力 (ローカルの時・分) → 保存形式 (UTC の時・分)。`utcToLocalClock` の逆変換。 @public 配線漏れの疑い、要調査 (utcToLocalClock の逆変換。本番の保存経路から呼ばれていない。単体テストでのみ検証) */
-export function localToUtcClock(hour: number, minute: number, at: Date, timeZone?: string): ClockTime {
-  return shiftClock(hour, minute, -tzOffsetMinutes(at, timeZone));
-}
-
 /** タイムゾーンの短い表記 ("JST" / "GMT+9" / "EDT")。取れなければ "UTC±hh:mm"。 */
 export function timeZoneLabel(at: Date, locale?: string, timeZone?: string): string {
   try {
