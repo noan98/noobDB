@@ -5439,16 +5439,19 @@ export default function App() {
       const sid = override?.sessionId ?? sessionId;
       if (!sid) {
         setStatus({ kind: "key", key: "statusNotConnected", error: true });
+        override?.onSettled?.(false);
         return;
       }
       // 自動再接続中は接続が無効。キューイングはせず明示的に弾く (#600)。
       if (connectionStatusRef.current === "reconnecting") {
         setStatus({ kind: "key", key: "statusReconnectBusy", error: true });
+        override?.onSettled?.(false);
         return;
       }
       // バッチ実行中のタブで単文を始めると、cancelStreamForTab がバッチを黙って取り消してしまう。
       if ((override?.tab ?? tabsRef.current.find((tt) => tt.id === tabId))?.batchRunning) {
         setStatus({ kind: "key", key: "statusBatchBusy", error: true });
+        override?.onSettled?.(false);
         return;
       }
       // 未適用の変更があれば、結果を置き換える前に確認する (#2234)。自動リフレッシュは
@@ -7517,6 +7520,15 @@ export default function App() {
     }
     return makeBackupGate(backupResolved.database, [bt.table], bt.kind, { missingOk: bt.ifExists });
   }, [pendingDangerous, backupResolved]);
+
+  // 退避先の特定中は「実行」を止める (特定前に実行すると、既定オンの退避が作られないまま本操作に進んでしまう)。
+  const backupState: "resolving" | "unavailable" | null = !pendingDangerous?.backupTarget
+    ? null
+    : backupResolved?.owner !== pendingDangerous
+      ? "resolving"
+      : dangerousBackup
+        ? null
+        : "unavailable";
 
   const handleConfirmDangerous = useCallback(() => {
     if (!pendingDangerous) return;
@@ -17056,6 +17068,7 @@ export default function App() {
                 writeApproval={pendingDangerous.writeApproval}
                 typedConfirmTarget={pendingDangerous.typedConfirmTarget}
                 backup={dangerousBackup}
+                backupState={backupState}
                 impact={pendingDangerous.impact}
                 rowPreview={
                   pendingDangerous.rowPreview && pendingDangerous.impact && sessionId

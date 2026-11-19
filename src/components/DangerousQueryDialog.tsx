@@ -87,6 +87,11 @@ interface Props {
    * エラー文字列を返す (ダイアログは閉じず `ErrorNote` に出し、本操作は実行しない)。
    */
   backup?: { node: ReactNode; beforeConfirm: () => Promise<string | null> } | null;
+  /**
+   * 退避の対象になりうる文で、退避先を特定している間 (`resolving`) は「実行」を無効にして確認中と出す。
+   * 特定できなかった (`unavailable`) ときは「この文では退避できません」と一行出す。それ以外は null。
+   */
+  backupState?: "resolving" | "unavailable" | null;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -120,6 +125,7 @@ export function DangerousQueryDialog({
   fkImpact,
   rowPreview,
   backup,
+  backupState,
   onConfirm: onConfirmDone,
   onCancel: onCancelRaw,
 }: Props) {
@@ -365,6 +371,16 @@ export function DangerousQueryDialog({
           />
         )}
         {backup?.node}
+        {backupState === "resolving" && (
+          <Callout tone="info" role="status" data-testid="dangerous-backup-resolving">
+            {t("backupResolving")}
+          </Callout>
+        )}
+        {backupState === "unavailable" && (
+          <chakra.span textStyle="caption" data-testid="dangerous-backup-unavailable">
+            {t("backupUnavailable")}
+          </chakra.span>
+        )}
         {backupError && <ErrorNote>{backupError}</ErrorNote>}
         {requiresTyped && (
           <chakra.div display="flex" flexDirection="column" gap="1.5">
@@ -396,7 +412,7 @@ export function DangerousQueryDialog({
           type="button"
           variant="dangerOutline"
           onClick={() => void onConfirm()}
-          disabled={(requiresTyped && !typedMatches) || backupBusy}
+          disabled={(requiresTyped && !typedMatches) || backupBusy || backupState === "resolving"}
         >
           {backupBusy ? t("backupRunning") : t("dangerousConfirm")}
         </Button>

@@ -61,8 +61,9 @@ export async function resolveBackupDatabase(
     profileDatabase: string | null;
   },
 ): Promise<string | null> {
-  if (req.explicit) return req.explicit;
   const { sessionId, driver, table } = req;
+  // SQLite の temp テーブルは接続ごとで、別接続の退避からは見えない (退避しない)。
+  if (req.explicit) return driver === "sqlite" && req.explicit.toLowerCase() === "temp" ? null : req.explicit;
   if (driver === "mysql") return req.tabDatabase ?? req.profileDatabase ?? null;
   if (driver === "postgres") {
     const rel = quoteIdentFor("postgres", table).replace(/'/g, "''");
@@ -76,11 +77,27 @@ export async function resolveBackupDatabase(
     const first = (res.rows as unknown[][])[0]?.[0];
     return typeof first === "string" && first.length > 0 ? first : null;
   }
-  for (const db of [req.tabDatabase, "main"]) {
-    if (!db) continue;
-    const tables = await api.listTables(sessionId, db);
-    if (tables.some((t) => t.toLowerCase() === table.toLowerCase())) return db;
-  }
+  // SQLite: 実行は database 引数を使わず、スキーマ無しの名前は temp → main → ATTACH の順に解決される。
+  // タブの選択は見ず、その順で最初に見つかった場所を採用する。temp に当たるなら退避しない。
+  const lit = (x: string) => `'${x.replace(/'/g, "''")}'`;
+  const exists = async (schema: string) => {
+    const r = await api.runLookupQuery({
+      sessionId,
+      sql: `SELECT 1 FROM ${quoteIdentFor("sqlite", schema)}.sqlite_master WHERE type = 'table' AND lower(name) = lower(${lit(table)}) LIMIT 1`,
+      database: null,
+    });
+    return (r.rows as unknown[][]).length > 0;
+  };
+  if (await exists("temp")) return null;
+  const list = await api.runLookupQuery({
+    sessionId,
+    sql: "SELECT name FROM pragma_database_list ORDER BY seq",
+    database: null,
+  });
+  const dbs = (list.rows as unknown[][]).map((r) => String(r[0])).filter((n) => n.toLowerCase() !== "temp");
+  // main を ATTACH より先に (seq の順でも main が先頭だが、順序に依存しないよう明示する)。
+  dbs.sort((x, y) => Number(y.toLowerCase() === "main") - Number(x.toLowerCase() === "main"));
+  for (const db of dbs) if (await exists(db)) return db;
   return null;
 }
 
@@ -93,7 +110,10 @@ export async function runBackup(api: BackupApi, req: BackupRequest): Promise<Bac
   const existing = await api.listTables(sessionId, database);
   const want = driver === "postgres" ? table : table.toLowerCase();
   // 実在する名前 (MySQL / SQLite は大文字小文字を無視して一致させ、実際の綴りを使う)。
-  const actual = existing.find((t) => (driver === "postgres" ? t : t.toLowerCase()) === want);
+  // 完全一致を先に探し、無いときだけ大文字小文字を無視する (MySQL で `Users` と `users` が併存しても別の表を取らない)。
+  const actual =
+    existing.find((t) => t === table) ??
+    existing.find((t) => (driver === "postgres" ? t : t.toLowerCase()) === want);
   if (actual === undefined) {
     if (req.missingOk) return null;
     throw new Error(translate("backupTableMissing", { table }));

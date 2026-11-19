@@ -209,6 +209,57 @@
       ],
       "mainSql": "TRUNCATE TABLE \"nb2448_backup\".\"serial_truncate\"",
       "restoreSql": "INSERT INTO \"nb2448_backup\".\"serial_truncate\" (\"id\", \"parent_id\", \"price\", \"label\") OVERRIDING SYSTEM VALUE SELECT \"id\", \"parent_id\", \"price\", \"label\" FROM \"nb2448_backup\".\"serial_truncate_bak_202611190905\""
+    },
+    {
+      "name": "mysql truncate (名前が 54 文字で、退避名は 64 文字に切り詰め)",
+      "driver": "mysql",
+      "database": "nb2448_backup",
+      "kind": "truncate",
+      "setup": [
+        "CREATE TABLE `nb2448_backup`.`lp` (id INT PRIMARY KEY)",
+        "INSERT INTO `nb2448_backup`.`lp` VALUES (1), (2)",
+        "CREATE TABLE `nb2448_backup`.`mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmx` (id INT AUTO_INCREMENT PRIMARY KEY, parent_id INT, price INT, total INT GENERATED ALWAYS AS (price * 2) STORED, label VARCHAR(20), FOREIGN KEY (parent_id) REFERENCES `nb2448_backup`.`lp`(id) ON DELETE CASCADE)",
+        "INSERT INTO `nb2448_backup`.`mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmx` (parent_id, price, label) VALUES (1, 10, 'a'), (2, 20, 'it''s'), (NULL, 30, NULL)"
+      ],
+      "checkSql": "SELECT id, parent_id, price, total, label FROM `nb2448_backup`.`mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmx` ORDER BY id",
+      "backupStatements": [
+        "CREATE TABLE `nb2448_backup`.`mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm_bak_202611190905` LIKE `nb2448_backup`.`mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmx`",
+        "INSERT INTO `nb2448_backup`.`mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm_bak_202611190905` (`id`, `parent_id`, `price`, `label`) SELECT `id`, `parent_id`, `price`, `label` FROM `nb2448_backup`.`mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmx`"
+      ],
+      "afterBackup": [
+        "DELETE FROM `nb2448_backup`.`lp`"
+      ],
+      "beforeRestore": [
+        "INSERT INTO `nb2448_backup`.`lp` VALUES (1), (2)"
+      ],
+      "mainSql": "TRUNCATE TABLE `nb2448_backup`.`mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmx`",
+      "restoreSql": "INSERT INTO `nb2448_backup`.`mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmx` (`id`, `parent_id`, `price`, `label`) SELECT `id`, `parent_id`, `price`, `label` FROM `nb2448_backup`.`mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm_bak_202611190905`"
+    },
+    {
+      "name": "postgres drop (名前が 61 バイトで、退避名は 63 バイトに切り詰め)",
+      "driver": "postgres",
+      "database": "nb2448_backup",
+      "kind": "drop",
+      "setup": [
+        "CREATE TABLE \"nb2448_backup\".\"lp\" (id int PRIMARY KEY)",
+        "INSERT INTO \"nb2448_backup\".\"lp\" VALUES (1), (2)",
+        "CREATE TABLE \"nb2448_backup\".\"ああああああああああああああああああああz\" (id int GENERATED ALWAYS AS IDENTITY PRIMARY KEY, parent_id int REFERENCES \"nb2448_backup\".\"lp\"(id) ON DELETE CASCADE, price int, total int GENERATED ALWAYS AS (price * 2) STORED, label text)",
+        "INSERT INTO \"nb2448_backup\".\"ああああああああああああああああああああz\" (parent_id, price, label) VALUES (1, 10, 'a'), (2, 20, 'it''s'), (NULL, 30, NULL)"
+      ],
+      "checkSql": "SELECT id, parent_id, price, total, label FROM \"nb2448_backup\".\"ああああああああああああああああああああz\" ORDER BY id",
+      "backupStatements": [
+        "CREATE TABLE \"nb2448_backup\".\"あああああああああああああああ_bak_202611190905\" (LIKE \"nb2448_backup\".\"ああああああああああああああああああああz\" INCLUDING ALL)",
+        "INSERT INTO \"nb2448_backup\".\"あああああああああああああああ_bak_202611190905\" (\"id\", \"parent_id\", \"price\", \"label\") OVERRIDING SYSTEM VALUE SELECT \"id\", \"parent_id\", \"price\", \"label\" FROM \"nb2448_backup\".\"ああああああああああああああああああああz\"",
+        "SELECT setval(pg_get_serial_sequence('\"nb2448_backup\".\"あああああああああああああああ_bak_202611190905\"', 'id'), max(\"id\")) FROM \"nb2448_backup\".\"あああああああああああああああ_bak_202611190905\" HAVING max(\"id\") >= (SELECT seqmin FROM pg_sequence WHERE seqrelid = pg_get_serial_sequence('\"nb2448_backup\".\"あああああああああああああああ_bak_202611190905\"', 'id')::regclass)"
+      ],
+      "afterBackup": [
+        "DELETE FROM \"nb2448_backup\".\"lp\""
+      ],
+      "beforeRestore": [
+        "INSERT INTO \"nb2448_backup\".\"lp\" VALUES (1), (2)"
+      ],
+      "mainSql": "DROP TABLE \"nb2448_backup\".\"ああああああああああああああああああああz\"",
+      "restoreSql": "ALTER TABLE \"nb2448_backup\".\"あああああああああああああああ_bak_202611190905\" RENAME TO \"ああああああああああああああああああああz\""
     }
   ]
 }

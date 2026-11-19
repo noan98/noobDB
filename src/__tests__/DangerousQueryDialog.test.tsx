@@ -452,4 +452,52 @@ describe("DangerousQueryDialog 退避コピー (#2448)", () => {
     expect(onCancel).toHaveBeenCalled();
     expect(onConfirm).not.toHaveBeenCalled();
   });
+
+  it("退避先を特定している間は「実行」を無効にし、確認中と出す", async () => {
+    const onConfirm = vi.fn();
+    const user = userEvent.setup();
+    const { rerender } = renderWithProviders(
+      <DangerousQueryDialog
+        findings={findings}
+        isProduction={true}
+        backup={null}
+        backupState="resolving"
+        onConfirm={onConfirm}
+        onCancel={() => {}}
+      />,
+    );
+    const run = screen.getByRole("button", { name: t("dangerousConfirm") });
+    expect(run).toBeDisabled();
+    expect(screen.getByText(t("backupResolving"))).toBeInTheDocument();
+    await user.click(run);
+    expect(onConfirm).not.toHaveBeenCalled();
+    // 特定できたら有効になり、退避オプションが出る
+    rerender(
+      <DangerousQueryDialog
+        findings={findings}
+        isProduction={true}
+        backup={{ node: <div>backup-option</div>, beforeConfirm: async () => null }}
+        backupState={null}
+        onConfirm={onConfirm}
+        onCancel={() => {}}
+      />,
+    );
+    expect(screen.getByRole("button", { name: t("dangerousConfirm") })).toBeEnabled();
+    expect(screen.getByText("backup-option")).toBeInTheDocument();
+  });
+
+  it("特定できなかったら「この文では退避できません」を出し、実行は妨げない", () => {
+    renderWithProviders(
+      <DangerousQueryDialog
+        findings={findings}
+        isProduction={false}
+        backup={null}
+        backupState="unavailable"
+        onConfirm={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+    expect(screen.getByText(t("backupUnavailable"))).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("dangerousConfirm") })).toBeEnabled();
+  });
 });

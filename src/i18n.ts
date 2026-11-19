@@ -2674,6 +2674,8 @@ const en = {
   backupCopyRestore: "Copy restore SQL",
   backupRestoreCopied: "Restore SQL copied.",
   backupRunning: "Backing up...",
+  backupResolving: "Checking where to back up...",
+  backupUnavailable: "A backup copy cannot be made for this statement.",
   cloneTableRowEstimate: "Rows to copy: about {rows} (estimate)",
   cloneTableLargeData:
     "About {rows} rows will be copied. INSERT ... SELECT may take a long time and hold locks.",
@@ -11906,6 +11908,8 @@ const ja: Dict = {
   backupCopyRestore: "復元用 SQL をコピー",
   backupRestoreCopied: "復元用 SQL をコピーしました。",
   backupRunning: "退避中...",
+  backupResolving: "退避先を確認中...",
+  backupUnavailable: "この文では退避できません。",
   cloneTableRowEstimate: "複製する行数: 約 {rows} 行 (推定)",
   cloneTableLargeData:
     "約 {rows} 行を複製します。INSERT ... SELECT に時間がかかり、ロックを保持する可能性があります。",

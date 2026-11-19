@@ -39,17 +39,17 @@ const sqliteSetup = (t: string, parent: string) => [
   `INSERT INTO ${q("sqlite", null, t)} (parent_id, price, label) VALUES (1, 10, 'a'), (2, 20, 'it''s'), (NULL, 30, NULL)`,
 ];
 
-const mysqlSetup = (t: string) => [
-  `CREATE TABLE ${q("mysql", DB, `${t}_p`)} (id INT PRIMARY KEY)`,
-  `INSERT INTO ${q("mysql", DB, `${t}_p`)} VALUES (1), (2)`,
-  `CREATE TABLE ${q("mysql", DB, t)} (id INT AUTO_INCREMENT PRIMARY KEY, parent_id INT, price INT, total INT GENERATED ALWAYS AS (price * 2) STORED, label VARCHAR(20), FOREIGN KEY (parent_id) REFERENCES ${q("mysql", DB, `${t}_p`)}(id) ON DELETE CASCADE)`,
+const mysqlSetup = (t: string, parent = `${t}_p`) => [
+  `CREATE TABLE ${q("mysql", DB, parent)} (id INT PRIMARY KEY)`,
+  `INSERT INTO ${q("mysql", DB, parent)} VALUES (1), (2)`,
+  `CREATE TABLE ${q("mysql", DB, t)} (id INT AUTO_INCREMENT PRIMARY KEY, parent_id INT, price INT, total INT GENERATED ALWAYS AS (price * 2) STORED, label VARCHAR(20), FOREIGN KEY (parent_id) REFERENCES ${q("mysql", DB, parent)}(id) ON DELETE CASCADE)`,
   `INSERT INTO ${q("mysql", DB, t)} (parent_id, price, label) VALUES (1, 10, 'a'), (2, 20, 'it''s'), (NULL, 30, NULL)`,
 ];
 
-const pgSetup = (t: string, idDef: string) => [
-  `CREATE TABLE ${q("postgres", DB, `${t}_p`)} (id int PRIMARY KEY)`,
-  `INSERT INTO ${q("postgres", DB, `${t}_p`)} VALUES (1), (2)`,
-  `CREATE TABLE ${q("postgres", DB, t)} (id ${idDef} PRIMARY KEY, parent_id int REFERENCES ${q("postgres", DB, `${t}_p`)}(id) ON DELETE CASCADE, price int, total int GENERATED ALWAYS AS (price * 2) STORED, label text)`,
+const pgSetup = (t: string, idDef: string, parent = `${t}_p`) => [
+  `CREATE TABLE ${q("postgres", DB, parent)} (id int PRIMARY KEY)`,
+  `INSERT INTO ${q("postgres", DB, parent)} VALUES (1), (2)`,
+  `CREATE TABLE ${q("postgres", DB, t)} (id ${idDef} PRIMARY KEY, parent_id int REFERENCES ${q("postgres", DB, parent)}(id) ON DELETE CASCADE, price int, total int GENERATED ALWAYS AS (price * 2) STORED, label text)`,
   `INSERT INTO ${q("postgres", DB, t)} (parent_id, price, label) VALUES (1, 10, 'a'), (2, 20, 'it''s'), (NULL, 30, NULL)`,
 ];
 
@@ -113,6 +113,34 @@ function cases(): CaseInput[] {
       checkSql: `SELECT id, parent_id, price, total, label FROM ${q("postgres", DB, serialT)} ORDER BY id`,
     });
   }
+  // 識別子長の上限 (MySQL 64 文字 / PostgreSQL 63 バイト) に収まる名前へ切り詰める。末尾のタイムスタンプは残る。
+  const myLong = `${"m".repeat(53)}x`; // FK 名 (<表名>_ibfk_1) も 64 文字に収まる長さ
+  out.push({
+    name: "mysql truncate (名前が 54 文字で、退避名は 64 文字に切り詰め)",
+    driver: "mysql",
+    table: myLong,
+    kind: "truncate",
+    setup: mysqlSetup(myLong, "lp"),
+    ddl: `CREATE TABLE ${q("mysql", DB, myLong)} (id int)`,
+    columns: ["id", "parent_id", "price", "label"],
+    afterBackup: [`DELETE FROM ${q("mysql", DB, "lp")}`],
+    beforeRestore: [`INSERT INTO ${q("mysql", DB, "lp")} VALUES (1), (2)`],
+    checkSql: `SELECT id, parent_id, price, total, label FROM ${q("mysql", DB, myLong)} ORDER BY id`,
+  });
+  const pgLong = `${"あ".repeat(20)}z`; // 61 バイト
+  out.push({
+    name: "postgres drop (名前が 61 バイトで、退避名は 63 バイトに切り詰め)",
+    driver: "postgres",
+    table: pgLong,
+    kind: "drop",
+    setup: pgSetup(pgLong, "int GENERATED ALWAYS AS IDENTITY", "lp"),
+    ddl: `CREATE TABLE ${q("postgres", DB, pgLong)} (id int)`,
+    columns: ["id", "parent_id", "price", "label"],
+    pgColumns: { generated: ["total"], identity: ["id"], serial: [] },
+    afterBackup: [`DELETE FROM ${q("postgres", DB, "lp")}`],
+    beforeRestore: [`INSERT INTO ${q("postgres", DB, "lp")} VALUES (1), (2)`],
+    checkSql: `SELECT id, parent_id, price, total, label FROM ${q("postgres", DB, pgLong)} ORDER BY id`,
+  });
   return out;
 }
 

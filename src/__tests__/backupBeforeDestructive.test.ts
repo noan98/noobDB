@@ -150,6 +150,26 @@ describe("buildBackupPlan", () => {
     expect(create).toContain("user_id INT NOT NULL");
     expect(create).toContain("parent_id INT");
   });
+  it("SQLite: NOT NULL は残し、NOT DEFERRABLE と複数の REFERENCES を落とす", () => {
+    const ddl = `CREATE TABLE t (
+  a INT NOT NULL REFERENCES p(id) NOT DEFERRABLE INITIALLY IMMEDIATE,
+  b INT REFERENCES p(id) REFERENCES q(id) NOT NULL,
+  c INT
+)`;
+    const p = buildBackupPlan({
+      driver: "sqlite",
+      database: "main",
+      table: "t",
+      kind: "drop",
+      now: NOW,
+      ddl,
+      columns: ["a", "b", "c"],
+    });
+    const create = p.statements[0];
+    expect(create).not.toMatch(/REFERENCES|DEFERRABLE|INITIALLY/i);
+    expect(create).toMatch(/a INT NOT NULL/);
+    expect(create).toMatch(/b INT\s+NOT NULL/);
+  });
   it("クオートが必要な名前でも壊れない", () => {
     const p = buildBackupPlan({
       driver: "mysql",
@@ -274,11 +294,23 @@ describe("resolveBackupDatabase", () => {
     expect(await resolveBackupDatabase(api, { ...base, driver: "mysql", profileDatabase: "p" })).toBe("p");
     expect(await resolveBackupDatabase(api, { ...base, driver: "mysql" })).toBeNull();
   });
-  it("SQLite: 実在する main のテーブルだけ", async () => {
-    const api = { listTables: async () => ["Users"] } as unknown as BackupApi;
-    expect(await resolveBackupDatabase(api, { ...base, driver: "sqlite" })).toBe("main");
-    const none = { listTables: async () => [] } as unknown as BackupApi;
-    expect(await resolveBackupDatabase(none, { ...base, driver: "sqlite" })).toBeNull();
+  it("SQLite: temp → main → ATTACH の順に最初に見つかった場所 (タブの選択は見ない)", async () => {
+    const mk = (where: Record<string, boolean>, dbs: string[]) =>
+      ({
+        runLookupQuery: async (p: { sql: string }) => {
+          if (p.sql.includes("pragma_database_list")) return { rows: dbs.map((d) => [d]) };
+          const m = /FROM "([^"]+)"\.sqlite_master/.exec(p.sql);
+          return { rows: where[m?.[1] ?? ""] ? [[1]] : [] };
+        },
+      }) as unknown as BackupApi;
+    const sq = { ...base, driver: "sqlite", tabDatabase: "att" };
+    expect(await resolveBackupDatabase(mk({ main: true }, ["main", "att"]), sq)).toBe("main");
+    expect(await resolveBackupDatabase(mk({ att: true }, ["main", "att"]), sq)).toBe("att");
+    expect(await resolveBackupDatabase(mk({ main: true, att: true }, ["att", "main"]), sq)).toBe("main");
+    // temp に同名があれば、それが先に解決される (別接続から見えない) ので退避しない
+    expect(await resolveBackupDatabase(mk({ temp: true, main: true }, ["main"]), sq)).toBeNull();
+    expect(await resolveBackupDatabase(mk({}, ["main"]), sq)).toBeNull();
+    expect(await resolveBackupDatabase(mk({}, []), { ...sq, explicit: "temp" })).toBeNull();
   });
 });
 
@@ -330,6 +362,14 @@ describe("runBackup", () => {
     const r = await runBackup(api, req);
     expect(r?.backupName).toBe("ORDERS_bak_202611190905");
     expect(calls[0][0]).toContain("`ORDERS`");
+  });
+  it("MySQL: Users と users が併存しても、完全一致の表を退避する", async () => {
+    const { api, calls } = make({ listTables: async () => ["Users", "users"] });
+    const r = await runBackup(api, { ...req, table: "users" });
+    expect(r?.backupName).toBe("users_bak_202611190905");
+    expect(calls[0][1]).toContain("FROM `shop`.`users`");
+    const r2 = await runBackup(api, { ...req, table: "Users" });
+    expect(r2?.backupName).toBe("Users_bak_202611190905");
   });
   it("PostgreSQL は大文字小文字を区別する (別の表を退避しない)", async () => {
     const { api } = make({ listTables: async () => ["Orders"] });

@@ -537,8 +537,8 @@ function stripSqliteForeignKeys(tokens: Token[]): Token[] {
     }
     if (i >= 0 && up(seg[i]) === "FOREIGN") continue; // テーブル制約の FK ごと捨てる
     // 列定義内の REFERENCES 句
-    const ref = seg.findIndex((t) => t.kind === "word" && up(t) === "REFERENCES");
-    if (ref >= 0) {
+    // 1 列に REFERENCES が複数あっても全部除く。
+    for (let ref = seg.findIndex((t) => t.kind === "word" && up(t) === "REFERENCES"); ref >= 0; ) {
       let start = ref;
       // 直前が `CONSTRAINT <名前>` ならそれも落とす
       let prev = start - 1;
@@ -580,9 +580,13 @@ function stripSqliteForeignKeys(tokens: Token[]): Token[] {
         } else if (w === "MATCH") {
           const n = nextSig(seg, k + 1);
           end = (n >= 0 ? n : k) + 1;
-        } else if (w === "NOT" || w === "DEFERRABLE") {
-          const d = w === "NOT" ? nextSig(seg, k + 1) : k;
-          end = (d >= 0 ? d : k) + 1;
+        } else if (w === "DEFERRABLE") {
+          end = k + 1;
+        } else if (w === "NOT") {
+          // `NOT DEFERRABLE` だけを消費する (`NOT NULL` は列の制約なので残す)。
+          const d = nextSig(seg, k + 1);
+          if (d < 0 || up(seg[d]) !== "DEFERRABLE") break;
+          end = d + 1;
         } else if (w === "INITIALLY") {
           const n = nextSig(seg, k + 1);
           end = (n >= 0 ? n : k) + 1;
@@ -591,6 +595,7 @@ function stripSqliteForeignKeys(tokens: Token[]): Token[] {
       seg = [...seg.slice(0, start), ...seg.slice(end)];
       // 取り除いた跡の末尾空白を整える
       while (seg.length > 1 && seg[seg.length - 1].kind === "ws") seg.pop();
+      ref = seg.findIndex((t) => t.kind === "word" && up(t) === "REFERENCES");
     }
     kept.push(seg);
   }
