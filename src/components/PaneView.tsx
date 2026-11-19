@@ -17,6 +17,7 @@ import {
 import { Box, Flex, chakra } from "@chakra-ui/react";
 import { AnimatePresence, motion } from "motion/react";
 import { api, ConnectionProfile, QueryResult, Snippet, TableSchema } from "../api/tauri";
+import { runPeekQuery } from "../fkPeekRun";
 import { countEditedCells, countEditedRows, type PendingEdits, type PendingInsertRow } from "./cellEdit";
 import { type BulkEditTarget } from "./bulkEdit";
 import { TabDirtyWatcher } from "../tabSqlStore";
@@ -1484,6 +1485,20 @@ export const PaneView = memo(
                                     sessionId
                                       ? gridStable.fn(`${tab.id}:relatedQuery`, (sql: string) =>
                                           api.runQuery(sessionId, sql, tab.database ?? null),
+                                        )
+                                      : undefined
+                                  }
+                                  onRunPeekQuery={
+                                    sessionId
+                                      ? gridStable.fn(
+                                          `${tab.id}:peekQuery`,
+                                          (sql: string, signal?: AbortSignal) =>
+                                            runPeekQuery({
+                                              sessionId,
+                                              database: tab.database ?? null,
+                                              sql,
+                                              signal,
+                                            }),
                                         )
                                       : undefined
                                   }

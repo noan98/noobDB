@@ -41,7 +41,7 @@ import { computeTooltipPosition, type TooltipRect } from "./tooltipPosition";
  * 結果グリッドの FK セルから参照先の 1 行を覗くポップオーバーカード (#2405)。
  *
  * 置き場はセルに付く一時的なポップオーバー (Modal / Bottom Panel / 全画面サーフェスではない)。
- * 取得は `runQuery` (App が `run_query` に結ぶ内部クエリ。履歴に残らず、読み取り専用ガードも通る) で、
+ * 取得は `runQuery` (App が `fkPeekRun.ts` のストリーミング実行に結ぶ内部クエリ。短いタイムアウトつきで、閉じたらサーバ側も中止する。履歴に残らず、読み取り専用ガードも通る) で、
  * SQL は `fkPeek.ts` の `LIMIT 1` 付き。カード内の FK 値からさらにたどれ、パンくず・戻る / 進むで往復できる
  * (向きは `directionalSlide`。reduced-motion は x 移動なしのフェード)。
  * 値は機微カラムのマスク設定 (#1069) に従って伏せ字にする。
@@ -54,7 +54,8 @@ interface Props {
   initial: PeekStep;
   driver: string;
   database: string | null;
-  runQuery: (sql: string) => Promise<QueryResult>;
+  /** `signal` が abort されたら (閉じた・別セルへ移った) サーバ側の取得も中止する (#2444)。 */
+  runQuery: (sql: string, signal?: AbortSignal) => Promise<QueryResult>;
   /**
    * 参照先テーブルの列メタ (PK・FK の判定用)。カードの SELECT と同じデータベースで引く。
    * 無ければ列の選定は先頭から、さらにたどることはできない。
@@ -143,11 +144,12 @@ export function FkPeekCard({
     }
     setFetched({ sql, state: { kind: "loading" } });
     let cancelled = false;
+    const abort = new AbortController();
     void (async () => {
       let state: Fetched;
       try {
         const [result, meta] = await Promise.all([
-          hit ?? runRef.current(sql),
+          hit ?? runRef.current(sql, abort.signal),
           cache.meta.has(metaKey)
             ? Promise.resolve(cache.meta.get(metaKey) ?? null)
             : (describeRef.current?.(database, table) ?? Promise.resolve(null)).catch(() => null),
@@ -156,12 +158,13 @@ export function FkPeekCard({
         cache.meta.set(metaKey, meta);
         state = { kind: "done", result, meta };
       } catch (e) {
-        state = { kind: "error", message: String(e) };
+        state = { kind: "error", message: e instanceof Error ? e.message : String(e) };
       }
       if (!cancelled) setFetched({ sql, state });
     })();
     return () => {
       cancelled = true;
+      abort.abort();
     };
   }, [sql]);
   const state: Fetched = fetched.sql === sql ? fetched.state : { kind: "loading" };
