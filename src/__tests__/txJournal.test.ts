@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   TX_JOURNAL_MAX_ENTRIES,
   appendTxEntry,
+  isIdleInTxTimeoutError,
+  idleTxDisconnectKind,
+  txLastActivityAt,
   newTxMeta,
   recordTxMeta,
   batchResultToTxOutcome,
@@ -203,5 +206,74 @@ describe("recordTxMeta (一覧の上限と累計)", () => {
     m = recordTxMeta(m, makeTxEntry("DELETE FROM t", "mysql", { ok: false }, 1));
     expect(m.omitted).toBe(0);
     expect(m.totals).toEqual({ statements: 1, rows: 2, failed: 1 });
+  });
+});
+
+describe("放置トランザクションの自動切断 (#2464)", () => {
+  it("idle-in-transaction timeout / 25P03 のエラー文を判定する", () => {
+    expect(
+      isIdleInTxTimeoutError(
+        "error returned from database: terminating connection due to idle-in-transaction timeout",
+      ),
+    ).toBe(true);
+    // ロケールで訳された文言でも、バックエンドが付ける SQLSTATE で判定できる。
+    expect(isIdleInTxTimeoutError("トランザクション内アイドルタイムアウト (SQLSTATE 25P03)")).toBe(true);
+    expect(isIdleInTxTimeoutError("connection reset by peer")).toBe(false);
+    expect(isIdleInTxTimeoutError(null)).toBe(false);
+    expect(isIdleInTxTimeoutError(undefined)).toBe(false);
+  });
+
+  it("パラメータ名を含むだけの非接続断エラーは確定扱いにしない", () => {
+    expect(
+      isIdleInTxTimeoutError('unrecognized configuration parameter "idle_in_transaction_session_timeout"'),
+    ).toBe(false);
+    expect(
+      idleTxDisconnectKind({
+        error: 'invalid value for parameter "idle_in_transaction_session_timeout"',
+        inTransaction: true,
+        connectionLost: false,
+        timeoutMin: null,
+        lastActivityAt: null,
+        now: 0,
+      }),
+    ).toBeNull();
+  });
+
+  it("最後の動きは最後の文の時刻 (末尾の失敗 1 件だけ除く)、無ければ BEGIN の時刻", () => {
+    expect(txLastActivityAt(newTxMeta(500))).toBe(500);
+    const met = recordTxMeta(newTxMeta(500), ok("UPDATE t SET a = 1", 1));
+    expect(txLastActivityAt(met)).toBe(1000);
+    const failed = recordTxMeta(met, makeTxEntry("SELECT 1", "postgres", { ok: false }, 9_000_000));
+    expect(txLastActivityAt(failed)).toBe(1000);
+    // 途中の失敗はサーバのアイドル計時をリセットするので動きとして数える。
+    let onlyFailed = newTxMeta(100);
+    onlyFailed = recordTxMeta(onlyFailed, makeTxEntry("SELECT 1", "postgres", { ok: false }, 5000));
+    onlyFailed = recordTxMeta(onlyFailed, makeTxEntry("SELECT 2", "postgres", { ok: false }, 9000));
+    expect(txLastActivityAt(onlyFailed)).toBe(5000);
+  });
+
+  const base = { inTransaction: true, connectionLost: true, timeoutMin: 10, lastActivityAt: 0, now: 0 };
+  it("エラー文が自動切断を示せば、設定や経過に関係なく confirmed", () => {
+    expect(
+      idleTxDisconnectKind({
+        ...base,
+        timeoutMin: null,
+        error: "terminating connection due to idle-in-transaction timeout",
+      }),
+    ).toBe("confirmed");
+  });
+
+  it("接続断だけのときは、設定済みで最後の動きから設定分が過ぎていれば likely (境界は 10 分ちょうど)", () => {
+    expect(idleTxDisconnectKind({ ...base, now: 10 * 60_000 - 1 })).toBeNull();
+    expect(idleTxDisconnectKind({ ...base, now: 10 * 60_000 })).toBe("likely");
+  });
+
+  it("設定が無い・TX 中でない・接続断でない・時刻不明なら推定しない", () => {
+    const now = 99 * 60_000;
+    expect(idleTxDisconnectKind({ ...base, now, timeoutMin: null })).toBeNull();
+    expect(idleTxDisconnectKind({ ...base, now, timeoutMin: 0 })).toBeNull();
+    expect(idleTxDisconnectKind({ ...base, now, inTransaction: false })).toBeNull();
+    expect(idleTxDisconnectKind({ ...base, now, connectionLost: false })).toBeNull();
+    expect(idleTxDisconnectKind({ ...base, now, lastActivityAt: null })).toBeNull();
   });
 });

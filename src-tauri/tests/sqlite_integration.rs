@@ -1292,6 +1292,7 @@ async fn sqlite_missing_path_reports_invalid_input() {
         init_sql: None,
         aws_iam: None,
         sqlite_attachments: Vec::new(),
+        idle_in_tx_timeout_min: None,
         read_only: false,
     };
     let err = noobdb_lib::__test_api::connect(&opts)

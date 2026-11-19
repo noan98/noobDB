@@ -424,6 +424,7 @@ pub(crate) async fn create_sandbox_inner(
         init_sql: None,
         aws_iam: None,
         sqlite_attachments: Vec::new(),
+        idle_in_tx_timeout_min: None,
         read_only: false,
     };
     let conn = match Connection::connect(&opts).await {

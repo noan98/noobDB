@@ -55,9 +55,15 @@ describe("connectRequestFromProfile", () => {
       aws_iam: { region: "ap-northeast-1", profile: "work" },
       ssm: { target: "i-0123456789abcdef0", region: "", profile: "work" },
       sqlite_attachments: [],
+      idle_in_tx_timeout_min: null,
       read_only: true,
       skip_history: false,
     });
+  });
+
+  it("放置トランザクションの自動切断 (分) を写す (#2464)", () => {
+    const req = connectRequestFromProfile({ ...profile, idle_in_tx_timeout_min: 30 });
+    expect(req.idle_in_tx_timeout_min).toBe(30);
   });
 
   it("SQLite のアタッチ設定を写す (#2129)", () => {

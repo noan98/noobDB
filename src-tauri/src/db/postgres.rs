@@ -28,7 +28,9 @@ use super::types::{
 };
 use super::upsert::{conflict_clause, ImportConflict, KeyKind};
 use super::view_rebuild::{AclEntry, DependentViews, RebuildBlocker, ViewInfo, ViewKind};
-use super::{columns_of, init_sql_of, DbConnectOptions, DriverKind, SslMode};
+use super::{
+    columns_of, idle_in_tx_timeout_sql, init_sql_of, DbConnectOptions, DriverKind, SslMode,
+};
 use super::{GuardedStatement, GuardedTxOutcome};
 use crate::error::{AppError, Result};
 
@@ -123,13 +125,20 @@ impl PostgresConn {
             .acquire_timeout(std::time::Duration::from_secs(15));
         let search_path = std::sync::Arc::new(SearchPathState::default());
         let init_sql = init_sql_of(opts);
+        // 放置トランザクションの自動切断 (#2464)。ユーザの init_sql より先に流し、init_sql で上書きできる。
+        let idle_tx_sql = idle_in_tx_timeout_sql(opts);
         let sp_state = search_path.clone();
         // 新しい物理接続ごとに、セッション初期化 SQL を流し、その結果の search_path を
         // 「既定値」として控える (スキーマ指定の文で書き換えた接続を戻す先)。
         pool_opts = pool_opts.after_connect(move |conn, _meta| {
             let sql = init_sql.clone();
+            let idle_tx_sql = idle_tx_sql.clone();
             let sp_state = sp_state.clone();
             Box::pin(async move {
+                if let Some(sql) = idle_tx_sql {
+                    sqlx::Executor::execute(&mut *conn, sqlx::raw_sql(sqlx::AssertSqlSafe(sql)))
+                        .await?;
+                }
                 if let Some(sql) = sql {
                     sqlx::Executor::execute(&mut *conn, sqlx::raw_sql(sqlx::AssertSqlSafe(sql)))
                         .await?;
@@ -179,6 +188,11 @@ impl PostgresConn {
     }
 
     pub async fn close(&self) {
+        // 明示トランザクションで握った接続を先に手放す。握ったままだと `pool.close()` が
+        // 返却を待ち続け、切断が終わらない (#2464)。
+        if let Some(conn) = self.tx.lock().await.take() {
+            drop(conn.detach());
+        }
         self.pool.close().await;
     }
 
@@ -254,7 +268,27 @@ impl PostgresConn {
             .as_mut()
             .ok_or_else(|| AppError::InvalidInput("no active transaction".into()))?;
         let (result, messages) = capture(run_sql_on(conn, sql)).await;
-        Ok(result?.with_server_messages(messages))
+        match result {
+            Ok(r) => Ok(r.with_server_messages(messages)),
+            Err(e) => {
+                // 接続が落ちた (放置トランザクションの自動切断を含む) なら、死んだ接続を握り続けない (#2464)。
+                if e.is_connection_lost() {
+                    self.drop_dead_tx(&mut guard);
+                }
+                Err(e)
+            }
+        }
+    }
+
+    /// 保持していたトランザクション接続が死んでいたとき、ガードから外して状態を戻す (#2464)。
+    fn drop_dead_tx(&self, guard: &mut Option<sqlx::pool::PoolConnection<sqlx::Postgres>>) {
+        if let Some(conn) = guard.take() {
+            drop(conn.detach());
+        }
+        self.tx_read_only
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        self.tx_backend_id
+            .store(0, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// 保持接続のトランザクションで文を流し、`RETURNING` のように行を返す書き込み文でも
@@ -265,9 +299,19 @@ impl PostgresConn {
             .as_mut()
             .ok_or_else(|| AppError::InvalidInput("no active transaction".into()))?;
         let started = Instant::now();
-        let rows: Vec<PgRow> = sqlx::query(sqlx::AssertSqlSafe(sql))
+        let rows: Vec<PgRow> = match sqlx::query(sqlx::AssertSqlSafe(sql))
             .fetch_all(&mut **conn)
-            .await?;
+            .await
+        {
+            Ok(rows) => rows,
+            Err(e) => {
+                let e = AppError::from(e);
+                if e.is_connection_lost() {
+                    self.drop_dead_tx(&mut guard);
+                }
+                return Err(e);
+            }
+        };
         let columns = columns_of(&rows);
         let rows_out = rows.iter().map(row_to_values).collect();
         Ok(QueryResult {
@@ -304,7 +348,16 @@ impl PostgresConn {
                 SqlBind::Bytes(v) => q.bind(v.clone()),
             };
         }
-        let rows: Vec<PgRow> = q.fetch_all(&mut **conn).await?;
+        let rows: Vec<PgRow> = match q.fetch_all(&mut **conn).await {
+            Ok(rows) => rows,
+            Err(e) => {
+                let e = AppError::from(e);
+                if e.is_connection_lost() {
+                    self.drop_dead_tx(&mut guard);
+                }
+                return Err(e);
+            }
+        };
         let columns = columns_of(&rows);
         let rows_out = rows.iter().map(row_to_values).collect();
         Ok(QueryResult {
@@ -332,6 +385,11 @@ impl PostgresConn {
             if let Err(sqlx::Error::Database(db)) =
                 sqlx::query("SELECT 1").execute(&mut *conn).await
             {
+                // 放置トランザクションの自動切断 (25P03, #2464) は接続断として返す (kind = connectionLost)。
+                if db.code().as_deref() == Some("25P03") {
+                    drop(conn.detach());
+                    return Err(AppError::Sqlx(sqlx::Error::Database(db)));
+                }
                 // 25P02 以外 (例: 57014 キャンセル) でも、このまま COMMIT すると
                 // 黙って ROLLBACK 扱いになり得るので、コードを問わず ROLLBACK してエラーで返す。
                 let msg = if db.code().as_deref() == Some("25P02") {

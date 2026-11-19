@@ -156,6 +156,11 @@ pub struct DbConnectOptions {
     /// アタッチしたファイルへの書き込みを SQLite 自身にも拒否させる (セッションの安全網とは別の二重の防御)。
     #[serde(default)]
     pub read_only: bool,
+    /// PostgreSQL の放置トランザクションの自動切断 (分) (#2464)。`Some(n)` で新しい物理接続ごとに
+    /// `SET idle_in_transaction_session_timeout = 'nmin'` を流す。`None` は設定しない (既定)。
+    /// PostgreSQL 以外では無視する。非秘密。
+    #[serde(default)]
+    pub idle_in_tx_timeout_min: Option<u32>,
 }
 
 /// SQLite で追加アタッチするファイル 1 つ (#2129)。`alias` は `ATTACH DATABASE ? AS <alias>` の
@@ -435,6 +440,38 @@ fn row_signature(values: &[Value]) -> String {
         .map(|v| format!("{v:?}"))
         .collect::<Vec<_>>()
         .join("\u{1f}")
+}
+
+/// 放置トランザクションの自動切断 (分) の上限 (#2464)。7 日 (10080 分)。これを超える値は
+/// 「実質無効」と区別がつかず入力ミス (秒・ミリ秒との取り違え) の可能性が高いので弾く。
+pub const IDLE_IN_TX_TIMEOUT_MAX_MIN: u32 = 10_080;
+
+/// 放置トランザクションの自動切断 (分) の範囲を検証する (#2464)。`None` は無効 (既定)。
+/// `Some(0)` は PostgreSQL では「タイムアウトなし」を意味して opt-in の意図と食い違うため、
+/// 1〜[`IDLE_IN_TX_TIMEOUT_MAX_MIN`] だけを受け付ける。
+pub fn validate_idle_in_tx_timeout_min(min: Option<u32>) -> Result<Option<u32>> {
+    match min {
+        None => Ok(None),
+        Some(n) if (1..=IDLE_IN_TX_TIMEOUT_MAX_MIN).contains(&n) => Ok(Some(n)),
+        Some(_) => Err(AppError::InvalidInput(format!(
+            "idle-in-transaction timeout must be between 1 and {IDLE_IN_TX_TIMEOUT_MAX_MIN} minutes"
+        ))),
+    }
+}
+
+/// PostgreSQL の新しい物理接続へ流す `SET idle_in_transaction_session_timeout` 文 (#2464)。
+/// 値は検証済みの整数だけを書式化するので、SQL へ埋めても注入の余地がない。PostgreSQL 以外・
+/// 未設定・範囲外は `None` (何も流さない)。
+pub(crate) fn idle_in_tx_timeout_sql(opts: &DbConnectOptions) -> Option<String> {
+    if opts.driver != DriverKind::Postgres {
+        return None;
+    }
+    let n = validate_idle_in_tx_timeout_min(opts.idle_in_tx_timeout_min)
+        .ok()
+        .flatten()?;
+    Some(format!(
+        "SET idle_in_transaction_session_timeout = '{n}min'"
+    ))
 }
 
 /// Returns the trimmed session-init SQL when present and it contains at least
@@ -5948,6 +5985,58 @@ mod tests {
     }
 
     #[test]
+    fn idle_in_tx_timeout_validation_and_sql() {
+        use super::{idle_in_tx_timeout_sql, validate_idle_in_tx_timeout_min as v};
+        assert_eq!(v(None).unwrap(), None);
+        assert_eq!(v(Some(1)).unwrap(), Some(1));
+        assert_eq!(v(Some(10_080)).unwrap(), Some(10_080));
+        assert!(v(Some(0)).is_err());
+        assert!(v(Some(10_081)).is_err());
+        assert!(v(Some(u32::MAX)).is_err());
+
+        let base = |driver, min| super::DbConnectOptions {
+            host: "h".into(),
+            port: 1,
+            user: "u".into(),
+            password: String::new(),
+            database: None,
+            driver,
+            file_path: None,
+            ssl_mode: None,
+            ssl_root_cert: None,
+            ssl_client_cert: None,
+            ssl_client_key: None,
+            init_sql: None,
+            aws_iam: None,
+            sqlite_attachments: Vec::new(),
+            idle_in_tx_timeout_min: min,
+            read_only: false,
+        };
+        assert_eq!(
+            idle_in_tx_timeout_sql(&base(super::DriverKind::Postgres, Some(15))).as_deref(),
+            Some("SET idle_in_transaction_session_timeout = '15min'")
+        );
+        // 既定 (未設定) と範囲外は何も流さない。
+        assert_eq!(
+            idle_in_tx_timeout_sql(&base(super::DriverKind::Postgres, None)),
+            None
+        );
+        assert_eq!(
+            idle_in_tx_timeout_sql(&base(super::DriverKind::Postgres, Some(0))),
+            None
+        );
+        // MySQL / SQLite は対象外。
+        assert_eq!(
+            idle_in_tx_timeout_sql(&base(super::DriverKind::Mysql, Some(15))),
+            None
+        );
+        assert_eq!(
+            idle_in_tx_timeout_sql(&base(super::DriverKind::Sqlite, Some(15))),
+            None
+        );
+    }
+
+    #[test]
     fn init_sql_of_normalizes_comment_or_separator_only_to_none() {
         fn opts(init: Option<&str>) -> super::DbConnectOptions {
             super::DbConnectOptions {
@@ -5965,6 +6054,7 @@ mod tests {
                 init_sql: init.map(str::to_string),
                 aws_iam: None,
                 sqlite_attachments: Vec::new(),
+                idle_in_tx_timeout_min: None,
                 read_only: false,
             }
         }

@@ -6,7 +6,10 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 
 use crate::db::aws_iam::{self, AwsIamConfig};
-use crate::db::{is_session_init_sql_for, Connection, DbConnectOptions, DriverKind, SslMode};
+use crate::db::{
+    is_session_init_sql_for, validate_idle_in_tx_timeout_min, Connection, DbConnectOptions,
+    DriverKind, SslMode,
+};
 use crate::error::{AppError, Result};
 use crate::profiles::{secrets, SshAuthMethod};
 use crate::ssh::{SshConfig, SshJumpConfig, SshPhase, SshTunnel};
@@ -171,6 +174,11 @@ pub struct ConnectRequest {
     /// SQLite 以外では無視する。
     #[serde(default)]
     pub sqlite_attachments: Vec<crate::db::SqliteAttachment>,
+    /// PostgreSQL の放置トランザクションの自動切断 (分) (#2464)。`Some(n)` で新しい物理接続ごとに
+    /// `SET idle_in_transaction_session_timeout = 'nmin'` を流す。`None` は設定しない (既定)。
+    /// PostgreSQL 以外では無視する。非秘密。
+    #[serde(default)]
+    pub idle_in_tx_timeout_min: Option<u32>,
     /// When true the resulting session refuses to execute non-read-only SQL.
     #[serde(default)]
     pub read_only: bool,
@@ -378,6 +386,7 @@ fn verify_variant(req: &ConnectRequest, base: &crate::profiles::ConnectionProfil
         || req.aws_iam != base.aws_iam
         || req.ssm != base.ssm
         || req.sqlite_attachments != base.sqlite_attachments
+        || req.idle_in_tx_timeout_min != base.idle_in_tx_timeout_min
     {
         return Err(mismatch());
     }
@@ -1015,6 +1024,13 @@ async fn build_options(
         }
     }
 
+    // 放置トランザクションの自動切断 (#2464) は PostgreSQL 専用。範囲外はここで弾く。
+    let idle_in_tx_timeout_min = if req.driver == DriverKind::Postgres {
+        validate_idle_in_tx_timeout_min(req.idle_in_tx_timeout_min)?
+    } else {
+        None
+    };
+
     // File-backed drivers don't have a host/port/user/password and can't
     // be tunneled, so short-circuit before touching credentials or SSH.
     if req.driver == DriverKind::Sqlite {
@@ -1040,6 +1056,7 @@ async fn build_options(
             init_sql,
             aws_iam: None,
             sqlite_attachments: req.sqlite_attachments.clone(),
+            idle_in_tx_timeout_min: None,
             read_only: req.read_only,
         };
         return Ok((None, opts));
@@ -1134,6 +1151,7 @@ async fn build_options(
         init_sql,
         aws_iam,
         sqlite_attachments: Vec::new(),
+        idle_in_tx_timeout_min,
         read_only: false,
     };
     Ok((tunnel, opts))
@@ -1289,6 +1307,7 @@ mod tests {
             aws_iam: None,
             ssm: None,
             sqlite_attachments: Vec::new(),
+            idle_in_tx_timeout_min: None,
             read_only: false,
             skip_history: false,
         }

@@ -86,6 +86,11 @@ pub struct ConnectionProfile {
     /// 空は何もアタッチしない (この項目の追加前に保存された旧プロファイルも空として読める)。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sqlite_attachments: Vec<crate::db::SqliteAttachment>,
+    /// PostgreSQL の放置トランザクションの自動切断 (分) (#2464)。`Some(n)` で新しい物理接続ごとに
+    /// `SET idle_in_transaction_session_timeout = 'nmin'` を流す。`None` は設定しない (既定)。
+    /// PostgreSQL 以外では無視する。非秘密。
+    #[serde(default)]
+    pub idle_in_tx_timeout_min: Option<u32>,
 }
 
 /// How an SSH tunnel authenticates with the jump host.
@@ -153,6 +158,23 @@ mod ssm_tests {
         }))
         .unwrap();
         assert!(p.ssm.is_none());
+    }
+
+    /// 放置トランザクションの自動切断 (#2464) の追加前に保存された JSON も読め、既定はオフ (`None`)。
+    #[test]
+    fn legacy_profile_json_without_idle_in_tx_timeout_loads_as_off() {
+        let p: ConnectionProfile = serde_json::from_value(serde_json::json!({
+            "id": "p1", "name": "Prod", "driver": "postgres", "host": "db",
+            "port": 5432, "user": "app", "database": null, "ssh": null
+        }))
+        .unwrap();
+        assert_eq!(p.idle_in_tx_timeout_min, None);
+        let on: ConnectionProfile = serde_json::from_value(serde_json::json!({
+            "id": "p1", "name": "Prod", "driver": "postgres", "host": "db",
+            "port": 5432, "user": "app", "idle_in_tx_timeout_min": 30
+        }))
+        .unwrap();
+        assert_eq!(on.idle_in_tx_timeout_min, Some(30));
     }
 
     #[test]

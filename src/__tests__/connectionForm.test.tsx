@@ -972,3 +972,76 @@ describe("ConnectionForm SQLite attachments validation (#2153)", () => {
     expect(saveProfile.mock.calls[0][0].sqlite_attachments).toEqual([{ path: "/tmp/a.db", alias: "ext" }]);
   });
 });
+
+/** 放置トランザクションの自動切断 (分) (#2464)。PostgreSQL 選択時だけ入力欄を出し、保存要求へ載せる。 */
+describe("ConnectionForm idle-in-transaction timeout (#2464)", () => {
+  const saveProfile = vi.mocked(api.saveProfile);
+  const pg: ConnectionProfile = {
+    id: "pgidle01",
+    name: "PG",
+    driver: "postgres",
+    host: "db.example.com",
+    port: 5432,
+    user: "postgres",
+    database: null,
+    ssh: null,
+    group: null,
+    color: null,
+    is_production: false,
+    confirm_writes: false,
+    read_only: false,
+    skip_history: false,
+    file_path: null,
+  };
+
+  beforeEach(() => {
+    saveProfile.mockReset();
+  });
+
+  const renderWith = (initial: ConnectionProfile) =>
+    renderWithProviders(
+      <ConnectionForm initial={initial} profiles={[]} onSaved={() => {}} onCancel={() => {}} />,
+    );
+
+  it("PostgreSQL では空 (オフ) の欄が出て、MySQL / SQLite では出ない", () => {
+    renderWith(pg);
+    expect(screen.getByLabelText(t("formIdleTxLabel"))).toHaveValue("");
+    renderWith({ ...pg, id: "my", driver: "mysql", port: 3306 });
+    renderWith({ ...pg, id: "sq", driver: "sqlite", file_path: "/tmp/a.db" });
+    // 上の 2 つのフォームには出ないので、欄は PostgreSQL の 1 つだけ。
+    expect(screen.getAllByLabelText(t("formIdleTxLabel"))).toHaveLength(1);
+  });
+
+  it("保存済みの値を表示し、保存要求へ数値で載せる", async () => {
+    saveProfile.mockResolvedValue({} as never);
+    renderWith({ ...pg, idle_in_tx_timeout_min: 15 });
+    expect(screen.getByLabelText(t("formIdleTxLabel"))).toHaveValue("15");
+    fireEvent.click(screen.getByRole("button", { name: t("formSave") }));
+    await waitFor(() => expect(saveProfile).toHaveBeenCalled());
+    expect(saveProfile.mock.calls[0][0].idle_in_tx_timeout_min).toBe(15);
+  });
+
+  it("空欄なら null (オフ) で保存する", async () => {
+    saveProfile.mockResolvedValue({} as never);
+    renderWith(pg);
+    fireEvent.click(screen.getByRole("button", { name: t("formSave") }));
+    await waitFor(() => expect(saveProfile).toHaveBeenCalled());
+    expect(saveProfile.mock.calls[0][0].idle_in_tx_timeout_min).toBeNull();
+  });
+
+  it("MySQL では保存済みの値があっても送らない", async () => {
+    saveProfile.mockResolvedValue({} as never);
+    renderWith({ ...pg, driver: "mysql", port: 3306, idle_in_tx_timeout_min: 15 });
+    fireEvent.click(screen.getByRole("button", { name: t("formSave") }));
+    await waitFor(() => expect(saveProfile).toHaveBeenCalled());
+    expect(saveProfile.mock.calls[0][0].idle_in_tx_timeout_min).toBeNull();
+  });
+
+  it.each(["0", "10081"])("範囲外 (%s) は保存せず FieldError を出す", async (value) => {
+    renderWith(pg);
+    fireEvent.change(screen.getByLabelText(t("formIdleTxLabel")), { target: { value } });
+    fireEvent.click(screen.getByRole("button", { name: t("formSave") }));
+    expect(await screen.findByText(t("formIdleTxInvalid", { max: 10080 }))).toBeInTheDocument();
+    expect(saveProfile).not.toHaveBeenCalled();
+  });
+});

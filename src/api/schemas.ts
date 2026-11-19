@@ -920,6 +920,8 @@ export const connectionProfile = z.object({
   ssl_client_key: z.string().nullable().optional(),
   // セッション初期化 SQL (非秘密)。未設定の旧プロファイルでは欠落。
   init_sql: z.string().nullable().optional(),
+  // PostgreSQL の放置トランザクション自動切断 (分) (#2464)。未設定の旧プロファイルでは欠落。
+  idle_in_tx_timeout_min: z.number().int().nullable().optional(),
   // SQLite の追加アタッチ (#2129)。旧プロファイルでは欠落。
   sqlite_attachments: z.array(z.object({ path: z.string(), alias: z.string() })).optional(),
   // AWS IAM 認証 (#734)。リージョンと AWS プロファイル名のみ (アクセスキーは保存

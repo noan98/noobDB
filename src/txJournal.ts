@@ -196,3 +196,55 @@ export function oneLineSql(sql: string, max = 120): string {
   const flat = sql.replace(/\s+/g, " ").trim();
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
 }
+
+/**
+ * サーバが放置トランザクションを切断したことを示すエラーか (#2464)。PostgreSQL は
+ * `idle_in_transaction_session_timeout` に達すると SQLSTATE 25P03 で
+ * "terminating connection due to idle-in-transaction timeout" を返してセッションを閉じる。
+ */
+export function isIdleInTxTimeoutError(raw: string | null | undefined): boolean {
+  if (!raw) return false;
+  return /idle-in-transaction timeout|\b25P03\b/i.test(raw);
+}
+
+/**
+ * トランザクションで最後に動きがあった時刻 (epoch ms)。文を実行していなければ BEGIN の時刻。
+ * 失敗した文もサーバのアイドル計時をリセットするので数えるが、末尾の 1 件が失敗なら除く
+ * (接続断で失敗した文が「今動いた」ことになり、推定を外すため)。
+ */
+export function txLastActivityAt(meta: TxMeta): number {
+  const entries = meta.entries;
+  const last = entries[entries.length - 1];
+  const prev = last && !last.ok ? entries[entries.length - 2] : last;
+  return prev ? Math.max(meta.startedAt, prev.at) : meta.startedAt;
+}
+
+/** `confirmed` = サーバがそう返した (エラー文)、`likely` = 設定と経過時間からの推定。 */
+export type IdleTxDisconnectKind = "confirmed" | "likely";
+
+/**
+ * 失敗が「放置トランザクションの自動切断」によるものかを分類する (#2464)。エラー文が
+ * idle-in-transaction timeout / SQLSTATE 25P03 を示していれば `confirmed`。FATAL を読む前に接続が
+ * 閉じて単なる接続断に見える場合は、接続断 (`connectionLost`) で、接続に自動切断が設定済みで、最後の
+ * 動きから設定の分数が過ぎているときだけ `likely` と推定する (トランザクション中でなければ該当しない)。
+ */
+export function idleTxDisconnectKind(args: {
+  error?: string | null;
+  inTransaction: boolean;
+  connectionLost: boolean;
+  timeoutMin: number | null | undefined;
+  lastActivityAt: number | null;
+  now: number;
+}): IdleTxDisconnectKind | null {
+  if (isIdleInTxTimeoutError(args.error)) return "confirmed";
+  if (
+    !args.connectionLost ||
+    !args.inTransaction ||
+    !args.timeoutMin ||
+    args.timeoutMin <= 0 ||
+    args.lastActivityAt === null
+  ) {
+    return null;
+  }
+  return args.now - args.lastActivityAt >= args.timeoutMin * 60_000 ? "likely" : null;
+}

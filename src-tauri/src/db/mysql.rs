@@ -138,6 +138,11 @@ impl MySqlConn {
     }
 
     pub async fn close(&self) {
+        // 明示トランザクションで握った接続を先に手放す。握ったままだと `pool.close()` が
+        // 返却を待ち続け、切断が終わらない (#2464)。
+        if let Some(conn) = self.tx.lock().await.take() {
+            drop(conn.detach());
+        }
         self.pool.close().await;
     }
 
@@ -228,7 +233,25 @@ impl MySqlConn {
         let conn = guard
             .as_mut()
             .ok_or_else(|| AppError::InvalidInput("no active transaction".into()))?;
-        run_sql_on(conn, sql).await
+        let result = run_sql_on(conn, sql).await;
+        if let Err(e) = &result {
+            // 接続が落ちたなら、死んだ接続を握り続けない (#2464。PostgreSQL と揃える)。
+            if e.is_connection_lost() {
+                self.drop_dead_tx(&mut guard);
+            }
+        }
+        result
+    }
+
+    /// 保持していたトランザクション接続が死んでいたとき、ガードから外して状態を戻す (#2464)。
+    fn drop_dead_tx(&self, guard: &mut Option<sqlx::pool::PoolConnection<sqlx::MySql>>) {
+        if let Some(conn) = guard.take() {
+            drop(conn.detach());
+        }
+        self.tx_read_only
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        self.tx_backend_id
+            .store(0, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// バインドパラメータ付きの `SELECT` を保持接続のトランザクションで流して行を読む (#2304)。
@@ -255,7 +278,16 @@ impl MySqlConn {
                 SqlBind::Bytes(v) => q.bind(v.clone()),
             };
         }
-        let rows: Vec<MySqlRow> = q.fetch_all(&mut **conn).await?;
+        let rows: Vec<MySqlRow> = match q.fetch_all(&mut **conn).await {
+            Ok(rows) => rows,
+            Err(e) => {
+                let e = AppError::from(e);
+                if e.is_connection_lost() {
+                    self.drop_dead_tx(&mut guard);
+                }
+                return Err(e);
+            }
+        };
         let columns = columns_of(&rows);
         let rows_out = rows.iter().map(row_to_values).collect();
         Ok(QueryResult {
@@ -274,11 +306,18 @@ impl MySqlConn {
         let conn = guard
             .as_mut()
             .ok_or_else(|| AppError::InvalidInput("no active transaction".into()))?;
-        sqlx::Executor::execute(
+        if let Err(e) = sqlx::Executor::execute(
             &mut **conn,
             sqlx::raw_sql(sqlx::AssertSqlSafe(sql.to_string())),
         )
-        .await?;
+        .await
+        {
+            let e = AppError::from(e);
+            if e.is_connection_lost() {
+                self.drop_dead_tx(&mut guard);
+            }
+            return Err(e);
+        }
         Ok(())
     }
 

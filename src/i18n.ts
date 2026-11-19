@@ -1408,6 +1408,22 @@ const en = {
   statusReconnectBusy: "Reconnecting — the query will run once the connection is restored.",
   statusReconnectTx:
     "The connection dropped during a transaction. To avoid a partial commit it was not auto-reconnected — please reconnect and re-run the transaction.",
+  statusIdleTxDisconnected:
+    "The server disconnected an abandoned transaction (idle-in-transaction timeout) and rolled it back. The session was closed — please reconnect and re-run the transaction.",
+  statusIdleTxDisconnectedLikely:
+    "The connection dropped during a transaction left open past the auto-disconnect time, so the server most likely ended the abandoned transaction (idle-in-transaction timeout) and rolled it back. The session was closed — please reconnect and re-run the transaction.",
+  toastIdleTxDisconnectedLikely:
+    "{name}: the transaction was most likely disconnected by the server for being left idle, and rolled back. Reconnect and re-run it.",
+  statusIdleTxRolledBack:
+    "The server disconnected an abandoned transaction (idle-in-transaction timeout) and rolled it back. The connection is still usable — please re-run the transaction.",
+  statusIdleTxRolledBackLikely:
+    "The transaction was most likely disconnected by the server for being left idle (idle-in-transaction timeout) and rolled back. The connection is still usable — please re-run the transaction.",
+  toastIdleTxRolledBack:
+    "{name}: the server disconnected an abandoned transaction and rolled it back. Re-run it.",
+  toastIdleTxRolledBackLikely:
+    "{name}: the transaction was most likely disconnected by the server for being left idle, and rolled back. Re-run it.",
+  toastIdleTxDisconnected:
+    "{name}: the server disconnected an abandoned transaction and rolled it back. Reconnect and re-run it.",
   statusDismiss: "Close this message",
   spinnerLoadingAria: "Loading",
   toastRegionAria: "Notifications",
@@ -1710,6 +1726,12 @@ const en = {
   formInitSqlPlaceholderSqlite: "PRAGMA foreign_keys = ON;\nPRAGMA busy_timeout = 5000;",
   formInitSqlHelp:
     "Run automatically right after each connection is established (on every pooled connection), so results are reproducible without re-running setup in each tab. Separate multiple statements with ';'. Only SET / PRAGMA or read-only statements are allowed — writes and DDL are rejected, and a failure surfaces as a connection error.",
+  formIdleTxLegend: "Idle transaction auto-disconnect",
+  formIdleTxLabel: "Disconnect after (minutes)",
+  formIdleTxPlaceholder: "Off",
+  formIdleTxHelp:
+    "Sets idle_in_transaction_session_timeout on each new connection: if a transaction is left open without running anything for this many minutes, the server ends the session and rolls it back. Leave empty to keep the server default (off by default). PostgreSQL only. Note: with PgBouncer in transaction pooling mode, a session-level SET can leak to other clients, so do not use this option there.",
+  formIdleTxInvalid: "Enter a whole number of minutes between 1 and {max}, or leave it empty.",
   formConnectionOk: "Connection OK.",
   formInvalidPort: "Enter a port number between 1 and 65535.",
   formInvalidSshPort: "Enter an SSH port number between 1 and 65535.",
@@ -10703,6 +10725,22 @@ const ja: Dict = {
   statusReconnectBusy: "再接続中です。接続が回復したらクエリを実行します。",
   statusReconnectTx:
     "トランザクション中に接続が切れました。中途半端なコミットを避けるため自動再接続しません。再接続してトランザクションをやり直してください。",
+  statusIdleTxDisconnected:
+    "放置されたトランザクションをサーバが切断しました (idle-in-transaction タイムアウト)。ロールバック済みで、セッションは閉じられました。再接続してトランザクションをやり直してください。",
+  statusIdleTxDisconnectedLikely:
+    "自動切断の時間を過ぎて開いたままだったトランザクションの途中で接続が切れました。放置によりサーバが切断し (idle-in-transaction タイムアウト)、ロールバックした可能性が高いです。セッションは閉じられました。再接続してトランザクションをやり直してください。",
+  toastIdleTxDisconnectedLikely:
+    "{name}: 放置されたトランザクションをサーバが切断し、ロールバックした可能性が高いです。再接続してやり直してください。",
+  statusIdleTxRolledBack:
+    "放置されたトランザクションをサーバが切断し (idle-in-transaction タイムアウト)、ロールバックしました。接続はそのまま使えます。トランザクションをやり直してください。",
+  statusIdleTxRolledBackLikely:
+    "放置されたトランザクションをサーバが切断し (idle-in-transaction タイムアウト)、ロールバックした可能性が高いです。接続はそのまま使えます。トランザクションをやり直してください。",
+  toastIdleTxRolledBack:
+    "{name}: 放置されたトランザクションをサーバが切断し、ロールバックしました。やり直してください。",
+  toastIdleTxRolledBackLikely:
+    "{name}: 放置されたトランザクションをサーバが切断し、ロールバックした可能性が高いです。やり直してください。",
+  toastIdleTxDisconnected:
+    "{name}: 放置されたトランザクションをサーバが切断し、ロールバックしました。再接続してやり直してください。",
   statusDismiss: "このメッセージを閉じる",
   spinnerLoadingAria: "読み込み中",
   toastRegionAria: "通知",
@@ -11006,6 +11044,12 @@ const ja: Dict = {
   formInitSqlPlaceholderSqlite: "PRAGMA foreign_keys = ON;\nPRAGMA busy_timeout = 5000;",
   formInitSqlHelp:
     "接続が確立した直後 (プールの各物理接続) に毎回自動実行します。タブごとに準備 SQL を流し直さなくても結果が再現できます。複数文は ';' で区切ります。許可されるのは SET / PRAGMA または読み取り専用の文のみで、書き込みや DDL は拒否されます。失敗は接続エラーとして表面化します。",
+  formIdleTxLegend: "放置トランザクションの自動切断",
+  formIdleTxLabel: "切断するまでの時間 (分)",
+  formIdleTxPlaceholder: "オフ",
+  formIdleTxHelp:
+    "新しい接続ごとに idle_in_transaction_session_timeout を設定します。トランザクションを開いたまま何も実行せずにこの時間が過ぎると、サーバがセッションを切断してロールバックします。空欄ならサーバの既定 (通常はオフ) のままです。PostgreSQL のみ。PgBouncer のトランザクションモードではセッション単位の SET が他のクライアントへ漏れるため、その構成では使わないでください。",
+  formIdleTxInvalid: "1〜{max} の整数 (分) を入力するか、空欄にしてください。",
   formConnectionOk: "接続に成功しました。",
   formInvalidPort: "ポート番号は 1〜65535 の範囲で入力してください。",
   formInvalidSshPort: "SSH ポート番号は 1〜65535 の範囲で入力してください。",
