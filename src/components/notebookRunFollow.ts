@@ -65,11 +65,26 @@ function isButton(target: EventTarget | null): boolean {
   return target instanceof HTMLElement && target.closest("button, [role=button]") !== null;
 }
 
-/** `target` からコンテナ (含まない) までに、縦に溢れて自分でスクロールする祖先があるか。 */
-function hasInnerScroller(target: EventTarget | null, container: HTMLElement): boolean {
+/** その要素が縦方向 `deltaY` の向きにまだスクロールできるか (0 や不明なら溢れていれば可とみなす)。 */
+export function canScrollFurther(
+  m: { scrollTop: number; scrollHeight: number; clientHeight: number },
+  deltaY: number | undefined,
+): boolean {
+  if (m.scrollHeight <= m.clientHeight) return false;
+  if (deltaY === undefined || deltaY === 0) return true;
+  if (deltaY < 0) return m.scrollTop > 0;
+  return m.scrollTop + m.clientHeight < m.scrollHeight - 1;
+}
+
+/**
+ * `target` からコンテナ (含まない) までに、その向きにまだ自分でスクロールできる祖先があるか。
+ * 端まで達した内側の領域ではホイールが外側へ連鎖 (scroll chaining) してコンテナが動くので、
+ * そのときは内側として数えない。
+ */
+function hasInnerScroller(target: EventTarget | null, container: HTMLElement, deltaY?: number): boolean {
   let node = target instanceof HTMLElement ? target : null;
   while (node && node !== container) {
-    if (node.scrollHeight > node.clientHeight) {
+    if (canScrollFurther(node, deltaY)) {
       const overflowY = getComputedStyle(node).overflowY;
       if (overflowY === "auto" || overflowY === "scroll") return true;
     }
@@ -103,7 +118,7 @@ export function useFollowLatch(containerRef: RefObject<HTMLElement | null>, acti
           key: ev instanceof KeyboardEvent ? ev.key : undefined,
           editable: isEditable(ev.target),
           onButton: isButton(ev.target),
-          innerScroller: hasInnerScroller(ev.target, el),
+          innerScroller: hasInnerScroller(ev.target, el, ev instanceof WheelEvent ? ev.deltaY : undefined),
           onScrollbar: isOnScrollbar(ev, el),
         })
       ) {

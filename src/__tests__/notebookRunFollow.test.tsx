@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { fireEvent, render } from "@testing-library/react";
-import { followScrollOptions, isManualScrollInput, useFollowLatch } from "../components/notebookRunFollow";
+import {
+  canScrollFurther,
+  followScrollOptions,
+  isManualScrollInput,
+  useFollowLatch,
+} from "../components/notebookRunFollow";
 import { useRef, type ReactNode } from "react";
 
 describe("isManualScrollInput", () => {
@@ -29,6 +34,22 @@ describe("isManualScrollInput", () => {
   });
   it("未知のイベントは対象外", () => {
     expect(isManualScrollInput({ type: "click" })).toBe(false);
+  });
+});
+
+describe("canScrollFurther", () => {
+  const m = (scrollTop: number) => ({ scrollTop, scrollHeight: 300, clientHeight: 100 });
+  it("溢れていない要素は内側として数えない", () => {
+    expect(canScrollFurther({ scrollTop: 0, scrollHeight: 100, clientHeight: 100 }, 10)).toBe(false);
+  });
+  it("端に達した向きのホイールは外側へ連鎖するので内側として数えない", () => {
+    expect(canScrollFurther(m(0), -10)).toBe(false);
+    expect(canScrollFurther(m(200), 10)).toBe(false);
+  });
+  it("まだ動ける向きなら内側のスクロール", () => {
+    expect(canScrollFurther(m(0), 10)).toBe(true);
+    expect(canScrollFurther(m(200), -10)).toBe(true);
+    expect(canScrollFurther(m(50), undefined)).toBe(true);
   });
 });
 

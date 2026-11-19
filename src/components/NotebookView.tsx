@@ -1037,6 +1037,8 @@ export function NotebookView(props: NotebookViewProps) {
       setProgress({ done: 0, total: cells.length });
       setRunAll(all);
       const startedAt = Date.now();
+      // 実行中に新規 / 開くで文書が入れ替わっても、停止表示を元の文書に結び付けるため開始時に控える。
+      const startEpoch = getNotebookState().epoch;
       let stop: Pick<RunStop, "cellId" | "index" | "kind"> | null = null;
       for (const [i, c] of cells.entries()) {
         setProgress({ done: i, total: cells.length });
@@ -1067,7 +1069,7 @@ export function NotebookView(props: NotebookViewProps) {
           total: cells.length,
           done: stop.index - 1,
           elapsedMs: Date.now() - startedAt,
-          epoch: getNotebookState().epoch,
+          epoch: startEpoch,
         });
       } else {
         setProgress({ done: cells.length, total: cells.length });
