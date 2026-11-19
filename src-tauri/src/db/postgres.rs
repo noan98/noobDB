@@ -188,6 +188,11 @@ impl PostgresConn {
     }
 
     pub async fn close(&self) {
+        // 明示トランザクションで握った接続を先に手放す。握ったままだと `pool.close()` が
+        // 返却を待ち続け、切断が終わらない (#2464)。
+        if let Some(conn) = self.tx.lock().await.take() {
+            drop(conn.detach());
+        }
         self.pool.close().await;
     }
 
