@@ -25,7 +25,7 @@ export function getKeyringStatus(): Promise<KeyringStatus | null> {
   return cached;
 }
 
-/** テスト用: キャッシュを捨てる。 */
+/** テスト用: キャッシュを捨てる。 @public テスト間でモジュール状態を初期化するテスト専用フック */
 export function resetKeyringStatusCache(): void {
   cached = null;
 }

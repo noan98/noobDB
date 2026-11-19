@@ -54,6 +54,7 @@ export function defaultKeyColumn(
 /**
  * 2 つの結果が行差分を取れる「同一カラム構成」か。列数とすべての列名 (順序込み) が
  * 一致するときだけ true。空 (列なし) は比較不能として false。
+ * @public 純ロジックを単体テストするために公開。本番の呼び出し元は無い (#2445 のトリアージで削除せず許可。不要と確認できれば削除する)
  */
 export function resultsComparable(a: { columns: Column[] }, b: { columns: Column[] }): boolean {
   if (a.columns.length === 0 || a.columns.length !== b.columns.length) return false;
@@ -63,6 +64,7 @@ export function resultsComparable(a: { columns: Column[] }, b: { columns: Column
 /**
  * ピン留め一覧に 1 件追加する。上限 `max` を超えたら**古いものから**破棄する
  * (一覧は古い→新しいの順)。元配列は変更しない。
+ * @public 純ロジックを単体テストするために公開。本番の呼び出し元は無い (#2445 のトリアージで削除せず許可。不要と確認できれば削除する)
  */
 export function addPinned(list: PinnedResult[], item: PinnedResult, max = MAX_PINNED): PinnedResult[] {
   return addPinnedWithEvicted(list, item, max).list;

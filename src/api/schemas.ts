@@ -32,10 +32,7 @@ function lightArray() {
  *  BLOB は 16 進文字列 (`Value::Bytes`) として string に乗る (CLAUDE.md 参照)。 */
 export const cellValue = z.union([z.null(), z.boolean(), z.number(), z.string()]);
 
-/** 行の配列 (`Vec<Vec<Value>>`)。`mask_export_rows` (#733) の戻り値。 */
-export const cellRows = z.array(z.array(cellValue));
-
-/** `cellRows` の軽量版 (#1257): 外側の配列だけ検証する。 */
+/** 行の配列 (`Vec<Vec<Value>>`) の軽量検証 (#1257): 外側の配列だけ検証する。 */
 export const cellRowsLite = lightArray();
 
 export const column = z.object({
@@ -446,6 +443,7 @@ const rowMergeUndoDecline = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("crossSchemaChild"), table: z.string() }),
   z.object({ kind: z.literal("childKeyReferenced"), table: z.string(), referencing: z.string() }),
 ]);
+/** @public IPC レスポンス全体のスキーマの部品。テストが部品単体で検証するために公開 (本番は親スキーマ経由で使う) */
 export const rowMergePreview = z.object({
   columns: z.array(
     z.object({ name: z.string(), typeName: z.string(), locked: z.boolean(), generated: z.boolean() }),
@@ -485,22 +483,26 @@ export const rowMergePreview = z.object({
   deletedRows: z.number(),
   undoDecline: rowMergeUndoDecline.nullable(),
 });
+/** @public IPC レスポンス全体のスキーマの部品。テストが部品単体で検証するために公開 (本番は親スキーマ経由で使う) */
 export const rowMergeOutcomeApplied = z.object({
   status: z.literal("applied"),
   repointedRows: z.number(),
   deletedRows: z.number(),
   capture: z.object({ recorded: z.number(), declined: z.number(), batchId: z.string().nullable() }),
 });
+/** @public IPC レスポンス全体のスキーマの部品。テストが部品単体で検証するために公開 (本番は親スキーマ経由で使う) */
 export const rowMergeOutcomeBlocked = z.object({
   status: z.literal("blocked"),
   blockers: z.array(rowMergeBlocker),
 });
+/** @public IPC レスポンス全体のスキーマの部品。テストが部品単体で検証するために公開 (本番は親スキーマ経由で使う) */
 export const rowMergeOutcomeChanged = z.object({
   status: z.literal("changed"),
   expectedRows: z.number(),
   actualRows: z.number(),
   statementsChanged: z.boolean(),
 });
+/** @public IPC レスポンス全体のスキーマの部品。テストが部品単体で検証するために公開 (本番は親スキーマ経由で使う) */
 export const rowMergeOutcomeIncomplete = z.object({
   status: z.literal("rollback_incomplete"),
   expectedRows: z.number(),
@@ -1987,6 +1989,7 @@ export const broadcastCancelledMessage = z.object({
   sessionId: z.string(),
 });
 
+/** @public IPC レスポンス全体のスキーマの部品。テストが部品単体で検証するために公開 (本番は親スキーマ経由で使う) */
 export const broadcastDoneMessage = z.object({ kind: z.literal("done") });
 
 /** Query チャンネル・Preview チャンネルのどちらでも同じ shape で届く cancelled
@@ -2094,6 +2097,7 @@ export const dataSearchTableMessage = z.object({
   entry: dataSearchEntry,
 });
 
+/** @public IPC レスポンス全体のスキーマの部品。テストが部品単体で検証するために公開 (本番は親スキーマ経由で使う) */
 export const dataSearchDoneMessage = z.object({ kind: z.literal("done") });
 
 export const dataSearchErrorMessage = z.object({
@@ -2174,6 +2178,7 @@ export const previewStreamRowsMessageLite = z.object({
   rows: lightArray(),
 });
 
+/** @public IPC レスポンス全体のスキーマの部品。テストが部品単体で検証するために公開 (本番は親スキーマ経由で使う) */
 export const previewStreamDoneMessage = z.object({ kind: z.literal("done") });
 
 export const previewStreamErrorMessage = z.object({
@@ -2363,6 +2368,7 @@ export const importDoneEvent = z.object({
 
 /** 転送前プレビュー (#1532)。 */
 const transferColumnInfo = z.object({ name: z.string(), sourceType: z.string(), targetType: z.string() });
+/** @public IPC レスポンス全体のスキーマの部品。テストが部品単体で検証するために公開 (本番は親スキーマ経由で使う) */
 export const transferPreview = z.object({
   columns: z.array(transferColumnInfo),
   /** 指定を適用する前のソースの全列と自動判定した型 (#1623)。 */

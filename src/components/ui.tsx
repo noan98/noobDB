@@ -7,7 +7,6 @@ import {
   headingRecipe,
   inputRecipe,
   radioRecipe,
-  sectionLabelRecipe,
   selectableCardRecipe,
   textareaRecipe,
 } from "../theme";
@@ -104,11 +103,6 @@ export { Switch } from "./Switch";
  *  ウェルカム画面などの最大見出しは `role="display"`、fieldset の legend など
  *  サブ見出しは `role="subheading"` を渡す。 */
 export const Heading = chakra("h2", headingRecipe);
-
-/** 上付きの小見出し (overline / eyebrow)。全 CAPS + 広めの字間 + muted color を
- *  単一ソース化する。ツリーのグループヘッダーやグリッドのカラムヘッダーなど、
- *  「本文より小さく、地味だが構造を示す」ラベルに使う。 */
-export const SectionLabel = chakra("span", sectionLabelRecipe);
 
 /**
  * クリック可能なサーフェスカード (#1161)。「面全体がボタンになっている

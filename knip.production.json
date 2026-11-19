@@ -1,0 +1,15 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "ignoreExportsUsedInFile": true,
+  "entry": ["vitest.mutants.config.ts"],
+  "ignore": [
+    "e2e/**",
+    "scripts/**",
+    "src/__tests__/**",
+    "vitest.*.config.ts"
+  ],
+  "tags": ["-public"],
+  "rules": {
+    "duplicates": "off"
+  }
+}

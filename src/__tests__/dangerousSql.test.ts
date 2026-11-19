@@ -240,8 +240,9 @@ describe("isReadOnlySql", () => {
 // read-only の CTE 判定コーパスは共有ゴールデン `fixtures/readOnlySqlVectors.json`
 // (`readOnlyGolden.test.ts` が検証) に一本化した (#1151)。ここに手コピーを置かない。
 
-// isSchemaMutatingSql の判定は共有ゴールデン (fixtures/schemaMutatingVectors.json) を
-// schemaMutatingGolden.test.ts で検証する (#1221)。ここに手コピーのコーパスは持たない。
+// スキーマ変更検出 (`sql_may_change_schema`) は Rust だけが持つ (#2445: 本番から参照されない
+// TS 側の二重実装 `isSchemaMutatingSql` は削除した)。判定は共有ゴールデン
+// (fixtures/schemaMutatingVectors.json) を Rust `tests/schema_mutating_golden.rs` が検証する。
 
 // --- #1256: マスクの使い回しと、バックエンド判定値のヒント ---------------------
 

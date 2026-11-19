@@ -25,7 +25,6 @@ export default defineConfig({
       "src/__tests__/readOnlyGolden.test.ts",
       "src/__tests__/relatedRows.test.ts",
       "src/__tests__/rowInspectorEdit.test.ts",
-      "src/__tests__/schemaMutatingGolden.test.ts",
       "src/__tests__/scriptSplitGolden.test.ts",
       "src/__tests__/sqlScript.test.ts",
       "src/__tests__/statementSplitGolden.test.ts",

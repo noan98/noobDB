@@ -309,7 +309,7 @@ export function groupCommands(
   return result;
 }
 
-/** グループ化済み候補を表示順のフラット配列へ。キーボードナビの index 付けに使う。 */
+/** グループ化済み候補を表示順のフラット配列へ。キーボードナビの index 付けに使う。 @public 純ロジックを単体テストするために公開。本番の呼び出し元は無い (#2445 のトリアージで削除せず許可。不要と確認できれば削除する) */
 export function flattenGroups(grouped: GroupedCommands[]): ScoredItem[] {
   return grouped.flatMap((g) => g.items);
 }

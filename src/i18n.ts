@@ -18357,6 +18357,7 @@ const ja: Dict = {
 
 const dicts: Record<Locale, Dict> = { en, ja };
 
+/** @public i18n テストが全ロケールの辞書を走査するために公開 */
 export const dictionaries: Record<Locale, Readonly<Dict>> = dicts;
 
 const STORAGE_KEY = "noobdb.locale";

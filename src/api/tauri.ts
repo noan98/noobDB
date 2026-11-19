@@ -66,7 +66,7 @@ import { aiCommands } from "./commands/ai";
 
 // エラー正規化は `./invoke.ts` に置く。既存の呼び出し側 (`from "../api/tauri"`) を
 // 変えないためにここから再エクスポートする。
-export { BackendError, errorKindOf, normalizeBackendError } from "./invoke";
+export { errorKindOf } from "./invoke";
 import type { MatchMode } from "../components/dataSearch";
 
 export type DriverKind = "mysql" | "postgres" | "sqlite";

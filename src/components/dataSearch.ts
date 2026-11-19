@@ -48,7 +48,7 @@ export function searchTargetForKind(kind: CellKind, includeDates = false): Searc
   }
 }
 
-/** 列の生の型名から直接 {@link SearchTarget} を引く便宜関数。 */
+/** 列の生の型名から直接 {@link SearchTarget} を引く便宜関数。 @public 純ロジックを単体テストするために公開。本番の呼び出し元は無い (#2445 のトリアージで削除せず許可。不要と確認できれば削除する) */
 export function searchTargetForDataType(dataType: string): SearchTarget {
   return searchTargetForKind(classifyTypeName(dataType));
 }

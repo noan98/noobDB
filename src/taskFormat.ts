@@ -16,7 +16,7 @@ const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n
 const offsetFormatters = new Map<string, Intl.DateTimeFormat>();
 const labelFormatters = new Map<string, Intl.DateTimeFormat>();
 
-/** キャッシュを捨てる。実行環境の既定タイムゾーンはキャッシュ生成時に固定されるため、テストが `process.env.TZ` を切り替えるときに使う。 */
+/** キャッシュを捨てる。実行環境の既定タイムゾーンはキャッシュ生成時に固定されるため、テストが `process.env.TZ` を切り替えるときに使う。 @public テスト間でモジュール状態を初期化するテスト専用フック */
 export function clearTaskFormatCache(): void {
   offsetFormatters.clear();
   labelFormatters.clear();
@@ -94,7 +94,7 @@ export function utcToLocalClock(hour: number, minute: number, at: Date, timeZone
   return shiftClock(hour, minute, tzOffsetMinutes(at, timeZone));
 }
 
-/** 入力 (ローカルの時・分) → 保存形式 (UTC の時・分)。`utcToLocalClock` の逆変換。 */
+/** 入力 (ローカルの時・分) → 保存形式 (UTC の時・分)。`utcToLocalClock` の逆変換。 @public 純ロジックを単体テストするために公開。本番の呼び出し元は無い (#2445 のトリアージで削除せず許可。不要と確認できれば削除する) */
 export function localToUtcClock(hour: number, minute: number, at: Date, timeZone?: string): ClockTime {
   return shiftClock(hour, minute, -tzOffsetMinutes(at, timeZone));
 }

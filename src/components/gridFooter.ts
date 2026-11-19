@@ -117,7 +117,7 @@ export function footerCountUpTarget(cell: FooterCell | null, streaming: boolean)
   return integerCountUpTarget(cell.numeric);
 }
 
-/** 列の生値から直接フッターセルを計算する便宜関数 (テスト・単発計算用)。 */
+/** 列の生値から直接フッターセルを計算する便宜関数 (テスト・単発計算用)。 @public 純ロジックを単体テストするために公開。本番の呼び出し元は無い (#2445 のトリアージで削除せず許可。不要と確認できれば削除する) */
 export function footerCellForColumn(values: CellValue[], kind: CellKind, fn: FooterAggFn): FooterCell {
   return computeFooterCell(columnStats(values, kind), fn);
 }

@@ -607,7 +607,7 @@ export const inputRecipe = defineRecipe({
   },
 });
 
-/** セレクト。`App.css` の `select` と一致 (入力欄と同じ見た目)。 */
+/** セレクト。`App.css` の `select` と一致 (入力欄と同じ見た目)。 @public theme テストがレシピ (App.css の select との一致) を検証するために公開 */
 export const selectRecipe = defineRecipe({
   className: "app-select",
   base: {
@@ -686,7 +686,7 @@ export const radioRecipe = defineRecipe({
  * 適用するだけの薄い recipe。`role` は `display` (最大級) / `heading` (既定、モーダル
  * タイトル・フォーム h2 相当) / `subheading` (fieldset legend 等) の 3 段階。
  * `overline`/`body`/`caption` は見出しタグを伴わない役割のためここには含めない
- * (overline は `sectionLabelRecipe` / `SectionLabel` が担当)。
+ * (overline は `textStyles.overline` を直接使う)。
  */
 export const headingRecipe = defineRecipe({
   className: "app-heading",
@@ -699,13 +699,6 @@ export const headingRecipe = defineRecipe({
     },
   },
   defaultVariants: { role: "heading" },
-});
-
-/** 上付きの小見出し (`ui.tsx` の `SectionLabel`)。`textStyles.overline` を適用する
- *  だけの recipe (variant なし)。 */
-export const sectionLabelRecipe = defineRecipe({
-  className: "app-section-label",
-  base: { margin: 0, textStyle: "overline" },
 });
 
 /**

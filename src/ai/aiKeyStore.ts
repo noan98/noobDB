@@ -64,7 +64,7 @@ export function useAiKeyKnown(): boolean {
   );
 }
 
-/** テスト用: ストアを初期状態へ戻す。 */
+/** テスト用: ストアを初期状態へ戻す。 @public テスト間でモジュール状態を初期化するテスト専用フック */
 export function resetAiKeyStoreForTest(): void {
   hasKey = false;
   loaded = false;

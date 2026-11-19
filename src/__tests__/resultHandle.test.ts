@@ -6,7 +6,8 @@ import {
   resultHandleFor,
   shouldUseHandleForGrid,
 } from "../components/resultHandle";
-import { BackendError, type CellValue } from "../api/tauri";
+import { BackendError } from "../api/invoke";
+import type { CellValue } from "../api/tauri";
 
 // 結果ハンドル (#1264) の行配列への紐づけ。行配列が入れ替わったら (= JS 側の行と
 // バックエンドの保持行がずれたら) ハンドルは見つからなくなり、呼び出し側は JS 経路へ戻る。

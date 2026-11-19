@@ -89,7 +89,7 @@ function coolDownTooltips() {
   lastClosedAt = Number.NEGATIVE_INFINITY;
 }
 
-/** テスト用: 他のテストで残ったウォーム状態を捨てる。 */
+/** テスト用: 他のテストで残ったウォーム状態を捨てる。 @public テスト間でモジュール状態を初期化するテスト専用フック */
 export function resetTooltipWarmth() {
   coolDownTooltips();
 }

@@ -32,7 +32,7 @@ export interface ScrollerMetrics {
   scrollTop: number;
 }
 
-/** ビューポート座標の矩形をスクロールコンテンツ座標へ直す (枠は絶対配置でコンテンツと一緒にスクロールする)。 */
+/** ビューポート座標の矩形をスクロールコンテンツ座標へ直す (枠は絶対配置でコンテンツと一緒にスクロールする)。 @public 純ロジックを単体テストするために公開。本番の呼び出し元は無い (#2445 のトリアージで削除せず許可。不要と確認できれば削除する) */
 export function toContentBox(rect: ClientRectLike, m: ScrollerMetrics): BoxRect {
   return {
     left: rect.left - m.left - m.clientLeft + m.scrollLeft,

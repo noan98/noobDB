@@ -56,7 +56,7 @@ export function joinDirAndName(dir: string, name: string): string {
   return /[\\/]$/.test(dir) ? `${dir}${name}` : `${dir}${sep}${name}`;
 }
 
-/** パスの末尾のファイル名。 */
+/** パスの末尾のファイル名。 @public 純ロジックを単体テストするために公開。本番の呼び出し元は無い (#2445 のトリアージで削除せず許可。不要と確認できれば削除する) */
 export function basenameOf(path: string): string {
   const parts = path.split(/[\\/]/);
   return parts[parts.length - 1] || path;
@@ -487,7 +487,7 @@ export function saveRoutineArgSets(scope: string, sets: readonly RoutineArgSet[]
   }
 }
 
-/** メモリ上の履歴を全部捨てる (テスト用・将来の「履歴を消去」用)。 */
+/** メモリ上の履歴を全部捨てる (テスト用・将来の「履歴を消去」用)。 @public テスト間でモジュール状態を初期化するテスト専用フック */
 export function clearRoutineArgMemory(): void {
   routineArgMemory.clear();
 }

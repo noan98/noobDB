@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { comparePlans, opsFromSnapshot, planFingerprint, type PlanPayloadKind } from "../components/planDiff";
+import { comparePlans, opsFromSnapshot, type PlanPayloadKind } from "../components/planDiff";
 import vectors from "./fixtures/planWatchVectors.json";
 
 // 実行計画ウォッチ (#743 / #1260) のフロント/バック整合性ゴールデンテスト — フロント側。
@@ -7,6 +7,8 @@ import vectors from "./fixtures/planWatchVectors.json";
 // バック (`src-tauri/src/plan_watch`) で独立に二重実装されている。両者が同一の共有ベクタ
 // を読み、期待値 (フロントの実出力から生成) と一致することを検証する。バック側の
 // 対になるテストは `src-tauri/tests/plan_watch_golden.rs`。
+// フィンガープリントは本番ではバックだけが使う (#2445 で TS 側の `planFingerprint` を削除)。
+// `fingerprint` はバック側のテストだけが読む。
 
 interface Snap {
   driver: string;
@@ -29,7 +31,6 @@ describe("plan watch shared vectors (frontend side)", () => {
   it.each(vectors.ops.map((c) => [c.name, c] as const))("normalizes %s", (_name, c) => {
     const ops = opsFromSnapshot(snapshot(c));
     expect(ops).toEqual(c.ops);
-    expect(planFingerprint(ops)).toBe(c.fingerprint);
   });
 
   it.each(vectors.compare.map((c) => [c.name, c] as const))("compares %s", (_name, c) => {

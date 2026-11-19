@@ -26,8 +26,6 @@ export interface SchemaTreeState {
   sort?: ExplorerTableSort;
 }
 
-export const EMPTY_SCHEMA_TREE: SchemaTreeState = { dbs: {}, tables: {} };
-
 /**
  * パース済み JSON (開いているキーの配列) を妥当な状態へ整える。純粋 (ストレージ非依存)
  * なのでユニットテストできる。未知の形・非文字列は捨てる。

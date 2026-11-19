@@ -1,5 +1,5 @@
 {
-  "description": "sql_may_change_schema (Rust db/mod.rs) と isSchemaMutatingSql (src/dangerousSql.ts) の共有ゴールデン (#1221)。schemaMutates は標準解釈 (PostgreSQL / SQLite / ドライバ不明)、schemaMutatesMysql は MySQL のバックスラッシュエスケープ解釈で判定が変わるケースだけに書く。誤検知は安全側 (再取得 1 回) だが見逃しは stale スキーマに直結するため fail-closed に倒す。",
+  "description": "sql_may_change_schema (Rust db/mod.rs) のゴールデン (#1221、Rust tests/schema_mutating_golden.rs 専用。TS 側の実装は #2445 で削除)。schemaMutates は標準解釈 (PostgreSQL / SQLite / ドライバ不明)、schemaMutatesMysql は MySQL のバックスラッシュエスケープ解釈で判定が変わるケースだけに書く。誤検知は安全側 (再取得 1 回) だが見逃しは stale スキーマに直結するため fail-closed に倒す。",
   "cases": [
     {
       "sql": "CREATE TABLE t (id INT)",

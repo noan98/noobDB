@@ -54,7 +54,8 @@
   守る (書き込む関数を `SELECT f()` で呼ぶ抜け道を塞ぐ)。なお `read_only` でも書き込みプレビュー (dry-run) は許可しており、
   ロールバックで戻らない副作用 (採番・シーケンス・非トランザクショナルな処理) は残りうる。
 - **共有ゴールデンベクタ (`src/__tests__/fixtures/*.json`) を経由する判定ロジックを
-  変えるときは、必ず JSON に境界ケースを追記する** — Rust とフロントの二重実装が
+  変えるときは、必ず JSON に境界ケースを追記する** (本番で使われない TS 側の実装は
+  `pnpm run knip:production` が fail させるので、ゴールデン用に残さず Rust 側だけで固定する) — Rust とフロントの二重実装が
   ズレると片方のテストが落ちます。
 - **意味色の前景トークン (`app.dangerFg` / `app.warningFg` など) は、同名のベタ塗り
   (`app.dangerBg` など) の上に載せるときだけ使う。** これらはテーマに追従しない固定値
@@ -97,6 +98,7 @@ pnpm test              # Vitest ユニットテスト (jsdom)
 pnpm test:browser      # Vitest ブラウザモード (Playwright + Chromium)
 pnpm run lint          # Biome (noFloatingPromises / hooks ルール + 整形チェック。直すには pnpm exec biome format --write src)
 pnpm run knip          # 未使用エクスポート/依存/到達不能コード検出
+pnpm run knip:production  # 本番の入口から到達しない (テストからしか使われない) export の検出 (#2445)
 pnpm tauri dev         # アプリ全体を起動
 ```
 

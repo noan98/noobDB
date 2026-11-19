@@ -38,12 +38,13 @@ import { useId } from "react";
  */
 
 /** ブランド基調色。`App.css` の `--brand-*` と一致させる (二重定義の検証は
+ * @public brand テストがロゴ・ファビコンの色との整合を検証するために公開
  *  `brand.test.ts`)。フロントの純ロジック/テストから参照できるよう定数化する。 */
 export const BRAND_NAVY = "#12355b";
 export const BRAND_NAVY_RAISED = "#1d4a7a";
 export const BRAND_TEAL = "#2dd4bf";
 
-/** ブランドグラデーションの停止色 (navy-raised → teal)。`--brand-gradient` と一致。 */
+/** ブランドグラデーションの停止色 (navy-raised → teal)。`--brand-gradient` と一致。 @public brand テストがロゴ・ファビコンの色との整合を検証するために公開 */
 export const BRAND_GRADIENT_STOPS: readonly [string, string] = [BRAND_NAVY_RAISED, BRAND_TEAL];
 
 /** ロゴのジオメトリ (viewBox 0 0 48 48)。favicon / アプリアイコンと同じ数値で、

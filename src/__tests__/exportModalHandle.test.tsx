@@ -28,7 +28,8 @@ vi.mock("../api/tauri", async (importOriginal) => {
 });
 
 import { ExportModal } from "../components/ExportModal";
-import { api, BackendError } from "../api/tauri";
+import { BackendError } from "../api/invoke";
+import { api } from "../api/tauri";
 import { resetAllSettings } from "../settings";
 
 const COLUMNS = [makeColumn("id", "int"), makeColumn("name", "varchar")];

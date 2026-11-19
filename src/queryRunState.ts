@@ -63,6 +63,7 @@ export function formatElapsed(ms: number): string {
 /**
  * 受信済み行数にバッチ長を積算する。負値は 0 として扱い、常に非負を返す。
  * ストリーミングの各バッチ到着時に累計行数を更新するのに使う。
+ * @public 純ロジックを単体テストするために公開。本番の呼び出し元は無い (#2445 のトリアージで削除せず許可。不要と確認できれば削除する)
  */
 export function accumulateRowCount(previous: number, batchLength: number): number {
   const prev = Number.isFinite(previous) ? Math.max(0, previous) : 0;

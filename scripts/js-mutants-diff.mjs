@@ -46,7 +46,6 @@ export const TEST_TO_SOURCES = {
   [`${T}maskLiteralsIdentifiers.test.ts`]: [DANGER],
   [`${T}readOnlyGolden.test.ts`]: [DANGER],
   [`${T}relatedRows.test.ts`]: [DANGER, CELL],
-  [`${T}schemaMutatingGolden.test.ts`]: [DANGER],
   [`${T}valuePicker.test.ts`]: [DANGER, CELL],
   [`${T}preflight.test.ts`]: [PREFLIGHT, DANGER],
   [`${T}scriptSplitGolden.test.ts`]: [SCRIPT, DANGER],

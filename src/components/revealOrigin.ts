@@ -34,7 +34,7 @@ export function recordKey(at: number): void {
   lastKeyAt = at;
 }
 
-/** テスト用: トラッカーの状態を初期化する。 */
+/** テスト用: トラッカーの状態を初期化する。 @public テスト間でモジュール状態を初期化するテスト専用フック */
 export function resetRevealOrigin(): void {
   lastPointer = null;
   lastKeyAt = 0;

@@ -46,9 +46,10 @@ export type SemanticRole = "success" | "warning" | "danger" | "info";
 /** 意味役割ごとの段階 (強調度)。 */
 export type SemanticTier = "subtle" | "border" | "solid" | "text";
 
-/** 反復処理の単一ソース。新しい役割/段階を追加するときはここに足す。 */
+/** 反復処理の単一ソース。新しい役割/段階を追加するときはここに足す。 @public semanticColors テストが全ロールを走査するために公開 */
 export const SEMANTIC_ROLES: readonly SemanticRole[] = ["success", "warning", "danger", "info"];
 
+/** @public semanticColors テストが全段を走査するために公開 */
 export const SEMANTIC_TIERS: readonly SemanticTier[] = ["subtle", "border", "solid", "text"];
 
 /**

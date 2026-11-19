@@ -6,6 +6,7 @@ export type SavepointStack = readonly string[];
 
 const NAME_RE = /^[A-Za-z_][A-Za-z0-9_]{0,62}$/;
 
+/** @public 純ロジックを単体テストするために公開。本番の呼び出し元は無い (#2445 のトリアージで削除せず許可。不要と確認できれば削除する) */
 export function isValidSavepointName(name: string): boolean {
   return NAME_RE.test(name);
 }

@@ -39,6 +39,7 @@ export function isSandboxProfileId(id: string): boolean {
 }
 
 /** 合成プロファイル id から元のサンドボックス id を取り出す。合成 id でなければ
+ * @public 純ロジックを単体テストするために公開。本番の呼び出し元は無い (#2445 のトリアージで削除せず許可。不要と確認できれば削除する)
  *  `null`。 */
 export function sandboxIdFromProfileId(id: string): string | null {
   return isSandboxProfileId(id) ? id.slice(SANDBOX_PROFILE_ID_PREFIX.length) : null;
